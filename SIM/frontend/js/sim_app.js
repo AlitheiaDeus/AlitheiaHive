@@ -448,12 +448,13 @@
     function onTelemetryFrame(frame) {
         if (!frame) return;
 
-        // Drones
-        if (frame.drones) {
-            updateDrones(frame.drones);
+        // Drones (Omniscient God-View Truth)
+        const droneList = frame.sim_drones || frame.drones;
+        if (droneList) {
+            updateDrones(droneList);
 
             // Find leader pos for tether
-            const leader = frame.drones.find(d => d.is_leader && !d.crashed);
+            const leader = droneList.find(d => d.is_leader && !d.crashed);
             if (frame.tether && leader) {
                 updateTether(frame.tether, leader.pos);
             } else if (frame.tether) {

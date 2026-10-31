@@ -552,7 +552,7 @@ class GossipConsensusBrain(BaseBrain):
             )
 
         elif self.formation_mode == "ECHELON_ESCORT":
-            # Chevron / V-formation centered on consensus target oriented along virtual heading
+            # Chevron / V-formation centered on lead apex peer oriented along virtual heading
             heading = np.array(
                 [math.cos(self.formation_heading), math.sin(self.formation_heading), 0.0], dtype=float
             )
@@ -561,10 +561,21 @@ class GossipConsensusBrain(BaseBrain):
             if k == 0:
                 return target_pos
 
+            # Find apex drone (slot 0) to align chevron with lead airframe position during transit
+            apex_drone = None
+            if hasattr(self, "assigned_slots") and hasattr(self.sim, "drones"):
+                for d in self.sim.drones:
+                    if not d.crashed and self.assigned_slots.get(d.id) == 0:
+                        apex_drone = d
+                        break
+
+            # Center chevron on live apex airframe position during transit (fallback: target_pos)
+            apex_pos = apex_drone.pos if apex_drone is not None else target_pos
+
             row = (k + 1) // 2
             side = 1.0 if (k % 2 == 1) else -1.0
             return (
-                target_pos
+                apex_pos
                 - (row * 6.0 * heading)
                 + (side * row * 6.0 * lateral)
                 + np.array([0.0, 0.0, row * 0.5], dtype=float)

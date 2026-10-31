@@ -120,6 +120,16 @@
             }
         });
 
+        setupBtn('btn-retrieve-pads', () => {
+            logEvent('CMD', 'Ground crew retrieving landed airframes/wreckage from launch pads: RETRIEVE_ALL_PADS');
+            window.swarmClient?.send({ cmd: 'RETRIEVE_ALL_PADS' });
+        });
+
+        setupBtn('btn-cold-reset', () => {
+            logEvent('CMD', 'Resetting fleet to cold ground pads: COLD_RESET');
+            window.swarmClient?.send({ cmd: 'COLD_RESET' });
+        });
+
         setupBtn('btn-reinforce-swarm', () => {
             logEvent('CMD', 'Spawning reinforcement airframe at base pad: LAUNCH_REINFORCEMENT');
             window.swarmClient?.send({ cmd: 'LAUNCH_REINFORCEMENT' });
@@ -198,8 +208,9 @@
         // Top Bar
         if (elSimTime) elSimTime.textContent = `${frame.sim_time.toFixed(1)}s`;
 
-        const totalDrones = frame.drones ? frame.drones.length : 0;
-        const deadCount = frame.drones ? frame.drones.filter(d => d.crashed).length : 0;
+        const droneList = frame.sim_drones || frame.drones || [];
+        const totalDrones = droneList.length;
+        const deadCount = droneList.filter(d => d.crashed).length;
         const aliveCount = totalDrones - deadCount;
 
         if (elDroneCount) elDroneCount.textContent = `${aliveCount}/${totalDrones} ALIVE`;
@@ -230,9 +241,9 @@
         }
 
         // Zone 4 Separation & Distance Calculation
-        if (frame.drones) {
-            updateTruthCards(frame.drones);
-            updateKillSelector(frame.drones);
+        if (droneList.length > 0) {
+            updateTruthCards(droneList);
+            updateKillSelector(droneList);
         }
     }
 

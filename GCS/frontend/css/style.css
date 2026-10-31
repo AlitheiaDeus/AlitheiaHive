@@ -996,7 +996,7 @@ body:has(#right-panel.collapsed) #tab-restore-right,
 }
 
 .btn-patrol {
-  margin-top: 8px;
+  margin: 0;
   width: 100%;
   border-color: rgba(0, 240, 255, 0.45);
   color: var(--neon-cyan);
@@ -1004,6 +1004,7 @@ body:has(#right-panel.collapsed) #tab-restore-right,
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.8px;
+  line-height: 1.2;
 }
 
 .btn-patrol:hover {
@@ -1027,27 +1028,30 @@ body:has(#right-panel.collapsed) #tab-restore-right,
 }
 
 .btn-rng {
-  border-color: rgba(255, 170, 0, 0.45);
-  color: #FFAA00;
-  background: rgba(255, 170, 0, 0.08);
+  margin: 0;
+  width: 100%;
+  border-color: rgba(0, 240, 255, 0.45);
+  color: var(--neon-cyan);
+  background: rgba(0, 240, 255, 0.08);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.8px;
+  line-height: 1.2;
 }
 
 .btn-rng:hover {
-  background: rgba(255, 170, 0, 0.22);
+  background: rgba(0, 240, 255, 0.22);
   border-color: #FFFFFF;
   color: #FFFFFF;
-  box-shadow: 0 0 12px rgba(255, 170, 0, 0.5);
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.5);
 }
 
 .btn-rng.active-rng {
-  background: rgba(255, 170, 0, 0.25);
-  border-color: #FFAA00;
+  background: rgba(0, 255, 170, 0.25);
+  border-color: var(--neon-emerald);
   color: #FFFFFF;
-  box-shadow: 0 0 14px rgba(255, 170, 0, 0.6);
-  animation: pulse-rng 1.5s infinite alternate;
+  box-shadow: 0 0 14px rgba(0, 255, 170, 0.6);
+  animation: pulse-patrol 1.5s infinite alternate;
 }
 
 @keyframes pulse-rng {

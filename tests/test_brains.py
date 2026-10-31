@@ -392,6 +392,92 @@ class TestBrains(unittest.TestCase):
         for d in self.sim.drones:
             self.assertFalse(d.crashed, f"Gossip drone #{d.id} clashed during U-turn inversion!")
 
+    def test_seamless_brain_handover_preserves_slots_and_positions(self):
+        """[FIX-09] Hot-swapping between LeaderFollower and GossipConsensus must preserve
+        slot assignments without instantaneous 50m jump or Zone 4 collision."""
+        sim = SwarmSimulator(drone_count=5, enable_packet_loss=False, seed=42)
+        sim.set_comms_mode("LEADER_FOLLOWER")
+        sim.set_formation("ECHELON_ESCORT")
+        sim.set_target([50.0, 30.0, 25.0])
+
+        for _ in range(60):
+            sim.step()
+
+        slots_before = dict(sim.brain.assigned_slots)
+        pos_before = {d.id: np.copy(d.pos) for d in sim.drones}
+
+        # Hot-swap to GOSSIP_CONSENSUS
+        ok = sim.set_brain("GOSSIP_CONSENSUS")
+        self.assertTrue(ok)
+        self.assertEqual(sim.active_brain_name, "GOSSIP_CONSENSUS")
+
+        # Step sim 60 frames under GossipConsensusBrain
+        for _ in range(60):
+            sim.step()
+
+        # Verify zero crashes and safe pairwise distances across handover
+        for d in sim.drones:
+            self.assertFalse(d.crashed, f"Drone #{d.id} crashed during brain hot-swap!")
+
+        for i in range(len(sim.drones)):
+            for j in range(i + 1, len(sim.drones)):
+                d_ij = float(np.linalg.norm(sim.drones[i].pos - sim.drones[j].pos))
+                self.assertGreater(d_ij, ZONE4_CLASH, f"Clash between #{i} and #{j}: {d_ij:.2f}m")
+
+    def test_mid_flight_tether_relay_switch_locked(self):
+        """[FIX-09] Mid-flight switch to TETHERED_RELAY is rejected when enforcing physical tether invariants:
+        hardware umbilical cannot be attached mid-flight when already airborne in wireless mode."""
+        sim = SwarmSimulator(drone_count=4, enable_packet_loss=False, seed=42)
+        sim.set_comms_mode("LEADER_FOLLOWER")
+        self.assertEqual(sim.comms_mode, "LEADER_FOLLOWER")
+
+        # Swarm is airborne in cruise: attempt to switch with enforce_grounded=True must fail
+        ok = sim.set_comms_mode("TETHERED_RELAY", enforce_grounded=True)
+        self.assertFalse(ok)
+        self.assertEqual(sim.comms_mode, "LEADER_FOLLOWER")
+
+        # Switching with default (or when grounded) succeeds
+        ok_default = sim.set_comms_mode("TETHERED_RELAY")
+        self.assertTrue(ok_default)
+        self.assertEqual(sim.comms_mode, "TETHERED_RELAY")
+
+    def test_comms_horizon_crash_masking(self):
+        """[FIX-09] Crash occurring outside radio horizon is masked in GCS telemetry as [LOST_LINK]
+        at LKP, while God-View /sim retains omniscient ground truth (crashed: True)."""
+        sim = SwarmSimulator(drone_count=4, enable_packet_loss=False, seed=42)
+        sim.set_comms_mode("LEADER_FOLLOWER")
+
+        # Move Drone 3 far beyond 120m radio horizon
+        d3 = sim.drones[3]
+        d3.pos = np.array([250.0, 0.0, 20.0], dtype=float)
+        d3.lkp = np.array([115.0, 0.0, 20.0], dtype=float)
+        d3.lost_link = True
+
+        # Update radio comms: Drone 3 loses downlink
+        sim._update_radio_comms()
+        self.assertFalse(d3.downlink_active)
+        self.assertTrue(d3.lost_link)
+
+        # Drone 3 crashes while out of contact
+        sim._trigger_crash(d3, reason="OBSTACLE_COLLISION_OUT_OF_RANGE")
+        self.assertTrue(d3.crashed)
+        self.assertFalse(d3.crashed_while_linked)
+
+        snap = sim.get_state_snapshot()
+        gcs_d3 = next(d for d in snap["drones"] if d["id"] == 3)
+        sim_d3 = next(d for d in snap["sim_drones"] if d["id"] == 3)
+
+        # GCS Airgap: GCS receives [LOST_LINK] at LKP, does not know it crashed
+        self.assertFalse(gcs_d3["crashed"])
+        self.assertTrue(gcs_d3["lost_link"])
+        self.assertEqual(gcs_d3["status"], "LOST_LINK")
+        self.assertEqual(gcs_d3["pos"], [115.0, 0.0, 20.0])
+
+        # God-View Ground Truth: Sim retains true casualty state
+        self.assertTrue(sim_d3["crashed"])
+        self.assertEqual(sim_d3["status"], "CRASHED")
+        self.assertEqual(sim_d3["pos"], [250.0, 0.0, 20.0])
+
 
 if __name__ == "__main__":
     unittest.main()

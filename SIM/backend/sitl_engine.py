@@ -124,10 +124,13 @@ class SITLWorldEngine:
         home_lon: Optional[float] = None,
         home_alt: Optional[float] = None,
         cold_start: bool = False,
+        start_in_air: Optional[bool] = None,
         count: Optional[int] = None,
     ):
         if count is not None:
             drone_count = count
+        if start_in_air is not None:
+            cold_start = not start_in_air
         if seed is not None:
             np.random.seed(seed)
 
@@ -194,12 +197,22 @@ class SITLWorldEngine:
             old_heading = getattr(self.brain, "formation_heading", 0.0)
             old_init = getattr(self.brain, "heading_initialized", False)
             old_formation = getattr(self.brain, "formation_mode", "ECHELON_ESCORT")
+            old_slots = dict(getattr(self.brain, "assigned_slots", {}))
+
             self.brain = BRAIN_REGISTRY[key](self)
             self.brain.reset()
             self.brain.formation_mode = old_formation
             if old_init:
                 self.brain.formation_heading = old_heading
                 self.brain.heading_initialized = True
+
+            # Preserve slot assignments across brain hot-swaps to avoid cross-path scramble
+            if old_slots:
+                if key == "GOSSIP_CONSENSUS" and self.leader is not None:
+                    if self.leader.id not in old_slots:
+                        old_slots[self.leader.id] = 0
+                self.brain.assigned_slots = old_slots
+
             if key == "GOSSIP_CONSENSUS":
                 self.comms_mode = "GOSSIP_CONSENSUS"
             elif key == "LEADER_FOLLOWER" and self.comms_mode == "GOSSIP_CONSENSUS":
@@ -207,7 +220,7 @@ class SITLWorldEngine:
             return True
         return False
 
-    def set_comms_mode(self, mode_name: str) -> bool:
+    def set_comms_mode(self, mode_name: str, enforce_grounded: bool = False) -> bool:
         """Switch comms mode: TETHERED_RELAY, LEADER_FOLLOWER, or GOSSIP_CONSENSUS."""
         mode = mode_name.upper().replace("-", "_").replace(" ", "_")
         if mode in ("TETHERED_RELAY", "TETHER_RELAY", "TETHERED"):
@@ -216,6 +229,16 @@ class SITLWorldEngine:
             if drone0 is None or drone0.crashed:
                 # Cannot attach physical tether if primary flagship is destroyed
                 return False
+
+            # Invariant: Physical tether umbilical cannot be reattached mid-flight
+            # if currently operating in untethered wireless modes
+            if enforce_grounded and self.comms_mode != "TETHERED_RELAY":
+                airborne = any(
+                    not d.crashed and d.flight_state not in ("LANDED", "GROUND_IDLE")
+                    for d in self.drones
+                )
+                if airborne:
+                    return False
 
             self.comms_mode = "TETHERED_RELAY"
             self.tether_severed = False
@@ -746,6 +769,7 @@ class SITLWorldEngine:
                 else:
                     self.turnaround_timer = max(0.0, self.turnaround_timer - dt)
                     if self.turnaround_timer <= 0.0:
+                        self.retrieve_all_landed_drones()
                         self.clear_pads()
             else:
                 self.turnaround_timer = 0.0
@@ -908,6 +932,23 @@ class SITLWorldEngine:
 
                     # Touchdown Check: Z <= 0.52m and dist_xy <= 0.35m
                     if current_z <= 0.52 and dist_xy <= 0.35:
+                        # Ground Truth Pad Occupancy Check (Operator Incompetence Failsafe):
+                        # Physical reality in WE: If another airframe is sitting on this pad, Zone 4 clash!
+                        occupant = None
+                        for other in self.drones:
+                            if other.id == drone.id or getattr(other, "retrieved", False):
+                                continue
+                            d_other_xy = float(np.linalg.norm(other.pos[:2] - pad_pos[:2]))
+                            if d_other_xy <= 1.5 and other.pos[2] <= 1.0:
+                                occupant = other
+                                break
+
+                        if occupant is not None:
+                            self._trigger_crash(drone, reason=f"UNRETRIEVED_PAD_COLLISION_WITH_DRONE_{occupant.id}")
+                            if not occupant.crashed:
+                                self._trigger_crash(occupant, reason=f"UNRETRIEVED_PAD_COLLISION_WITH_DRONE_{drone.id}")
+                            continue
+
                         drone.pos = np.copy(pad_pos)
                         drone.vel = np.zeros(3, dtype=float)
                         drone.acc = np.zeros(3, dtype=float)
@@ -1691,6 +1732,7 @@ class SITLWorldEngine:
     def _trigger_crash(self, drone: Drone, reason: str = "") -> None:
         """Disengage drone motors and trigger ballistic tumble."""
         drone.crashed = True
+        drone.crashed_while_linked = bool(drone.downlink_active)
         drone.flight_state = "CRASHED"
         drone.status = "CRASHED"
         if hasattr(self, "fleet_registry"):
@@ -1877,7 +1919,7 @@ class SITLWorldEngine:
 
         airborne_drones = [
             d for d in self.drones
-            if not d.crashed and d.flight_state not in ("LANDED", "GROUND_IDLE", "DESCENDING")
+            if not d.crashed and not getattr(d, "retrieved", False) and d.flight_state not in ("LANDED", "GROUND_IDLE", "DESCENDING", "RETRIEVED")
         ]
         if not airborne_drones:
             return []
@@ -1967,6 +2009,44 @@ class SITLWorldEngine:
                     del self.landing_pads[drone.landing_pad_idx]
                 return True
         return False
+
+    def retrieve_drone_from_pad(self, pad_idx: int) -> Optional[int]:
+        """Ground crew physically retrieves and stows an airframe or wreckage from a landing pad into the hangar."""
+        pad_pos = self.get_pad_position(pad_idx)
+        assigned_id = self.landing_pads.get(pad_idx, None)
+        target_drone = self.get_drone_by_id(assigned_id) if assigned_id is not None else None
+
+        if target_drone is None or getattr(target_drone, "retrieved", False):
+            for d in self.drones:
+                if getattr(d, "retrieved", False):
+                    continue
+                d_xy = float(np.linalg.norm(d.pos[:2] - pad_pos[:2]))
+                if d_xy <= 1.5 and d.pos[2] <= 1.0:
+                    target_drone = d
+                    break
+
+        if target_drone is not None and not getattr(target_drone, "retrieved", False):
+            target_drone.retrieved = True
+            target_drone.flight_state = "RETRIEVED"
+            target_drone.status = "RETRIEVED"
+            target_drone.pos = np.array([-100.0 - pad_idx * 5.0, -100.0, 0.0], dtype=float)
+            target_drone.vel = np.zeros(3, dtype=float)
+            target_drone.acc = np.zeros(3, dtype=float)
+            target_drone.rotor_rpm = 0.0
+            if pad_idx in self.landing_pads and self.landing_pads[pad_idx] == target_drone.id:
+                del self.landing_pads[pad_idx]
+            return target_drone.id
+
+        return None
+
+    def retrieve_all_landed_drones(self) -> List[int]:
+        """Ground crew physically retrieves all landed/ground-idle airframes across all pads into hangar."""
+        retrieved = []
+        for pad_idx in range(self.atc_capacity):
+            did = self.retrieve_drone_from_pad(pad_idx)
+            if did is not None:
+                retrieved.append(did)
+        return retrieved
 
     def clear_pads(self, turnaround_rearm: bool = False) -> Dict[str, Any]:
         """Reset/clear occupied pads (salvaging/storing landed drones or re-arming)
@@ -2457,9 +2537,22 @@ class SITLWorldEngine:
         two_ic_id = two_ic.id if two_ic else None
 
         drones_list = []
+        sim_drones_list = []
         for d in self.drones:
             d_dict = d.to_dict()
             d_dict["is_2ic"] = (d.id == two_ic_id and not d.is_leader and not d.crashed)
+            sim_drones_list.append(dict(d_dict))
+
+            # Operator Airgap: If drone crashed while communication was down (beyond radio horizon / lost link),
+            # GCS only knows it is [LOST_LINK] at its Last Known Position (LKP).
+            if d.crashed and not getattr(d, "crashed_while_linked", False) and not d.downlink_active:
+                d_dict["crashed"] = False
+                d_dict["flight_state"] = "LOST_LINK"
+                d_dict["status"] = "LOST_LINK"
+                d_dict["pos"] = [round(float(v), 2) for v in d.lkp]
+                d_dict["vel"] = [0.0, 0.0, 0.0]
+                d_dict["lost_link"] = True
+
             drones_list.append(d_dict)
 
         ack_target = self.get_acknowledged_target()
@@ -2548,6 +2641,7 @@ class SITLWorldEngine:
                 "visible": (self.comms_mode == "TETHERED_RELAY" and not self.tether_severed and (current_leader is not None and current_leader.flight_state not in ("LANDED", "GROUND_IDLE"))),
             },
             "drones": drones_list,
+            "sim_drones": sim_drones_list,
             "fleet_registry": self.fleet_registry.get_registry_snapshot() if hasattr(self, "fleet_registry") else {},
             "brain_telemetry": self.brain.get_telemetry_extra(),
         }

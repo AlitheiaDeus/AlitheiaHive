@@ -278,6 +278,15 @@ class MavlinkBridge:
                 "remaining_drones": len(self.sim.drones),
             }
 
+        elif cmd in ("RETRIEVE_PAD", "RETRIEVE_DRONE_FROM_PAD"):
+            pad_idx = int(cmd_dict.get("pad_idx", 0))
+            did = self.sim.retrieve_drone_from_pad(pad_idx)
+            return {"status": "OK", "cmd": cmd, "pad_idx": pad_idx, "retrieved_drone_id": did}
+
+        elif cmd in ("RETRIEVE_ALL_PADS", "RETRIEVE_ALL_LANDED"):
+            retrieved = self.sim.retrieve_all_landed_drones()
+            return {"status": "OK", "cmd": cmd, "retrieved_drone_ids": retrieved, "count": len(retrieved)}
+
         elif cmd == "REBOOT_FLEET":
             self.sim.reboot_fleet()
             return {"status": "OK", "cmd": cmd, "drone_count": len(self.sim.drones)}

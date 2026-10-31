@@ -109,7 +109,6 @@
           <span>GCS HORIZON: <strong>140m</strong></span>
           <span id="rf-env-status">RF: <strong>NOMINAL</strong></span>
         </div>
-        <button id="btn-jam-gnss" class="tactical-btn btn-amber" style="margin-top: 6px;" title="Toggle Tactical GNSS/GPS Denial &amp; Dead-Reckoning RTB across Swarm">&#x26A0; TOGGLE GNSS DENIAL</button>
       </div>
 
       <!-- Section: Flight Formation -->
@@ -143,7 +142,7 @@
         </div>
         <div class="btn-grid-2" style="margin-top: 4px;">
           <button id="btn-toggle-patrol" class="tactical-btn btn-patrol" title="Continuous 3D figure-8 patrol stream">&#x221E; FIG-8 STREAM</button>
-          <button id="btn-toggle-rng" class="tactical-btn btn-rng" title="Tactical RNG touch-and-go reconnaissance">&#x1F3B2; RNG RECON</button>
+          <button id="btn-toggle-rng" class="tactical-btn btn-rng" title="Tactical RNG touch-and-go reconnaissance">&#x25C7; RNG RECON</button>
         </div>
         <button id="btn-stop-route" class="tactical-btn btn-danger" style="display: none; margin-top: 4px; width: 100%;">&#x23F9; ABORT ROUTE</button>
         
@@ -182,10 +181,7 @@
       <!-- Section: Fleet Flight Operations (TKT-41) -->
       <div class="control-group">
         <div class="group-title">&#x25C8; FLEET FLIGHT OPERATIONS</div>
-        <div class="btn-grid-2" style="margin-bottom: 6px;">
-          <button id="btn-scramble-swarm" class="tactical-btn btn-send" title="Sequenced cold scramble: Flagship spools up, followers staggered">&#x25B2; SCRAMBLE SWARM</button>
-          <button id="btn-cold-reset" class="tactical-btn" title="Reset/land fleet cold onto ground launch pads">&#x25BC; COLD GROUND</button>
-        </div>
+        <button id="btn-scramble-swarm" class="tactical-btn btn-send" style="margin-bottom: 6px; width: 100%;" title="Sequenced cold scramble: Flagship spools up, followers staggered">&#x25B2; SCRAMBLE SWARM</button>
         <div class="btn-grid-2">
           <button id="btn-spawn-pad" class="tactical-btn" title="Stage standby reinforcement drone cold on pad with pre-briefing">&#x229E; STAGE REINFORCE</button>
           <button id="btn-reinforce-swarm" class="tactical-btn btn-send" title="Immediate launch reserve airframe from base pad">&#x25B2; LAUNCH RESERVE</button>

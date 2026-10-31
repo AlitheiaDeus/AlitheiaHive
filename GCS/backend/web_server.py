@@ -254,6 +254,20 @@ class SwarmWebServer:
 
         elif cmd in ("SET_COMMS_MODE", "SET_MODE"):
             mode = cmd_dict.get("mode", "TETHERED_RELAY")
+            # Invariant: Physical tether umbilical cannot be attached mid-flight from GCS
+            if mode.upper() in ("TETHERED_RELAY", "TETHER_RELAY", "TETHERED") and self.sim.comms_mode != "TETHERED_RELAY":
+                airborne = any(
+                    not d.crashed and d.flight_state not in ("LANDED", "GROUND_IDLE")
+                    for d in self.sim.drones
+                )
+                if airborne:
+                    self.session_manager.add_event("WARN", "Rejected Tether Relay switch: Umbilical cannot be attached mid-flight", sim_time=self.sim.sim_time)
+                    return {
+                        "status": "ERROR",
+                        "error": "TETHER_LOCK_AIRBORNE",
+                        "message": "Physical tether umbilical cannot be attached mid-flight from GCS.",
+                        "comms_mode": self.sim.comms_mode,
+                    }
             ok = self.sim.set_comms_mode(mode)
             self.session_manager.add_event("CMD", f"Swarm Architecture switched -> {mode}", sim_time=self.sim.sim_time)
             return {
@@ -446,6 +460,25 @@ class SwarmWebServer:
                 "released_drone_ids": res.get("released_drone_ids", []),
                 "current_wave": res.get("current_wave", 1),
             }
+
+        elif cmd in ("RETRIEVE_PAD", "RETRIEVE_DRONE_FROM_PAD"):
+            pad_idx = int(cmd_dict.get("pad_idx", 0))
+            did = self.sim.retrieve_drone_from_pad(pad_idx)
+            self.session_manager.add_event(
+                "SIM",
+                f"Ground crew retrieved airframe from pad {pad_idx}: Drone {did}" if did is not None else f"Pad {pad_idx} empty",
+                sim_time=self.sim.sim_time,
+            )
+            return {"status": "OK", "cmd": cmd, "pad_idx": pad_idx, "retrieved_drone_id": did}
+
+        elif cmd in ("RETRIEVE_ALL_PADS", "RETRIEVE_ALL_LANDED"):
+            retrieved = self.sim.retrieve_all_landed_drones()
+            self.session_manager.add_event(
+                "SIM",
+                f"Ground crew retrieved {len(retrieved)} airframe(s) from launch pads into hangar",
+                sim_time=self.sim.sim_time,
+            )
+            return {"status": "OK", "cmd": cmd, "retrieved_drone_ids": retrieved, "count": len(retrieved)}
 
         elif cmd in ("LAND_DRONE", "COMMAND_LAND_DRONE"):
             drone_id = int(cmd_dict.get("id", cmd_dict.get("drone_id", 0)))

@@ -149,6 +149,11 @@ def parse_arguments() -> argparse.Namespace:
         action="store_true",
         help="Launch SIM and GCS in decoupled independent OS processes",
     )
+    parser.add_argument(
+        "--start-air",
+        action="store_true",
+        help="Initialize drones airborne in cruise at 20m (default: grounded cold on numbered pads)",
+    )
     return parser.parse_args()
 
 
@@ -233,7 +238,7 @@ def run_sim_only(args: argparse.Namespace) -> int:
     print(f"  MAVLink v2 Loopback: UDP {args.mavlink_port}")
     print("=" * 64)
 
-    engine = SITLWorldEngine(drone_count=args.count)
+    engine = SITLWorldEngine(drone_count=args.count, cold_start=not getattr(args, "start_air", False))
     bridge = MavlinkBridge(
         sim=engine,
         host=args.host,
@@ -269,7 +274,7 @@ async def run_gcs_only(args: argparse.Namespace) -> int:
     print(f"  Emitting Operator Commands: UDP {args.rx_port}")
     print("=" * 64)
 
-    engine = SITLWorldEngine(drone_count=args.count)
+    engine = SITLWorldEngine(drone_count=args.count, cold_start=not getattr(args, "start_air", False))
     bridge = MavlinkBridge(
         sim=engine,
         host=args.host,
@@ -391,7 +396,7 @@ async def run_unified_interactive(args: argparse.Namespace) -> int:
     print("  Bubble 3: SITL World Engine & MAVLink Loopback")
     print("=" * 64)
 
-    engine = SITLWorldEngine(drone_count=args.count)
+    engine = SITLWorldEngine(drone_count=args.count, cold_start=not getattr(args, "start_air", False))
     bridge = MavlinkBridge(
         sim=engine,
         host=args.host,

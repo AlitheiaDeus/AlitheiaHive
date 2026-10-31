@@ -80,11 +80,6 @@
             });
         }
 
-        // Tactical GNSS Denial & Dead-Reckoning RTB Trigger (TKT-52)
-        setupBtn('btn-jam-gnss', () => {
-            logEvent('EW', 'Toggling Tactical GNSS Denial across Swarm: TOGGLE_GNSS_DENIAL');
-            window.swarmClient?.send({ cmd: 'TOGGLE_GNSS_DENIAL' });
-        });
 
         // Brain Selectors (Legacy / Hot-swap)
         setupBtn('btn-brain-lf', () => dispatchBrain('LEADER_FOLLOWER'));
@@ -203,11 +198,6 @@
             window.swarmClient?.send({ cmd: 'SCRAMBLE_SWARM', stagger: 1.2 });
         });
 
-        setupBtn('btn-cold-reset', () => {
-            logEvent('CMD', 'Resetting fleet to cold ground pads: COLD_RESET');
-            window.swarmClient?.send({ cmd: 'COLD_RESET' });
-        });
-
         setupBtn('btn-spawn-pad', () => {
             logEvent('CMD', 'Staging standby reinforcement drone on pad: SPAWN_REINFORCEMENT');
             window.swarmClient?.send({ cmd: 'SPAWN_REINFORCEMENT' });
@@ -292,6 +282,13 @@
     }
 
     function dispatchCommsMode(modeName) {
+        if (modeName === 'TETHERED_RELAY' && currentCommsMode !== 'TETHERED_RELAY') {
+            const tetherBtn = document.getElementById('btn-mode-tether');
+            if (tetherBtn && tetherBtn.disabled) {
+                logEvent('WARN', 'Rejected: Physical tether umbilical cannot be attached mid-flight');
+                return;
+            }
+        }
         logEvent('CMD', `Switching Swarm Architecture -> ${modeName}`);
         window.swarmClient?.send({ cmd: 'SET_COMMS_MODE', mode: modeName });
     }
@@ -345,6 +342,23 @@
         if (frame.comms_mode && frame.comms_mode !== currentCommsMode) {
             currentCommsMode = frame.comms_mode;
             updateCommsButtons(currentCommsMode);
+        }
+
+        // Lock TETHER RELAY once airborne if currently in wireless star or P2P mesh
+        const isAirborne = Array.isArray(frame.drones) && frame.drones.some(d => !d.crashed && d.flight_state !== 'LANDED' && d.flight_state !== 'GROUND_IDLE');
+        const tetherBtn = document.getElementById('btn-mode-tether');
+        if (tetherBtn) {
+            if (currentCommsMode !== 'TETHERED_RELAY' && isAirborne) {
+                tetherBtn.disabled = true;
+                tetherBtn.style.opacity = '0.35';
+                tetherBtn.style.cursor = 'not-allowed';
+                tetherBtn.title = 'HARDLINE TETHER LOCKED: Umbilical anchored at mission prep in WE';
+            } else {
+                tetherBtn.disabled = false;
+                tetherBtn.style.opacity = '1.0';
+                tetherBtn.style.cursor = 'pointer';
+                tetherBtn.title = 'Hardline tethered leader, star RF followers, immune to EW jamming';
+            }
         }
         if (frame.rf_jamming !== undefined && !isDraggingJammingSlider) {
             const pct = Math.round(frame.rf_jamming * 100);

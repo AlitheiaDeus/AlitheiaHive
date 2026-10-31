@@ -177,6 +177,77 @@ class TestColdStartPadScramble(unittest.TestCase):
         finally:
             bridge.close()
 
+    def test_operator_incompetence_unretrieved_pad_collision(self):
+        """[FIX-09] Operator clears ATC pad registry prematurely without physical WE retrieval:
+        descending drone collides with unretrieved airframe sitting on pad at touchdown."""
+        sim = SwarmSimulator(count=2, seed=42, cold_start=False)
+        # Place Drone 0 landed on Pad 0
+        pad0 = sim.get_pad_position(0)
+        d0 = sim.drones[0]
+        d0.pos = np.copy(pad0)
+        d0.flight_state = "LANDED"
+        d0.status = "LANDED"
+        d0.touchdown_confirmed = True
+        d0.rotor_rpm = 0.0
+
+        # Operator prematurely clears pad registry without ground crew physical retrieval
+        sim.clear_pads()
+        self.assertNotIn(0, sim.landing_pads)
+
+        # Command Drone 1 to land: ATC allocates Pad 0 because registry was wiped
+        d1 = sim.drones[1]
+        sim.command_land_drone(d1.id)
+        self.assertEqual(d1.landing_pad_idx, 0)
+        self.assertEqual(d1.flight_state, "DESCENDING")
+
+        # Position Drone 1 right above Pad 0 at touchdown threshold (Z = 0.50m)
+        d1.pos = np.copy(pad0)
+        d1.pos[2] = 0.50
+        d1.vel = np.array([0.0, 0.0, -0.5])
+
+        # Step physics: Touchdown check triggers Zone 4 clash with unretrieved Drone 0!
+        sim.step(DT)
+        self.assertTrue(d1.crashed)
+        self.assertTrue(d0.crashed)
+        self.assertEqual(d1.status, "CRASHED")
+        self.assertEqual(d0.status, "CRASHED")
+
+    def test_ground_crew_physical_retrieval_prevents_collision(self):
+        """[FIX-09] Ground crew physically retrieves airframe from pad before next wave lands:
+        incoming drone touches down safely with TOUCHDOWN_CONFIRMED."""
+        sim = SwarmSimulator(count=2, seed=42, cold_start=False)
+        pad0 = sim.get_pad_position(0)
+        d0 = sim.drones[0]
+        d0.pos = np.copy(pad0)
+        d0.flight_state = "LANDED"
+        d0.status = "LANDED"
+        d0.touchdown_confirmed = True
+        d0.rotor_rpm = 0.0
+
+        # Ground crew retrieves Drone 0 from Pad 0 into hangar
+        retrieved_id = sim.retrieve_drone_from_pad(0)
+        self.assertEqual(retrieved_id, d0.id)
+        self.assertTrue(d0.retrieved)
+        self.assertEqual(d0.flight_state, "RETRIEVED")
+        self.assertGreater(abs(d0.pos[0] - pad0[0]), 50.0)
+
+        # Clear ATC registry and land Drone 1 on Pad 0
+        sim.clear_pads()
+        d1 = sim.drones[1]
+        sim.command_land_drone(d1.id)
+        self.assertEqual(d1.landing_pad_idx, 0)
+
+        # Position Drone 1 at touchdown threshold
+        d1.pos = np.copy(pad0)
+        d1.pos[2] = 0.50
+        d1.vel = np.array([0.0, 0.0, -0.5])
+
+        # Step physics: Pad is physically clear, touchdown confirmed!
+        sim.step(DT)
+        self.assertFalse(d1.crashed)
+        self.assertEqual(d1.flight_state, "LANDED")
+        self.assertTrue(d1.touchdown_confirmed)
+
 
 if __name__ == "__main__":
     unittest.main()

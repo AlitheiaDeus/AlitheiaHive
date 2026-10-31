@@ -118,6 +118,8 @@ class Drone:
         self.drift_radius: float = 0.0       # Time-scaled drift error circle (meters)
         self.rssi_prev: float = -100.0       # Previous scalar Howl RSSI for gradient ascent (dBm)
         self.gnss_settled: bool = False      # Emergency blind soft-settle flag
+        self.crashed_while_linked: bool = False
+        self.retrieved: bool = False
 
     def reset_state(
         self,
@@ -185,6 +187,8 @@ class Drone:
         self.drift_radius = 0.0
         self.rssi_prev = -100.0
         self.gnss_settled = False
+        self.crashed_while_linked = False
+        self.retrieved = False
 
     @property
     def target_reached(self) -> bool:
@@ -251,4 +255,6 @@ class Drone:
             "reciprocal_heading": round(float(self.reciprocal_heading), 3),
             "drift_radius": round(float(self.drift_radius), 2),
             "gnss_settled": self.gnss_settled,
+            "crashed_while_linked": self.crashed_while_linked,
+            "retrieved": self.retrieved,
         }
