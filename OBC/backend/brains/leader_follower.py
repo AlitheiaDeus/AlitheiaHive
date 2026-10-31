@@ -509,9 +509,19 @@ class LeaderFollowerBrain(BaseBrain):
             if not d.crashed and d.flight_state not in ("LANDED", "DESCENDING")
         ]
 
-        # 1. Goal Migration: Escort follows behind leader along formation heading
+        # 1. Goal Migration: Dispersed trailing envelope so boids do not converge onto a single point
         heading = np.array([math.cos(self.formation_heading), math.sin(self.formation_heading), 0.0], dtype=float)
-        target_station = leader.pos - heading * 8.0
+        lateral = np.array([-heading[1], heading[0], 0.0], dtype=float)
+        k = getattr(drone, "id", 1)
+        row = (k + 1) // 2
+        side = 1.0 if (k % 2 == 1) else -1.0
+        z_offset = (row * 0.8) if (side > 0) else (-row * 0.6)
+        target_station = (
+            leader.pos
+            - (heading * (6.0 + row * 4.0))
+            + (lateral * (side * row * 4.5))
+            + np.array([0.0, 0.0, z_offset], dtype=float)
+        )
         a_goal = self._steer_toward(drone.pos, drone.vel, target_station, max_speed=V_CRUISE, arrival_radius=8.0)
 
         # 2. Separation (d < 5.0m)
@@ -524,20 +534,20 @@ class LeaderFollowerBrain(BaseBrain):
             d = float(np.linalg.norm(diff))
             if 0.001 < d < R_SEP:
                 rep_strength = (R_SEP - d) / (d + 0.1)
-                a_sep += (diff / d) * rep_strength * 4.0
+                a_sep += (diff / d) * rep_strength * 6.0
 
                 # 3D Z-Space staggering: if horizontally close, push vertically apart to break 2D planes
                 d_xy = float(math.hypot(diff[0], diff[1]))
                 if d_xy < 3.5:
                     z_sign = 1.0 if diff[2] >= 0.0 else -1.0
-                    a_sep[2] += z_sign * (3.5 - d_xy) * 3.0
+                    a_sep[2] += z_sign * (3.5 - d_xy) * 4.0
 
                 # Zone 3 relative-velocity approach damping (brake incoming momentum)
                 if d < 3.5:
                     v_rel = drone.vel - peer.vel
                     closing = float(np.dot(v_rel, diff / d))
                     if closing < 0:
-                        a_sep += -(diff / d) * closing * 2.5
+                        a_sep += -(diff / d) * closing * 3.5
 
         # 3. Alignment (d < 14.0m) - velocity matching with flockmates
         a_align = np.zeros(3, dtype=float)

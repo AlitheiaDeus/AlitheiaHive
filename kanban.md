@@ -45,8 +45,10 @@ kanban
     tkt37["SITL Provider (ArduPilot / PX4)"]@{ ticket: '[TKT-37]', priority: 'Low' }
     tkt38["Hardware Provider (Radio Modem)"]@{ ticket: '[TKT-38]', priority: 'Very Low' }
   todo["Todo (Active Pipeline)"]
+    fix09["Strict WE-GCS Airgap & Cold-Start"]@{ ticket: '[FIX-09]', priority: 'High' }
   in_progress["In Progress (WIP = 1)"]
   completed["Completed (Fresh / Review)"]
+    tkt53["Flight Formation Test Suite & Playback"]@{ ticket: '[TKT-53]', priority: 'High' }
     tkt43["Dynamic Hungarian Formation Inversion"]@{ ticket: '[TKT-43]', priority: 'High' }
     tkt52["Tactical GNSS Denial & Dead-Reckoning"]@{ ticket: '[TKT-52]', priority: 'High' }
     tkt42["Batched ATC Pad Recovery"]@{ ticket: '[TKT-42]', priority: 'High' }
@@ -79,6 +81,8 @@ kanban
 
 | Ticket ID | Grade | Title | Operational Inspiration | Spec Document |
 | :--- | :--- | :--- | :--- | :--- |
+| **TKT-53** | 🚀 Feature | Flight Formation Test Suite & Playback Recorder | Comprehensive formation testing & trajectory playback | [`tasks/TKT-53_flight_formation_test_suite.md`](tasks/TKT-53_flight_formation_test_suite.md) |
+| **FIX-09** | 🛠️ Improvement | Strict WE-GCS Airgap & Cold-Start Ground Truth | Operator pad clearance error collision & cold-start default | [`tasks/FIX-09_strict_airgap_and_ground_truth_pads.md`](tasks/FIX-09_strict_airgap_and_ground_truth_pads.md) |
 | **TKT-52** | 🚀 Feature | Tactical GNSS Denial & Dead-Reckoning RTB | Real EW GPS spoofing in contested airspace | [`tasks/TKT-52_tactical_gnss_denial.md`](tasks/TKT-52_tactical_gnss_denial.md) |
 | **TKT-43** | 🛠️ Improvement | Dynamic Hungarian Formation Inversion | Eliminates 80m cross-flight drag races on U-turns | [`tasks/TKT-43_dynamic_hungarian_inversion.md`](tasks/TKT-43_dynamic_hungarian_inversion.md) |
 | **TKT-42** | 🛠️ Improvement | Batched ATC Pad Recovery & Downwash Clearance | Large fleets landing in dirt outside pad capacity | [`tasks/TKT-42_batched_atc_recovery.md`](tasks/TKT-42_batched_atc_recovery.md) |

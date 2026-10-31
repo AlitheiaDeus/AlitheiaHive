@@ -958,10 +958,18 @@ class SITLWorldEngine:
                 drone.rotor_rpm = 0.0
                 continue
 
+            # Priority Safety Overrides: attenuate forward guidance during emergency Zone 3 avoidance
+            a_avoid = avoidance_accs[drone.id]
+            avoid_mag = float(np.linalg.norm(a_avoid))
+            a_guide = guidance_accs[drone.id]
+            if avoid_mag > 8.0:
+                attenuation = max(0.2, 1.0 - (avoid_mag - 8.0) / 25.0)
+                a_guide = a_guide * attenuation
+
             # Sum and clamp accelerations
             total_acc = (
-                guidance_accs[drone.id]
-                + avoidance_accs[drone.id]
+                a_guide
+                + a_avoid
                 + tether_accs[drone.id]
             )
             acc_mag = float(np.linalg.norm(total_acc))
@@ -1627,9 +1635,28 @@ class SITLWorldEngine:
                 # Check Zone 3: Critical Danger (1.5m < d <= 3.5m)
                 if dist <= ZONE3_OUTER:
                     # Evasive push magnitude
-                    push_mag = 12.0 + 8.0 * ((ZONE3_OUTER - dist) / (ZONE3_OUTER - ZONE4_CLASH))
+                    push_mag = 16.0 + 12.0 * ((ZONE3_OUTER - dist) / (ZONE3_OUTER - ZONE4_CLASH))
                     a_push_i = push_mag * n_ij
                     a_push_j = -push_mag * n_ij
+
+                    # Horizontal lateral breakout and vertical corridor expansion to prevent stacking plunge
+                    d_xy = float(math.hypot(diff[0], diff[1]))
+                    if d_xy < 2.8:
+                        if d_xy > 0.05:
+                            n_xy = np.array([diff[0] / d_xy, diff[1] / d_xy, 0.0], dtype=float)
+                        else:
+                            n_xy = np.array([1.0, 0.0, 0.0], dtype=float)
+                        lat_push = 14.0 * ((2.8 - d_xy) / 2.8)
+                        a_push_i += lat_push * n_xy
+                        a_push_j -= lat_push * n_xy
+
+                        # Vertical corridor expansion: push vertically apart if Z difference < 2.0m
+                        z_diff = diff[2]
+                        if abs(z_diff) < 2.0:
+                            z_sign = 1.0 if z_diff >= 0.0 else -1.0
+                            z_push = 16.0 * ((2.0 - abs(z_diff)) / 2.0)
+                            a_push_i[2] += z_sign * z_push
+                            a_push_j[2] -= z_sign * z_push
 
                     # Relative-velocity damping (brakes incoming momentum)
                     # v_rel = v_i - v_j. Project onto n_ij.
@@ -1637,8 +1664,8 @@ class SITLWorldEngine:
                     v_closing = float(np.dot(v_rel, n_ij))
                     if v_closing < 0.0:
                         # Approaching each other: apply opposing braking force
-                        a_damp_i = -1.5 * (v_closing * n_ij)
-                        a_damp_j = 1.5 * (v_closing * n_ij)
+                        a_damp_i = -3.5 * (v_closing * n_ij)
+                        a_damp_j = 3.5 * (v_closing * n_ij)
                     else:
                         a_damp_i = np.zeros(3, dtype=float)
                         a_damp_j = np.zeros(3, dtype=float)
@@ -1647,9 +1674,9 @@ class SITLWorldEngine:
                     accs[drone_j.id] += a_push_j + a_damp_j
 
                     # P2P Yip RSSI Emergency Cushion (TKT-52):
-                    # Inter-drone close-range proximity cushion (hat_d < 2.0m <=> RSSI > -38 dBm)
-                    if dist <= 2.0:
-                        cushion_mag = 10.0 * (2.0 - dist)
+                    # Inter-drone close-range proximity cushion (hat_d < 2.2m <=> RSSI > -38 dBm)
+                    if dist <= 2.2:
+                        cushion_mag = 22.0 * (2.2 - dist)
                         accs[drone_i.id] += cushion_mag * n_ij
                         accs[drone_j.id] -= cushion_mag * n_ij
 
