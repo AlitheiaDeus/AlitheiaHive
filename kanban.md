@@ -48,12 +48,12 @@ kanban
     tkt39["Standalone OBC Socket Daemon"]@{ ticket: '[TKT-39]', priority: 'Medium' }
     tkt22["Manual RC Joystick & Gamepad"]@{ ticket: '[TKT-22]', priority: 'Medium' }
   todo["Todo (Active Pipeline)"]
-    tkt58["1-Click Aux Mission: Patrol to BINGO RTB"]@{ ticket: '[TKT-58]', priority: 'Medium' }
     pln02["PLN-02: Auxiliary Mission Engine Master"]@{ ticket: '[PLN-02]', priority: 'High' }
   in_progress["In Progress (WIP = 1)"]
-    tlk01["Codebase Sweep Remediation & Phase 3 Alignment"]@{ ticket: '[TLK-01]', priority: 'Very High' }
+    tkt58["1-Click Aux Mission: Patrol to BINGO RTB"]@{ ticket: '[TKT-58]', priority: 'Medium' }
 
   completed["Completed (Fresh / Review)"]
+    tlk01["Induced Coma OBC Airgap Resuscitation"]@{ ticket: '[TLK-01]', priority: 'Very High' }
     tkt57["Airframe Tier Registry & Authorization Gate"]@{ ticket: '[TKT-57]', priority: 'Medium' }
     tkt56["4D Waypoint Queue & Loiter Progress Engine"]@{ ticket: '[TKT-56]', priority: 'High' }
     tkt55["Tactical Formation Orientations & Perimeter Headings"]@{ ticket: '[TKT-55]', priority: 'High' }

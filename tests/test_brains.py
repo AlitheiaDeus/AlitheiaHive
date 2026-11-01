@@ -11,7 +11,6 @@ import json
 
 from SIM.backend.sitl_engine import SwarmSimulator, DT, A_MAX, ZONE4_CLASH
 from OBC.backend.brains import BRAIN_REGISTRY, LeaderFollowerBrain, GossipConsensusBrain
-from tests.quarantine import quarantine_until
 
 
 class TestBrains(unittest.TestCase):
@@ -45,7 +44,6 @@ class TestBrains(unittest.TestCase):
         self.assertEqual(self.sim.active_brain_name, "LEADER_FOLLOWER")
         self.assertIsInstance(self.sim.brain, LeaderFollowerBrain)
 
-    @quarantine_until(heartbeat=3, reason="Requires Heartbeat 3 P2P gossip echo propagation")
     def test_gossip_propagation_and_quorum_consensus(self):
         """Verify P2P multi-hop gossip echo wave and quorum barrier synchronization."""
         self.sim.set_brain("GOSSIP_CONSENSUS")
@@ -249,7 +247,6 @@ class TestBrains(unittest.TestCase):
         # Heading MUST have rotated towards +Y (pi/2) and NOT remained frozen at 0.0!
         self.assertGreater(brain.formation_heading, 0.05)
 
-    @quarantine_until(heartbeat=3, reason="Requires Heartbeat 3 P2P gossip consensus convergence")
     def test_gossip_autopatrol_consensus_convergence(self):
         """Verify that during target auto-patrol in Gossip Consensus mode,
         target injection is paced so that multi-hop quorum can settle,

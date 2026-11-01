@@ -12,10 +12,8 @@ import unittest
 import math
 import numpy as np
 from SIM.backend.sitl_engine import SwarmSimulator, ZONE4_CLASH
-from tests.quarantine import quarantine_until
 
 
-@quarantine_until(heartbeat=3, reason="Requires Heartbeat 3 P2P gossip formation geometry")
 class TestGossipFormations(unittest.TestCase):
 
     def test_gossip_perimeter_patrol_geometry(self):

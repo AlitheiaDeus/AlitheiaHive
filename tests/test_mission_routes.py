@@ -8,7 +8,6 @@ import unittest
 import numpy as np
 
 from SIM.backend.sitl_engine import SwarmSimulator, ROUTE_PRESETS
-from tests.quarantine import quarantine_until
 
 
 class TestMissionRoutes(unittest.TestCase):
@@ -157,7 +156,6 @@ class TestMissionRoutes(unittest.TestCase):
         self.assertEqual(d1.current_wp_idx, 2)
         self.assertEqual(len(d1.mission_waypoints), len(ROUTE_PRESETS["HEXAGON_SWEEP"]))
 
-    @quarantine_until(heartbeat=3, reason="Requires Heartbeat 3 P2P gossip consensus route progression")
     def test_gossip_consensus_route_progression(self):
         """In Gossip consensus mode, swarm centroid arrival advances the consensus waypoint."""
         sim = SwarmSimulator(drone_count=4)

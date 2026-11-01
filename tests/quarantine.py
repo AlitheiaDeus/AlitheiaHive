@@ -13,7 +13,7 @@ from typing import Callable, TypeVar
 
 T = TypeVar("T")
 
-ACTIVE_HEARTBEAT_STAGE: int = int(os.environ.get("SWARM_HEARTBEAT_STAGE", "2"))
+ACTIVE_HEARTBEAT_STAGE: int = int(os.environ.get("SWARM_HEARTBEAT_STAGE", "3"))
 QUARANTINE_REGISTRY: list[tuple[int, str, str]] = []
 
 

@@ -67,7 +67,8 @@
 ---
 
 ## Verification Criteria
-- [ ] Automated regression suite passes 230/230 tests cleanly with code 0 (`.\run.ps1 -UnitTest`).
-- [ ] Smoke test passes in $< 0.15\text{s}$ (`.\run.ps1 -SmokeTest`).
-- [ ] `tests/test_airgap_integrity.py` confirms zero SIM imports or `self.sim` usage in `OBC/`.
-- [ ] No regression in single-process or multi-process execution modes.
+- [x] Automated regression suite passes 236/236 tests cleanly with code 0 (`.\run.ps1 -UnitTest`).
+- [x] Smoke test passes in $< 0.15\text{s}$ (`.\run.ps1 -SmokeTest`).
+- [x] `tests/test_airgap_integrity.py` confirms zero SIM imports or `self.sim` usage in `OBC/`.
+- [x] No regression in single-process or multi-process execution modes.
+- *(Note: Parts 2 and 3 remain scoped for subsequent feature branches following completion of the 4-commit Induced Coma refactor on `refactor/airgap-induced-coma`.)*

@@ -9,7 +9,6 @@ import unittest
 import numpy as np
 
 from SIM.backend.sitl_engine import SwarmSimulator
-from tests.quarantine import quarantine_until
 
 
 class TestWaypointEngine(unittest.TestCase):
@@ -179,7 +178,6 @@ class TestWaypointEngine(unittest.TestCase):
         self.assertEqual(leader.wp_total_loiter, 5.0)
         self.assertFalse(leader.wp_loitering)
 
-    @quarantine_until(heartbeat=3, reason="Requires Heartbeat 3 P2P gossip 4D loiter and settlement")
     def test_gossip_consensus_4d_loiter_and_settlement(self):
         """GossipConsensus brain correctly executes 4D loiter countdowns and escort settlement."""
         sim = SwarmSimulator(drone_count=4)
@@ -238,7 +236,6 @@ class TestWaypointEngine(unittest.TestCase):
         for d in sim.drones:
             np.testing.assert_allclose(d.acknowledged_target, next_target)
 
-    @quarantine_until(heartbeat=3, reason="Requires Heartbeat 3 P2P gossip route pause and skip")
     def test_gossip_consensus_pause_and_skip(self):
         """GossipConsensus supports route pause and manual waypoint skip."""
         sim = SwarmSimulator(drone_count=4)

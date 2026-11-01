@@ -340,10 +340,46 @@ class SITLWorldEngine:
                     if p.msg_type not in ("LEADER_HEARTBEAT", "ESCORT_YIP")
                 ]
                 sender.outbox.append(self._build_transceiver_beacon(sender))
+        elif self.active_brain_name == "GOSSIP_CONSENSUS":
+            gossip_tick = False
+            last_g_tick = getattr(self, "_last_gossip_broadcast", -1.0)
+            if self.sim_time - last_g_tick >= HEARTBEAT_INTERVAL:
+                self._last_gossip_broadcast = self.sim_time
+                gossip_tick = True
 
-        for sender in living:
-            if not sender.outbox:
-                continue
+            for sender in living:
+                if not getattr(sender, "enrolled", True):
+                    continue
+                sender.outbox = [
+                    p for p in sender.outbox
+                    if p.msg_type not in ("GOSSIP_ECHO", "PEER_BEACON")
+                ]
+                if isinstance(sender.brain, GossipConsensusBrain):
+                    if gossip_tick:
+                        sender.outbox.append(sender.brain.emit_gossip_packet(self._build_local_telemetry(sender)))
+                    else:
+                        pos_list = None if getattr(sender, "gnss_denied", False) else [float(v) for v in sender.pos]
+                        sender.outbox.append(
+                            RadioPacket(
+                                sender_id=sender.id,
+                                msg_type="PEER_BEACON",
+                                timestamp=float(self.sim_time),
+                                payload={
+                                    "id": int(sender.id),
+                                    "pos": pos_list,
+                                    "vel": [float(v) for v in sender.vel],
+                                    "yaw": float(sender.yaw),
+                                    "enrolled": bool(getattr(sender, "enrolled", True)),
+                                    "flight_state": str(sender.flight_state),
+                                    "active_seq": int(sender.brain.peer_state.active_seq),
+                                    "echo_seq": int(sender.brain.peer_state.pending_seq),
+                                    "echo_target": [float(v) for v in sender.brain.peer_state.pending_target],
+                                },
+                            )
+                        )
+
+        all_senders = [d for d in self.drones if d.outbox]
+        for sender in all_senders:
             out_packets = list(sender.outbox)
             sender.outbox.clear()
             max_tx = RADIO_RANGE if self.active_brain_name == "LEADER_FOLLOWER" else (
@@ -354,9 +390,19 @@ class SITLWorldEngine:
                     if receiver.id == sender.id:
                         continue
                     dist = float(np.linalg.norm(sender.pos - receiver.pos))
-                    r_limit = RANGE_P2P if pkt.msg_type == "GOSSIP_ECHO" else max_tx
+                    r_limit = RANGE_P2P if pkt.msg_type in ("GOSSIP_ECHO", "PEER_BEACON") else max_tx
                     if dist <= r_limit and not self.is_packet_dropped(dist, is_hardline=False, max_range=r_limit):
                         receiver.inbox.append(pkt)
+
+        if self.active_brain_name == "GOSSIP_CONSENSUS":
+            for receiver in living:
+                if isinstance(receiver.brain, GossipConsensusBrain):
+                    in_pkts = list(receiver.inbox)
+                    receiver.inbox.clear()
+                    receiver.brain.ingest_gossip_packets(
+                        self._build_local_telemetry(receiver),
+                        in_pkts,
+                    )
 
     def _execute_obc_step(self, dt: float) -> Dict[int, np.ndarray]:
         """Execute per-drone autonomous OBC step_drone(telemetry, inbox, dt) across the fleet."""
@@ -408,12 +454,13 @@ class SITLWorldEngine:
             self.active_brain_name = key
             old_heading = getattr(self.brain, "formation_heading", 0.0)
             old_init = getattr(self.brain, "heading_initialized", False)
-            old_formation = getattr(self.brain, "formation_mode", "ECHELON_ESCORT")
+            old_formation = getattr(self.brain, "formation_mode", getattr(self, "formation_mode", "ECHELON_ESCORT"))
             old_slots = dict(getattr(self.brain, "assigned_slots", {}))
             if old_slots and key == "GOSSIP_CONSENSUS" and self.leader is not None:
                 if self.leader.id not in old_slots:
                     old_slots[self.leader.id] = 0
 
+            self._last_gossip_broadcast = -1.0
             for d in self.drones:
                 if key == "GOSSIP_CONSENSUS":
                     d.brain = GossipConsensusBrain(
@@ -424,11 +471,6 @@ class SITLWorldEngine:
                 else:
                     d.brain = BRAIN_REGISTRY[key](drone_id=d.id)
                     d.brain.formation_mode = old_formation
-                if old_init:
-                    d.brain.formation_heading = old_heading
-                    d.brain.heading_initialized = True
-                if old_slots:
-                    d.brain.assigned_slots = dict(old_slots)
 
             if key == "GOSSIP_CONSENSUS":
                 self.brain = _GossipSimProxy(self)
@@ -437,6 +479,13 @@ class SITLWorldEngine:
                 self.brain = _LeaderFollowerSimProxy(self)
                 if key == "LEADER_FOLLOWER" and self.comms_mode == "GOSSIP_CONSENSUS":
                     self.comms_mode = "LEADER_FOLLOWER"
+
+            self.brain.formation_mode = old_formation
+            if old_init:
+                self.brain.formation_heading = old_heading
+                self.brain.heading_initialized = True
+            if old_slots:
+                self.brain.assigned_slots = dict(old_slots)
             return True
         return False
 
@@ -2105,6 +2154,14 @@ class SITLWorldEngine:
         if drone.downlink_active:
             drone.mayday_beacon = True
             drone.mayday_reason = reason or "IMPACT_DETECTED"
+            drone.outbox.append(
+                RadioPacket(
+                    sender_id=drone.id,
+                    msg_type="PEER_BEACON",
+                    timestamp=float(self.sim_time),
+                    payload={"id": int(drone.id), "crashed": True},
+                )
+            )
         if hasattr(self, "fleet_registry"):
             self.fleet_registry.record_casualty(
                 drone_id=drone.id,
@@ -2272,6 +2329,10 @@ class SITLWorldEngine:
                 drone.status = "OVERHEAD_HOLD"
                 drone.acknowledged_target = np.array([0.0, 0.0, 25.0], dtype=float)
                 drone.lkp = np.array([0.0, 0.0, 25.0], dtype=float)
+                if hasattr(drone, "brain") and isinstance(drone.brain, GossipConsensusBrain):
+                    drone.brain.peer_state.active_target = np.array([0.0, 0.0, 25.0], dtype=float)
+                    drone.brain.peer_state.pending_target = np.array([0.0, 0.0, 25.0], dtype=float)
+                    drone.brain.peer_state.gossip_status = "COORDINATED"
         return {"status": "OK", "recovery_stage": self.recovery_stage}
 
     def cancel_rtb(self) -> None:
@@ -3338,6 +3399,15 @@ class _GossipSimProxy(GossipConsensusBrain):
         object.__setattr__(self, "_formation_heading", 0.0)
         object.__setattr__(self, "_heading_initialized", False)
         object.__setattr__(self, "_assigned_slots", {})
+        object.__setattr__(self, "_current_seq", 1)
+        object.__setattr__(self, "_route_active", False)
+        object.__setattr__(self, "_route_paused", False)
+        object.__setattr__(self, "_route_loop", True)
+        object.__setattr__(self, "_route_waypoints", [])
+        object.__setattr__(self, "_current_route_wp_idx", 0)
+        object.__setattr__(self, "_wp_loitering", False)
+        object.__setattr__(self, "_wp_loiter_timer", 0.0)
+        object.__setattr__(self, "_wp_total_loiter", 0.0)
         super().__init__(
             drone_id=0,
             initial_target=getattr(engine, "target_pos", np.array([60.0, 40.0, 30.0])),
@@ -3346,6 +3416,14 @@ class _GossipSimProxy(GossipConsensusBrain):
 
     def _apex_brain(self) -> Optional[GossipConsensusBrain]:
         eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            living = sorted(
+                [d for d in eng.drones if not d.crashed and d.flight_state not in ("LANDED", "DESCENDING")],
+                key=lambda d: d.id,
+            )
+            for d in living:
+                if hasattr(d, "brain") and isinstance(d.brain, GossipConsensusBrain):
+                    return d.brain
         b = eng._primary_drone_brain()
         return b if isinstance(b, GossipConsensusBrain) else None
 
@@ -3375,6 +3453,25 @@ class _GossipSimProxy(GossipConsensusBrain):
                 if d.id == did and hasattr(d, "brain") and isinstance(d.brain, GossipConsensusBrain):
                     return d.brain.peer_state
         return DronePeerState(did, getattr(eng, "target_pos", np.array([60.0, 40.0, 30.0])))
+
+    @property
+    def current_seq(self) -> int:
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        max_seq = object.__getattribute__(self, "_current_seq")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and isinstance(d.brain, GossipConsensusBrain):
+                    max_seq = max(max_seq, d.brain.current_seq, d.brain.peer_state.pending_seq, d.brain.peer_state.active_seq)
+        return max_seq
+
+    @current_seq.setter
+    def current_seq(self, val: int) -> None:
+        object.__setattr__(self, "_current_seq", int(val))
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and isinstance(d.brain, GossipConsensusBrain):
+                    d.brain.current_seq = int(val)
 
     @property
     def formation_mode(self) -> str:
@@ -3432,6 +3529,233 @@ class _GossipSimProxy(GossipConsensusBrain):
                 if hasattr(d, "brain") and d.brain is not None:
                     d.brain.assigned_slots = dict(val)
 
+    @property
+    def route_active(self) -> bool:
+        b = self._apex_brain()
+        return b.route_active if b is not None else object.__getattribute__(self, "_route_active")
+
+    @route_active.setter
+    def route_active(self, val: bool) -> None:
+        object.__setattr__(self, "_route_active", bool(val))
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and isinstance(d.brain, GossipConsensusBrain):
+                    d.brain.route_active = bool(val)
+
+    @property
+    def route_paused(self) -> bool:
+        b = self._apex_brain()
+        return b.route_paused if b is not None else object.__getattribute__(self, "_route_paused")
+
+    @route_paused.setter
+    def route_paused(self, val: bool) -> None:
+        object.__setattr__(self, "_route_paused", bool(val))
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and isinstance(d.brain, GossipConsensusBrain):
+                    d.brain.route_paused = bool(val)
+
+    @property
+    def route_loop(self) -> bool:
+        b = self._apex_brain()
+        return b.route_loop if b is not None else object.__getattribute__(self, "_route_loop")
+
+    @route_loop.setter
+    def route_loop(self, val: bool) -> None:
+        object.__setattr__(self, "_route_loop", bool(val))
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and isinstance(d.brain, GossipConsensusBrain):
+                    d.brain.route_loop = bool(val)
+
+    @property
+    def route_waypoints(self) -> List[np.ndarray]:
+        b = self._apex_brain()
+        return b.route_waypoints if b is not None else object.__getattribute__(self, "_route_waypoints")
+
+    @route_waypoints.setter
+    def route_waypoints(self, val: List[np.ndarray]) -> None:
+        object.__setattr__(self, "_route_waypoints", [np.copy(w) for w in val])
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and isinstance(d.brain, GossipConsensusBrain):
+                    d.brain.route_waypoints = [np.copy(w) for w in val]
+
+    @property
+    def current_route_wp_idx(self) -> int:
+        b = self._apex_brain()
+        return b.current_route_wp_idx if b is not None else object.__getattribute__(self, "_current_route_wp_idx")
+
+    @current_route_wp_idx.setter
+    def current_route_wp_idx(self, val: int) -> None:
+        object.__setattr__(self, "_current_route_wp_idx", int(val))
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and isinstance(d.brain, GossipConsensusBrain):
+                    d.brain.current_route_wp_idx = int(val)
+
+    @property
+    def wp_loitering(self) -> bool:
+        b = self._apex_brain()
+        return b.wp_loitering if b is not None else object.__getattribute__(self, "_wp_loitering")
+
+    @wp_loitering.setter
+    def wp_loitering(self, val: bool) -> None:
+        object.__setattr__(self, "_wp_loitering", bool(val))
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and isinstance(d.brain, GossipConsensusBrain):
+                    d.brain.wp_loitering = bool(val)
+
+    @property
+    def wp_loiter_timer(self) -> float:
+        b = self._apex_brain()
+        return b.wp_loiter_timer if b is not None else object.__getattribute__(self, "_wp_loiter_timer")
+
+    @wp_loiter_timer.setter
+    def wp_loiter_timer(self, val: float) -> None:
+        object.__setattr__(self, "_wp_loiter_timer", float(val))
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and isinstance(d.brain, GossipConsensusBrain):
+                    d.brain.wp_loiter_timer = float(val)
+
+    @property
+    def wp_total_loiter(self) -> float:
+        b = self._apex_brain()
+        return b.wp_total_loiter if b is not None else object.__getattribute__(self, "_wp_total_loiter")
+
+    @wp_total_loiter.setter
+    def wp_total_loiter(self, val: float) -> None:
+        object.__setattr__(self, "_wp_total_loiter", float(val))
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and isinstance(d.brain, GossipConsensusBrain):
+                    d.brain.wp_total_loiter = float(val)
+
+    def on_route_deployed(self, clean_wps: List[np.ndarray], loop: bool = True) -> None:
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if not clean_wps:
+            return
+        first_target = np.array(clean_wps[0][:3], dtype=float)
+        first_loiter = float(clean_wps[0][3]) if len(clean_wps[0]) > 3 else 0.0
+        self.current_seq += 1
+        seq = self.current_seq
+        self.route_waypoints = [np.copy(w) for w in clean_wps]
+        self.route_active = True
+        self.route_paused = False
+        self.route_loop = bool(loop)
+        self.current_route_wp_idx = 0
+        self.wp_loitering = False
+        self.wp_loiter_timer = 0.0
+        self.wp_total_loiter = first_loiter
+
+        for d in eng.drones:
+            if d.crashed:
+                continue
+            d.mission_waypoints = [np.copy(w) for w in clean_wps]
+            d.current_wp_idx = 0
+            d.mission_active = True
+            d.mission_paused = False
+            d.mission_loop = bool(loop)
+            d.wp_loitering = False
+            d.wp_loiter_timer = 0.0
+            d.wp_total_loiter = first_loiter
+            d.acknowledged_target = np.copy(first_target)
+            if hasattr(d, "brain") and isinstance(d.brain, GossipConsensusBrain):
+                d.brain.current_seq = seq
+                d.brain.peer_state.active_seq = seq
+                d.brain.peer_state.pending_seq = seq
+                d.brain.peer_state.active_target = np.copy(first_target)
+                d.brain.peer_state.pending_target = np.copy(first_target)
+                d.brain.peer_state.gossip_status = "COORDINATED"
+
+    def skip_waypoint(self) -> int:
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        wps = self.route_waypoints
+        if not wps:
+            return 0
+        idx = self.current_route_wp_idx
+        if idx + 1 < len(wps):
+            new_idx = idx + 1
+        elif self.route_loop:
+            new_idx = 0
+        else:
+            new_idx = idx
+            self.route_active = False
+
+        next_wp = np.array(wps[new_idx][:3], dtype=float)
+        next_loiter = float(wps[new_idx][3]) if len(wps[new_idx]) > 3 else 0.0
+        self.current_route_wp_idx = new_idx
+        self.wp_loitering = False
+        self.wp_loiter_timer = 0.0
+        self.wp_total_loiter = next_loiter
+        self.current_seq += 1
+        seq = self.current_seq
+        eng.c2._target_pos = np.copy(next_wp)
+
+        for d in eng.drones:
+            if d.crashed:
+                continue
+            d.current_wp_idx = new_idx
+            d.acknowledged_target = np.copy(next_wp)
+            d.wp_loitering = False
+            d.wp_loiter_timer = 0.0
+            d.wp_total_loiter = next_loiter
+            if hasattr(d, "brain") and isinstance(d.brain, GossipConsensusBrain):
+                d.brain.current_seq = seq
+                d.brain.peer_state.active_seq = seq
+                d.brain.peer_state.pending_seq = seq
+                d.brain.peer_state.active_target = np.copy(next_wp)
+                d.brain.peer_state.pending_target = np.copy(next_wp)
+                d.brain.peer_state.gossip_status = "COORDINATED"
+        return new_idx
+
+    def _get_formation_slot(
+        self,
+        drone: Any,
+        k_or_leader: Any = 0,
+        N: Optional[int] = None,
+        target_pos: Optional[Any] = None,
+        overhead_marshal: Optional[bool] = None,
+        clock_s: Optional[float] = None,
+    ) -> np.ndarray:
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        b = self._apex_brain() or self
+        if N is None and target_pos is None:
+            living = sorted(
+                [d for d in eng.drones if not d.crashed and getattr(d, "enrolled", True)],
+                key=lambda d: d.id,
+            )
+            n_val = max(1, len(living))
+            ids = [d.id for d in living]
+            did = int(getattr(drone, "id", 0))
+            k_val = self.assigned_slots.get(did, ids.index(did) if did in ids else 0)
+            t_pos = eng.get_acknowledged_target()
+        else:
+            k_val = int(k_or_leader)
+            n_val = int(N) if N is not None else max(1, len(eng.drones))
+            t_pos = np.array(target_pos if target_pos is not None else eng.get_acknowledged_target(), dtype=float)
+        ovh = eng.overhead_marshal_active if overhead_marshal is None else bool(overhead_marshal)
+        clk = eng.sim_time if clock_s is None else float(clock_s)
+        return GossipConsensusBrain._get_formation_slot(
+            b,
+            drone,
+            k_val,
+            n_val,
+            t_pos,
+            overhead_marshal=ovh,
+            clock_s=clk,
+        )
+
     def reset(self) -> None:
         eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
         if hasattr(eng, "drones"):
@@ -3470,8 +3794,11 @@ class _GossipSimProxy(GossipConsensusBrain):
                 "error": f"Nearest mesh node ({min_dist:.1f}m) out of GCS Howl range ({RANGE_HOWL}m)",
             }
 
-        self.current_seq += 1
-        seq = self.current_seq
+        if not eng.route_active:
+            self.route_active = False
+
+        seq = self.current_seq + 1
+        self.current_seq = seq
         if hasattr(seed_drone, "brain") and isinstance(seed_drone.brain, GossipConsensusBrain):
             seed_drone.brain.current_seq = seq
             pstate = seed_drone.brain.peer_state
@@ -3494,12 +3821,26 @@ class _GossipSimProxy(GossipConsensusBrain):
         if cmd == "SET_TARGET":
             pos = cmd_dict.get("pos", [60.0, 40.0, 30.0])
             return self.inject_target(pos)
+        elif cmd == "SKIP_WAYPOINT":
+            new_idx = self.skip_waypoint()
+            return {"status": "OK", "action": "WAYPOINT_SKIPPED", "current_wp_idx": new_idx}
         res = None
         for d in eng.drones:
             if hasattr(d, "brain") and d.brain is not None:
                 r = d.brain.handle_command(cmd_dict)
                 if r is not None:
                     res = r
+        if cmd == "SET_FORMATION" and isinstance(res, dict) and "formation" in res:
+            object.__setattr__(self, "_formation_mode", res["formation"])
+            eng.formation_mode = res["formation"]
+        elif cmd == "PAUSE_ROUTE":
+            self.route_paused = True
+            for d in eng.drones:
+                d.mission_paused = True
+        elif cmd == "RESUME_ROUTE":
+            self.route_paused = False
+            for d in eng.drones:
+                d.mission_paused = False
         return res
 
     def get_telemetry_extra(self) -> Dict[str, Any]:

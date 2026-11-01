@@ -15,7 +15,6 @@ import math
 import numpy as np
 
 from SIM.backend.sitl_engine import SwarmSimulator, DT
-from tests.quarantine import quarantine_until
 
 
 class TestTacticalFormationHeadings(unittest.TestCase):
@@ -161,7 +160,6 @@ class TestTacticalFormationHeadings(unittest.TestCase):
             self.assertEqual(f.target_yaw, form_heading,
                              f"Drone #{f.id} target_yaw {f.target_yaw} != formation_heading {form_heading}")
 
-    @quarantine_until(heartbeat=3, reason="Requires Heartbeat 3 P2P gossip formation headings")
     def test_gossip_consensus_in_and_out_headings(self):
         """Verify decentralized Gossip Consensus nodes compute inward and outward headings in perimeter modes."""
         self.sim.set_comms_mode("P2P_MESH")
