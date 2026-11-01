@@ -39,7 +39,6 @@ class TestTacticalFormationHeadings(unittest.TestCase):
         self.assertLessEqual(actual_step, max_expected_step,
                              f"Yaw step {actual_step:.5f} exceeded max rate {max_expected_step:.5f}")
 
-    @quarantine_until(heartbeat=2, reason="Requires Heartbeat 2 multi-drone RF formation slots")
     def test_perimeter_in_followers_face_inward(self):
         """Verify PERIMETER_IN sentry nodes face inward toward the protected target/VIP."""
         target_pos = [0.0, 0.0, 20.0]
@@ -72,7 +71,6 @@ class TestTacticalFormationHeadings(unittest.TestCase):
             self.assertLess(yaw_err, 0.05,
                             f"Drone #{f.id} yaw {f.yaw:.2f} did not face inward toward center {expected_yaw:.2f} (err: {yaw_err:.2f})")
 
-    @quarantine_until(heartbeat=2, reason="Requires Heartbeat 2 multi-drone RF formation slots")
     def test_perimeter_out_followers_face_outward(self):
         """Verify PERIMETER_OUT sentry nodes face outward away from the protected target/VIP."""
         target_pos = [0.0, 0.0, 20.0]
@@ -105,7 +103,6 @@ class TestTacticalFormationHeadings(unittest.TestCase):
             self.assertLess(yaw_err, 0.05,
                             f"Drone #{f.id} yaw {f.yaw:.2f} did not face outward from center {expected_yaw:.2f} (err: {yaw_err:.2f})")
 
-    @quarantine_until(heartbeat=2, reason="Requires Heartbeat 2 multi-drone RF formation slots")
     def test_perimeter_in_to_out_transition_smoothness(self):
         """Verify switching between PERIMETER_IN and PERIMETER_OUT rotates airframes 180 deg without snaps."""
         target_pos = [0.0, 0.0, 20.0]
@@ -150,7 +147,6 @@ class TestTacticalFormationHeadings(unittest.TestCase):
         self.assertAlmostEqual(total_delta, math.pi, delta=0.05,
                                msg=f"Follower failed to reverse 180 deg (actual delta: {total_delta:.2f} rad)")
 
-    @quarantine_until(heartbeat=2, reason="Requires Heartbeat 2 multi-drone RF formation heading")
     def test_echelon_escort_uniform_corridor_heading(self):
         """Verify wingmen in ECHELON_ESCORT match the formation corridor heading."""
         self.sim.set_formation("ECHELON_ESCORT")

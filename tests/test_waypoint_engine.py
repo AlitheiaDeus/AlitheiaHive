@@ -35,7 +35,6 @@ class TestWaypointEngine(unittest.TestCase):
         self.assertEqual(leader.wp_total_loiter, 3.0)
         np.testing.assert_allclose(leader.acknowledged_target, [20.0, 10.0, 20.0])
 
-    @quarantine_until(heartbeat=2, reason="Requires Heartbeat 2 multi-drone RF formation slot loiter dwell")
     def test_loiter_countdown_and_dwell(self):
         """Entering waypoint acceptance radius triggers loiter countdown and station hold."""
         sim = SwarmSimulator(drone_count=4)
@@ -77,7 +76,6 @@ class TestWaypointEngine(unittest.TestCase):
         self.assertAlmostEqual(leader.wp_loiter_timer, 1.0, delta=0.15)
         self.assertEqual(leader.current_wp_idx, 0)
 
-    @quarantine_until(heartbeat=2, reason="Requires Heartbeat 2 multi-drone RF escort settlement gate")
     def test_escort_settlement_gate_holds_departure(self):
         """Leader holds departure at loiter station even after timer expires if escorts are not settled."""
         sim = SwarmSimulator(drone_count=3)

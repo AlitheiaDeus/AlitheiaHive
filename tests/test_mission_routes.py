@@ -186,7 +186,6 @@ class TestMissionRoutes(unittest.TestCase):
         self.assertEqual(sim.brain.current_route_wp_idx, 1)
         np.testing.assert_allclose(sim.get_acknowledged_target(), custom_wps[1][:3])
 
-    @quarantine_until(heartbeat=2, reason="Requires Heartbeat 2 multi-drone RF formation slot loiter gate")
     def test_4d_waypoint_loiter_countdown_and_advancement(self):
         """Leader enters loiter at station, counts down wp_loiter_timer, and advances only after loiter expires."""
         sim = SwarmSimulator(drone_count=4)
@@ -243,7 +242,6 @@ class TestMissionRoutes(unittest.TestCase):
         np.testing.assert_allclose(sim.route_waypoints[0], [25.0, 10.0, 22.0, 2.5])
         np.testing.assert_allclose(sim.route_waypoints[1], [40.0, -15.0, 24.0, 1.0])
 
-    @quarantine_until(heartbeat=2, reason="Requires Heartbeat 2 multi-drone RF formation stabilization gate")
     def test_formation_stabilization_gate_holds_leader(self):
         """Leader loitering at waypoint will hold station if escorts are lagging (> 4.0m from slot)."""
         sim = SwarmSimulator(drone_count=4)

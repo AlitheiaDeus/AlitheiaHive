@@ -286,18 +286,69 @@ class SITLWorldEngine:
             patrol_active=bool(self.patrol_active),
         )
 
+    def _build_transceiver_beacon(self, sender: Drone) -> RadioPacket:
+        """Build an RF telemetry beacon packet from the airframe's local registers."""
+        pos_list = None if getattr(sender, "gnss_denied", False) else [float(v) for v in sender.pos]
+        b = getattr(sender, "brain", None)
+        if sender.is_leader:
+            return RadioPacket(
+                sender_id=sender.id,
+                msg_type="LEADER_HEARTBEAT",
+                timestamp=float(self.sim_time),
+                payload={
+                    "pos": pos_list,
+                    "vel": [float(v) for v in sender.vel],
+                    "yaw": float(sender.yaw),
+                    "is_leader": True,
+                    "tier": int(sender.tier),
+                    "crashed": bool(sender.crashed),
+                    "enrolled": bool(getattr(sender, "enrolled", True)),
+                    "flight_state": str(sender.flight_state),
+                    "acknowledged_target": [float(v) for v in sender.acknowledged_target],
+                    "formation_mode": getattr(b, "formation_mode", self.formation_mode),
+                    "formation_heading": float(getattr(b, "formation_heading", 0.0)),
+                    "assigned_slots": dict(getattr(b, "assigned_slots", {})),
+                },
+            )
+        return RadioPacket(
+            sender_id=sender.id,
+            msg_type="ESCORT_YIP",
+            timestamp=float(self.sim_time),
+            payload={
+                "pos": pos_list,
+                "vel": [float(v) for v in sender.vel],
+                "yaw": float(sender.yaw),
+                "is_leader": False,
+                "tier": int(sender.tier),
+                "crashed": bool(sender.crashed),
+                "enrolled": bool(getattr(sender, "enrolled", True)),
+                "flight_state": str(sender.flight_state),
+                "acknowledged_target": [float(v) for v in sender.acknowledged_target],
+            },
+        )
+
     def _deliver_radio_packets(self, dt: float) -> None:
         """Deliver queued outbox packets across physical RF medium to peer inboxes."""
         living = [
             d for d in self.drones
             if not d.crashed and d.flight_state not in ("LANDED", "DESCENDING")
         ]
+        if self.active_brain_name == "LEADER_FOLLOWER":
+            for sender in living:
+                sender.outbox = [
+                    p for p in sender.outbox
+                    if p.msg_type not in ("LEADER_HEARTBEAT", "ESCORT_YIP")
+                ]
+                sender.outbox.append(self._build_transceiver_beacon(sender))
+
         for sender in living:
             if not sender.outbox:
                 continue
             out_packets = list(sender.outbox)
             sender.outbox.clear()
-            max_tx = RANGE_BARK if (sender.is_leader or sender.tier == TIER_LEADER) else RANGE_P2P
+            max_tx = RADIO_RANGE if self.active_brain_name == "LEADER_FOLLOWER" else (
+                RANGE_BARK if (sender.is_leader or sender.tier == TIER_LEADER) else RANGE_P2P
+            )
             for pkt in out_packets:
                 for receiver in living:
                     if receiver.id == sender.id:
@@ -310,9 +361,12 @@ class SITLWorldEngine:
     def _execute_obc_step(self, dt: float) -> Dict[int, np.ndarray]:
         """Execute per-drone autonomous OBC step_drone(telemetry, inbox, dt) across the fleet."""
         accs: Dict[int, np.ndarray] = {d.id: np.zeros(3, dtype=float) for d in self.drones}
-        for drone in self.drones:
-            if drone.crashed or drone.flight_state in ("LANDED", "DESCENDING"):
-                continue
+        living = [
+            d for d in self.drones
+            if not d.crashed and d.flight_state not in ("LANDED", "DESCENDING")
+        ]
+        ordered = sorted(living, key=lambda d: (0 if d.is_leader else 1, d.id))
+        for drone in ordered:
             telemetry = self._build_local_telemetry(drone)
             inbox = list(drone.inbox)
             drone.inbox.clear()
@@ -326,6 +380,23 @@ class SITLWorldEngine:
             if intent.target_station is not None:
                 drone.target_station = np.copy(intent.target_station)
             accs[drone.id] = np.array(intent.target_acc, dtype=float)
+
+            # If leader just stepped in LEADER_FOLLOWER mode, propagate its fresh heartbeat
+            # across the physical RF medium to followers before followers execute their step.
+            if drone.is_leader and self.active_brain_name == "LEADER_FOLLOWER" and drone.outbox:
+                lead_pkts = list(drone.outbox)
+                drone.outbox.clear()
+                for pkt in lead_pkts:
+                    for receiver in ordered:
+                        if receiver.id == drone.id:
+                            continue
+                        dist = float(np.linalg.norm(drone.pos - receiver.pos))
+                        if dist <= RADIO_RANGE and not self.is_packet_dropped(dist, is_hardline=False, max_range=RADIO_RANGE):
+                            receiver.inbox = [
+                                p for p in receiver.inbox
+                                if not (p.sender_id == drone.id and p.msg_type == pkt.msg_type)
+                            ]
+                            receiver.inbox.append(pkt)
         return accs
 
     def set_brain(self, brain_name: str, force: bool = False) -> bool:
@@ -3163,9 +3234,79 @@ class _LeaderFollowerSimProxy(LeaderFollowerBrain):
     def on_succession(self, old_leader: Optional[Drone], new_leader: Drone) -> None:
         eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
         old_id = old_leader.id if old_leader is not None else None
+        if (
+            old_leader is not None
+            and isinstance(getattr(old_leader, "brain", None), LeaderFollowerBrain)
+            and isinstance(getattr(new_leader, "brain", None), LeaderFollowerBrain)
+        ):
+            if old_leader.brain.assigned_slots and not new_leader.brain.assigned_slots:
+                new_leader.brain.assigned_slots = dict(old_leader.brain.assigned_slots)
+            new_leader.brain.formation_heading = old_leader.brain.formation_heading
+            new_leader.brain.heading_initialized = old_leader.brain.heading_initialized
         for d in eng.drones:
             if hasattr(d, "brain") and d.brain is not None:
                 d.brain.on_succession(old_id, new_leader.id)
+
+    def _get_formation_slot(
+        self,
+        drone: Any,
+        leader: Any,
+        n_followers: Optional[int] = None,
+        overhead_marshal: bool = False,
+        clock_s: Optional[float] = None,
+    ) -> np.ndarray:
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        b = self._lead_brain() or self
+        living_followers = [
+            d for d in eng.drones
+            if not d.crashed and not d.is_leader and getattr(d, "enrolled", True)
+        ]
+        living_followers.sort(key=lambda d: d.id)
+        n_f = len(living_followers) if n_followers is None else int(n_followers)
+        k = b.assigned_slots.get(int(getattr(drone, "id", 1)))
+        if k is None:
+            for idx, f in enumerate(living_followers):
+                if f.id == getattr(drone, "id", -1):
+                    k = idx + 1
+                    break
+            if k is None:
+                k = max(1, int(getattr(drone, "id", 1)))
+        l_pos = np.array(getattr(leader, "pos", [0.0, 0.0, 20.0]), dtype=float)
+        l_vel = np.array(getattr(leader, "vel", [0.0, 0.0, 0.0]), dtype=float)
+        l_yaw = float(getattr(leader, "yaw", 0.0))
+        c_target = np.array(getattr(leader, "acknowledged_target", l_pos), dtype=float)
+        return b._compute_slot_geometry(
+            k=k,
+            n_followers=max(1, n_f),
+            leader_pos=l_pos,
+            leader_vel=l_vel,
+            leader_yaw=l_yaw,
+            center_target=c_target,
+            overhead_marshal=bool(overhead_marshal or eng.overhead_marshal_active),
+            clock_s=float(eng.sim_time if clock_s is None else clock_s),
+        )
+
+    def _compute_boid_acceleration(
+        self,
+        drone: Any,
+        leader: Any,
+        peers: Optional[List[Any]] = None,
+        is_tethered: bool = True,
+        tether_anchor: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        b = self._lead_brain() or self
+        peer_list = peers if peers is not None else [
+            d for d in eng.drones if not d.crashed and getattr(d, "enrolled", True)
+        ]
+        teth = (eng.comms_mode == "TETHERED_RELAY" and not eng.tether_severed)
+        return b._compute_boid_acceleration(
+            drone=drone,
+            leader=leader,
+            peers=peer_list,
+            is_tethered=teth,
+            tether_anchor=eng.tether_anchor,
+        )
 
     def handle_command(self, cmd_dict: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         eng: SITLWorldEngine = object.__getattribute__(self, "_engine")

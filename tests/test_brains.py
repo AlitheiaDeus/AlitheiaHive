@@ -189,7 +189,6 @@ class TestBrains(unittest.TestCase):
         expected_acc = -vel * 3.0
         np.testing.assert_allclose(acc, expected_acc)
 
-    @quarantine_until(heartbeat=2, reason="Requires Heartbeat 2 multi-drone formation slot calculation")
     def test_static_perimeter_sentry_ring(self):
         """Verify PERIMETER_PATROL positions followers at fixed static azimuthal stations
         around target (zero carousel rotation over time)."""
@@ -338,7 +337,6 @@ class TestBrains(unittest.TestCase):
         self.assertEqual(len(rows_r), 3)
         self.assertEqual(cols_r, [1, 2, 3])  # items get slots 1 (cost 2), 2 (cost 1), 3 (cost 2) = total 5.0
 
-    @quarantine_until(heartbeat=2, reason="Requires Heartbeat 2 multi-drone formation slot inversion")
     def test_leader_follower_u_turn_formation_inversion(self):
         """Verify TKT-43: On U-turn heading reversal (>120 deg), Hungarian matching
         re-assigns trailing drones to new vanguard slots, minimizing total displacement."""

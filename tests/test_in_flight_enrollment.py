@@ -18,13 +18,11 @@ from SIM.backend.sitl_engine import (
     RANGE_HOWL,
     TIER_ESCORT,
 )
-from tests.quarantine import quarantine_until
 
 
 class TestInFlightEnrollment(unittest.TestCase):
     """Test suite for TKT-50 Dynamic In-Flight Swarm Enrollment."""
 
-    @quarantine_until(heartbeat=2, reason="Requires Heartbeat 2 multi-drone RF formation geometry")
     def test_swarm_geometry_preserved_during_scout_transit(self):
         """Verify that a distant 4-drone swarm does not resize or twitch slots
         while a newly launched scout drone is on the pad or transiting."""
@@ -111,7 +109,6 @@ class TestInFlightEnrollment(unittest.TestCase):
 
         self.assertTrue(handshake_triggered, "P2P handshake failed to enroll scout within 300 steps")
 
-    @quarantine_until(heartbeat=2, reason="Requires Heartbeat 2 multi-drone RF formation slot assimilation")
     def test_smooth_slot_assimilation_zero_clash(self):
         """Verify that a newly enrolled drone assimilates into outer echelon slot with zero Zone 4 prop clashes."""
         sim = SwarmSimulator(drone_count=3, enable_packet_loss=False, seed=42)

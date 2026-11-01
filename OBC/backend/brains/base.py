@@ -32,8 +32,11 @@ class HeardPeer:
     yaw: float = 0.0
     is_leader: bool = False
     tier: int = 2
+    crashed: bool = False
     enrolled: bool = True
+    flight_state: str = "CRUISE"
     last_heard_s: float = 0.0
+    last_heard_clock: float = 0.0
     acknowledged_target: Optional[np.ndarray] = None
     formation_mode: Optional[str] = None
     formation_heading: Optional[float] = None
