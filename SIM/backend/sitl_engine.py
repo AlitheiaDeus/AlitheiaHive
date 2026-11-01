@@ -1447,12 +1447,13 @@ class SITLWorldEngine:
                 d.lost_link = True
                 if not getattr(d, "radio_silence_permitted", False):
                     # Autonomous backtrack toward radio horizon
-                    if d.flight_state not in ("BACKTRACK_HOLD", "PERIMETER_HOLD", "LANDED", "GROUND_IDLE", "CRASHED", "BREAKAWAY_JETTISON"):
+                    if d.flight_state not in ("TAKEOFF", "DESCENDING", "BACKTRACK_HOLD", "PERIMETER_HOLD", "LANDED", "GROUND_IDLE", "CRASHED", "BREAKAWAY_JETTISON"):
                         d.flight_state = "BACKTRACK_HOLD"
                         d.status = "BACKTRACK_HOLD"
                         d.backtrack_hold = True
-                        d.lkp = np.copy(d.pos)
                         d.backtrack_target = d.get_backtrack_point(retreat_distance=18.0)
+                        if d.breadcrumbs:
+                            d.lkp = np.copy(d.pos)
                         d.acknowledged_target = np.copy(d.backtrack_target)
                         d.target_station = np.copy(d.backtrack_target)
                         if hasattr(self, "c2") and hasattr(self.c2, "log_event"):

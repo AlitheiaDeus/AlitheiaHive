@@ -48,9 +48,10 @@ kanban
     tkt39["Standalone OBC Socket Daemon"]@{ ticket: '[TKT-39]', priority: 'Medium' }
     tkt22["Manual RC Joystick & Gamepad"]@{ ticket: '[TKT-22]', priority: 'Medium' }
   todo["Todo (Active Pipeline)"]
+    tkt58["1-Click Aux Mission: Patrol to BINGO RTB"]@{ ticket: '[TKT-58]', priority: 'Medium' }
     pln02["PLN-02: Auxiliary Mission Engine Master"]@{ ticket: '[PLN-02]', priority: 'High' }
   in_progress["In Progress (WIP = 1)"]
-    tkt58["1-Click Aux Mission: Patrol to BINGO RTB"]@{ ticket: '[TKT-58]', priority: 'Medium' }
+    tlk01["Codebase Sweep Remediation & Phase 3 Alignment"]@{ ticket: '[TLK-01]', priority: 'Very High' }
 
   completed["Completed (Fresh / Review)"]
     tkt57["Airframe Tier Registry & Authorization Gate"]@{ ticket: '[TKT-57]', priority: 'Medium' }
@@ -92,6 +93,7 @@ kanban
 
 | Ticket ID | Grade | Title | Operational Inspiration | Spec Document |
 | :--- | :--- | :--- | :--- | :--- |
+| **TLK-01** | 💬 Discussion | Codebase Sweep Findings, Test Fixes & Phase 3 | Remediate 3 test failures, unfreeze battery drain for TKT-58, promote S&R TKT-51 | [`tasks/TLK-01_codebase_sweep_remediation_and_phase3_alignment.md`](tasks/TLK-01_codebase_sweep_remediation_and_phase3_alignment.md) |
 | **TKT-58** | 🚀 Feature | 1-Click Aux Mission: Patrol to BINGO RTB | Autonomous patrol looping until BINGO battery triggers automated 2-stage RTB | [`tasks/TKT-58_aux_mission_patrol_bingo_rtb.md`](tasks/TKT-58_aux_mission_patrol_bingo_rtb.md) |
 | **TKT-57** | 🚀 Feature | Airframe Tier Registry & Authorization Gate | Tether prefix taxonomy (`T-`, `t-`), dynamic Bork/Yip RF, and C2 pre-flight capability gate | [`tasks/TKT-57_airframe_tier_registry_auth_gate.md`](tasks/TKT-57_airframe_tier_registry_auth_gate.md) |
 | **TKT-56** | 🚀 Feature | 4D Waypoint Queue & Loiter Progress Engine | Deterministic 4D waypoint execution [x, y, z, loiter] & live loiter stream | [`tasks/TKT-56_waypoint_queue_loiter_engine.md`](tasks/TKT-56_waypoint_queue_loiter_engine.md) |

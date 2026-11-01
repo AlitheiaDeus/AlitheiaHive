@@ -194,8 +194,8 @@ class TestInFlightEnrollment(unittest.TestCase):
         self.assertTrue(scout.lost_link)
         self.assertTrue(np.allclose(scout.lkp, [0.0, 0.0, 20.0]))
 
-        # Step sim for 300 ticks (5.0s)
-        for _ in range(300):
+        # Step sim for 600 ticks (10.0s) to allow cold-start pad climb-out to Z >= 18m
+        for _ in range(600):
             sim.step()
 
         # Scout must remain at Base muster hold (XY < 10m, Z >= 18m)

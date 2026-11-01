@@ -241,31 +241,35 @@ class TestAutonomousSwarmRTBLanding(unittest.TestCase):
         )
 
     def test_universal_lost_link_loiter_and_autonomous_rtb(self):
-        """Verify FIX-05: Untethered wireless fleet beyond 120m initiates 15s loiter & automated RTB."""
+        """Verify TKT-54 / FIX-05: Untethered wireless fleet beyond 140m relies on autonomous OBC
+        heartbeat watchdog (2.0s) and breadcrumb backtrack rather than global tether loiter timer."""
         sim = SwarmSimulator(drone_count=4)
         sim.set_comms_mode("GOSSIP_CONSENSUS")
         self.assertFalse(sim.tether_severed)
 
-        # Place entire fleet at 160m (outside 120m GCS dome)
+        # Record a known in-range breadcrumb at 110m before flying out to 160m
         for d in sim.drones:
-            d.pos = np.array([160.0, 0.0, 25.0], dtype=float)
+            d.pos = np.array([110.0, float(d.id * 4.0), 25.0], dtype=float)
+            d.record_breadcrumb(sim.sim_time)
+            d.pos = np.array([160.0, float(d.id * 4.0), 25.0], dtype=float)
 
         self.assertFalse(sim.is_in_comms_range())
 
-        # Step 1 tick: universal lost-link timer should activate
+        # Step 1 tick: global tether timer stays 0.0 in wireless mode while OBC watchdog counts down
         sim.step(DT)
-        self.assertGreater(sim.lost_link_loiter_timer, 0.0, "Loiter timer must engage when out of range")
-        self.assertFalse(sim.overhead_marshal_active)
+        self.assertEqual(sim.lost_link_loiter_timer, 0.0, "Global tether timer must stay 0.0 in wireless mode")
+        self.assertLess(sim.drones[0].gcs_heartbeat_watchdog, 2.0)
 
-        # Fast forward 15.5 seconds (930 ticks)
-        for _ in range(930):
+        # Fast forward 2.5 seconds (150 ticks) so 2.0s OBC heartbeat watchdog expires
+        for _ in range(150):
             sim.step(DT)
 
-        # Universal loiter expired: fleet must autonomously engage Stage 1 Overhead Marshal
-        self.assertTrue(sim.overhead_marshal_active, "Autonomous RTB must trigger after loiter expires")
-        self.assertTrue(sim.swarm_rtb_active)
-        self.assertEqual(sim.recovery_stage, "OVERHEAD_MARSHAL")
-        self.assertTrue(np.allclose(sim.target_pos, [0.0, 0.0, 25.0]))
+        # Autonomous OBC breadcrumb backtrack must engage across the isolated wireless fleet
+        for d in sim.drones:
+            self.assertTrue(d.lost_link)
+            self.assertTrue(d.backtrack_hold, f"Drone #{d.id} must engage autonomous breadcrumb backtrack")
+            self.assertEqual(d.flight_state, "BACKTRACK_HOLD")
+            self.assertIsNotNone(d.backtrack_target)
 
     def test_coordinated_landing_holding_column_no_radial_scatter(self):
         """Verify FIX-08: Drones in WAITING_CLEARANCE hold in 3D pad columns without scattering to map edges."""

@@ -289,6 +289,7 @@ class TestTriModeRF(unittest.TestCase):
         self.sim.set_comms_mode("LEADER_FOLLOWER")
         leader = self.sim.leader
         self.assertIsNotNone(leader)
+        leader.rf_power_mode = "BARK"
 
         # 1. At 75m: Leader hears Howl (75 <= 140) and GCS hears Bark (75 <= 90)
         leader.pos = np.array([75.0, 0.0, 20.0], dtype=float)
