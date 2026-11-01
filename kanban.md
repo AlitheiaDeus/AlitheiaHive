@@ -48,12 +48,12 @@ kanban
     tkt39["Standalone OBC Socket Daemon"]@{ ticket: '[TKT-39]', priority: 'Medium' }
     tkt22["Manual RC Joystick & Gamepad"]@{ ticket: '[TKT-22]', priority: 'Medium' }
   todo["Todo (Active Pipeline)"]
-    tkt58["1-Click Aux Mission: Patrol to BINGO RTB"]@{ ticket: '[TKT-58]', priority: 'Medium' }
     pln02["PLN-02: Auxiliary Mission Engine Master"]@{ ticket: '[PLN-02]', priority: 'High' }
   in_progress["In Progress (WIP = 1)"]
-    tkt57["Airframe Tier Registry & Authorization Gate"]@{ ticket: '[TKT-57]', priority: 'Medium' }
+    tkt58["1-Click Aux Mission: Patrol to BINGO RTB"]@{ ticket: '[TKT-58]', priority: 'Medium' }
 
   completed["Completed (Fresh / Review)"]
+    tkt57["Airframe Tier Registry & Authorization Gate"]@{ ticket: '[TKT-57]', priority: 'Medium' }
     tkt56["4D Waypoint Queue & Loiter Progress Engine"]@{ ticket: '[TKT-56]', priority: 'High' }
     tkt55["Tactical Formation Orientations & Perimeter Headings"]@{ ticket: '[TKT-55]', priority: 'High' }
     tkt54["Heartbeat Watchdog & Breadcrumb Backtrack"]@{ ticket: '[TKT-54]', priority: 'Very High' }
@@ -92,6 +92,8 @@ kanban
 
 | Ticket ID | Grade | Title | Operational Inspiration | Spec Document |
 | :--- | :--- | :--- | :--- | :--- |
+| **TKT-58** | 🚀 Feature | 1-Click Aux Mission: Patrol to BINGO RTB | Autonomous patrol looping until BINGO battery triggers automated 2-stage RTB | [`tasks/TKT-58_aux_mission_patrol_bingo_rtb.md`](tasks/TKT-58_aux_mission_patrol_bingo_rtb.md) |
+| **TKT-57** | 🚀 Feature | Airframe Tier Registry & Authorization Gate | Tether prefix taxonomy (`T-`, `t-`), dynamic Bork/Yip RF, and C2 pre-flight capability gate | [`tasks/TKT-57_airframe_tier_registry_auth_gate.md`](tasks/TKT-57_airframe_tier_registry_auth_gate.md) |
 | **TKT-56** | 🚀 Feature | 4D Waypoint Queue & Loiter Progress Engine | Deterministic 4D waypoint execution [x, y, z, loiter] & live loiter stream | [`tasks/TKT-56_waypoint_queue_loiter_engine.md`](tasks/TKT-56_waypoint_queue_loiter_engine.md) |
 | **TKT-55** | 🚀 Feature | Tactical Formation Orientations & Perimeter In/Out Headings | Align airframe yaw with mission intent at target (sentry in/out) | [`tasks/TKT-55_tactical_formation_headings.md`](tasks/TKT-55_tactical_formation_headings.md) |
 | **PLN-02** | 🏗️ Epic | Auxiliary Mission Concepts & Waypoint Engine (Waypoints First) | Phased mission workflows: Waypoint queues & discrete missions | [`tasks/PLN-02_auxiliary_mission_engine.md`](tasks/PLN-02_auxiliary_mission_engine.md) |

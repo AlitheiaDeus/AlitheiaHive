@@ -38,7 +38,12 @@ if sys.platform == "win32":
 
 import numpy as np
 
-from OBC.backend.drone_firmware import Drone, TIER_LEADER, TIER_ESCORT, TIER_SCOUT
+from OBC.backend.drone_firmware import (
+    Drone, TIER_LEADER, TIER_ESCORT, TIER_SCOUT,
+    BASE_TIER_T0, BASE_TIER_T1_5, BASE_TIER_T3,
+    TETHER_NONE, TETHER_DATA_ONLY, TETHER_POWER_DATA,
+    RF_MODE_YIP, RF_MODE_BORK, RF_MODE_HOWL,
+)
 from OBC.backend.brains import BaseBrain, BRAIN_REGISTRY, LeaderFollowerBrain, GossipConsensusBrain
 from GCS.backend.c2_gateway import C2Gateway, ROUTE_PRESETS
 from SIM.backend.fleet_registry import FleetRegistry
@@ -59,10 +64,11 @@ V_LKP: float = 8.0                     # Conservative speed when navigating to L
 A_MAX: float = 15.0                    # Maximum acceleration (m/s^2)
 GRAVITY: float = -9.81                 # Ballistic drop acceleration (m/s^2)
 
-# Radio Comms & Asymmetric Link Budget (Canine Acoustic Taxonomy - TKT-49)
+# Radio Comms & Asymmetric Link Budget (Canine Acoustic Taxonomy - TKT-49, TKT-57)
 RANGE_HOWL: float = 140.0              # High-power GCS mast TX (blasting uplink) (m)
 RANGE_BARK: float = 90.0               # Tier-1 Flagship onboard TX (leader downlink) (m)
-RANGE_YIP: float = 50.0                # Tier-2 Escort micro-transceiver (escort downlink) (m)
+RANGE_BORK: float = 70.0               # Tier-1.5 Amplified PA boost mode (promoted leader/relay) (m)
+RANGE_YIP: float = 50.0                # Tier-1.5 Escort micro-transceiver whisper (escort downlink) (m)
 RANGE_P2P: float = 60.0                # Inter-drone P2P mesh gossip radio propagation limit (m)
 RADIO_RANGE: float = RANGE_HOWL        # Backward-compatible generic radio horizon alias (m)
 HEARTBEAT_INTERVAL: float = 0.1        # 10 Hz broadcast interval (s)
@@ -126,6 +132,8 @@ class SITLWorldEngine:
         cold_start: bool = False,
         start_in_air: Optional[bool] = None,
         count: Optional[int] = None,
+        is_tethered: Optional[bool] = None,
+        comms_mode: Optional[str] = None,
     ):
         if count is not None:
             drone_count = count
@@ -137,7 +145,12 @@ class SITLWorldEngine:
         self.sim_time: float = 0.0
         self.last_heartbeat_broadcast: float = -1.0
         self.enable_packet_loss: bool = enable_packet_loss
-        self.comms_mode: str = "TETHERED_RELAY"  # "TETHERED_RELAY", "LEADER_FOLLOWER", "GOSSIP_CONSENSUS"
+        if is_tethered is False:
+            self.comms_mode: str = "LEADER_FOLLOWER"
+        elif comms_mode is not None:
+            self.comms_mode = comms_mode
+        else:
+            self.comms_mode = "TETHERED_RELAY"  # "TETHERED_RELAY", "LEADER_FOLLOWER", "GOSSIP_CONSENSUS"
         self.rf_jamming_rate: float = 0.0        # Electronic warfare RF jamming rate [0.0, 0.5]
 
         # Cold-Start Pad Scramble & Sequenced Climb-Out Corridor (TKT-41)
@@ -365,6 +378,7 @@ class SITLWorldEngine:
             rec0 = self.fleet_registry.get_by_drone_id(0)
             pad0_pos = self.get_pad_position(0)
             pad0_pos[2] = 0.05
+            tether_type0 = TETHER_DATA_ONLY if self.comms_mode == "TETHERED_RELAY" else TETHER_NONE
             leader = Drone(
                 drone_id=0,
                 tier=TIER_LEADER,
@@ -372,6 +386,9 @@ class SITLWorldEngine:
                 is_leader=True,
                 hardware_uid=rec0.hardware_uid if rec0 else "3842A10F9B200001",
                 tail_number=rec0.tail_number if rec0 else "ALITHEIA-V01",
+                base_tier=BASE_TIER_T1_5,
+                tether_type=tether_type0,
+                rf_power_mode=RF_MODE_BORK,
             )
             leader.flight_state = "GROUND_IDLE"
             leader.status = "GROUND_IDLE"
@@ -394,6 +411,9 @@ class SITLWorldEngine:
                     is_leader=False,
                     hardware_uid=rec_i.hardware_uid if rec_i else f"3842A10F9B20{i + 1:04X}",
                     tail_number=rec_i.tail_number if rec_i else f"ALITHEIA-V{i + 1:02d}",
+                    base_tier=BASE_TIER_T1_5,
+                    tether_type=TETHER_NONE,
+                    rf_power_mode=RF_MODE_YIP,
                 )
                 drone.flight_state = "GROUND_IDLE"
                 drone.status = "GROUND_IDLE"
@@ -405,6 +425,7 @@ class SITLWorldEngine:
         else:
             # Airborne initialization in staggered grid behind leader (default cruise)
             rec0 = self.fleet_registry.get_by_drone_id(0)
+            tether_type0 = TETHER_DATA_ONLY if self.comms_mode == "TETHERED_RELAY" else TETHER_NONE
             leader = Drone(
                 drone_id=0,
                 tier=TIER_LEADER,
@@ -412,6 +433,9 @@ class SITLWorldEngine:
                 is_leader=True,
                 hardware_uid=rec0.hardware_uid if rec0 else "3842A10F9B200001",
                 tail_number=rec0.tail_number if rec0 else "ALITHEIA-V01",
+                base_tier=BASE_TIER_T1_5,
+                tether_type=tether_type0,
+                rf_power_mode=RF_MODE_BORK,
             )
             self.drones.append(leader)
 
@@ -430,6 +454,9 @@ class SITLWorldEngine:
                     is_leader=False,
                     hardware_uid=rec_i.hardware_uid if rec_i else f"3842A10F9B20{i + 1:04X}",
                     tail_number=rec_i.tail_number if rec_i else f"ALITHEIA-V{i + 1:02d}",
+                    base_tier=BASE_TIER_T1_5,
+                    tether_type=TETHER_NONE,
+                    rf_power_mode=RF_MODE_YIP,
                 )
                 self.drones.append(drone)
 
@@ -1549,11 +1576,22 @@ class SITLWorldEngine:
                 )
                 break
 
+    def sever_tether(self, reason: str = "MANUAL_SEVERANCE") -> None:
+        """Explicitly sever tether umbilical on current leader (TKT-16 / TKT-57)."""
+        if self.leader is not None:
+            self._snap_tether(self.leader, reason=reason)
+
+    @property
+    def is_tethered(self) -> bool:
+        """True if operating in TETHERED_RELAY mode and umbilical is intact."""
+        return self.comms_mode == "TETHERED_RELAY" and not self.tether_severed
+
     def _snap_tether(self, leader_drone: Drone, reason: str = "") -> None:
         """Snap tether, initiate umbilical emergency breakaway dive on leader,
         dynamically promote 2IC, and initiate Doctrine A loiter timer (TKT-16 / TKT-27)."""
         self.tether_severed = True
         leader_drone.tether_lost = True
+        leader_drone.tether_type = TETHER_NONE
         leader_drone.jettison_watchdog = 6.0
         leader_drone.jettison_timer = 0.0
         leader_drone.tether_jettisoned = False
@@ -1870,6 +1908,8 @@ class SITLWorldEngine:
                     self.swarm_rtb_active = False
         if was_leader:
             drone.is_leader = False
+            drone.rf_power_mode = RF_MODE_YIP
+            drone.tether_type = TETHER_NONE
             self._trigger_autonomic_succession(demote_old_leader=True, retired_leader=drone)
         drone.mission_active = False
 
@@ -1910,10 +1950,16 @@ class SITLWorldEngine:
 
         # Demote previous leader
         if demote_old_leader:
+            if retired_leader is not None:
+                retired_leader.is_leader = False
+                retired_leader.rf_power_mode = RF_MODE_YIP
+                retired_leader.tether_type = TETHER_NONE
             for drone in self.drones:
                 if drone.id != new_leader.id and drone.is_leader:
                     old_leader = drone
                     drone.is_leader = False
+                    drone.rf_power_mode = RF_MODE_YIP
+                    drone.tether_type = TETHER_NONE
                     if not drone.crashed:
                         if getattr(drone, "tether_lost", False) and not getattr(drone, "tether_jettisoned", False):
                             drone.status = "BREAKAWAY_JETTISON"
@@ -1946,6 +1992,8 @@ class SITLWorldEngine:
         new_leader.is_leader = True
         new_leader.tier = TIER_LEADER
         new_leader.status = "PROMOTED_LEADER"
+        new_leader.rf_power_mode = RF_MODE_BORK
+        new_leader.tether_type = TETHER_NONE
         new_leader.lost_link = False
         new_leader.promotion_timer = 1.5
         if old_leader is not None:
@@ -2294,6 +2342,8 @@ class SITLWorldEngine:
         self,
         rejoin_target: Optional[Union[np.ndarray, List[float]]] = None,
         auto_launch: bool = False,
+        base_tier: str = BASE_TIER_T1_5,
+        capabilities: Optional[List[str]] = None,
     ) -> Drone:
         """Deploy a new reinforcement drone from the base launch pad (TKT-41 & TKT-50).
         Assigns the next sequential drone ID (max_id + 1).
@@ -2334,6 +2384,8 @@ class SITLWorldEngine:
             is_leader=False,
             hardware_uid=hw_uid,
             tail_number=tail_num,
+            base_tier=base_tier,
+            capabilities=capabilities,
         )
         drone.enrolled = False
         drone.enrollment_status = "SCOUT"
@@ -2671,9 +2723,10 @@ class SITLWorldEngine:
         waypoints: Union[List[List[float]], List[np.ndarray]],
         loop: bool = True,
         name: str = "CUSTOM",
+        mission_type: str = "PATROL",
     ) -> Dict[str, Any]:
         """Deploy discrete waypoint mission route to the swarm over physical comms uplink (TKT-28)."""
-        return self.c2.deploy_mission_route(waypoints, loop=loop, name=name)
+        return self.c2.deploy_mission_route(waypoints, loop=loop, name=name, mission_type=mission_type)
 
     def stop_mission_route(self) -> Dict[str, Any]:
         """Stop active mission route and hold current position (TKT-28)."""
@@ -2690,6 +2743,19 @@ class SITLWorldEngine:
     def skip_mission_waypoint(self) -> Dict[str, Any]:
         """Skip currently targeted waypoint and advance immediately to next (TKT-56)."""
         return self.c2.skip_mission_waypoint()
+
+    def check_mission_authorization(
+        self,
+        mission_type: str,
+        required_capabilities: Optional[List[str]] = None,
+        target_drone_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Verify whether enrolled fleet airframes meet capability requirements (TKT-57)."""
+        return self.c2.check_mission_authorization(
+            mission_type=mission_type,
+            required_capabilities=required_capabilities,
+            target_drone_id=target_drone_id,
+        )
 
     def is_target_reached(self, threshold: float = 2.5) -> bool:
         """Deterministic arrival check: whether active swarm guidance has arrived within threshold."""
@@ -2792,6 +2858,7 @@ class SITLWorldEngine:
             "rf_link_budget": {
                 "howl_gcs_uplink": RANGE_HOWL,
                 "bark_leader_downlink": RANGE_BARK,
+                "bork_amplified_downlink": RANGE_BORK,
                 "yip_escort_downlink": RANGE_YIP,
                 "p2p_mesh": RANGE_P2P,
             },

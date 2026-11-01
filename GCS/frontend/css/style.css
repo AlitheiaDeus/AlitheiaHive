@@ -599,6 +599,17 @@ body:has(#right-panel.collapsed) #tab-restore-right,
   word-break: break-word;
 }
 
+.drone-tier-badge {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--neon-amber);
+  background: rgba(255, 184, 0, 0.12);
+  border: 1px solid rgba(255, 184, 0, 0.3);
+  padding: 1px 4px;
+  border-radius: 2px;
+  letter-spacing: 0.5px;
+}
+
 .drone-role-badge {
   font-size: 9px;
   color: var(--text-muted);

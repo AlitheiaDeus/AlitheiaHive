@@ -275,6 +275,17 @@ class SwarmWebServer:
             self.session_manager.add_event("CMD", f"Waypoint Skipped -> Advancing to WP #{new_idx}", sim_time=self.sim.sim_time)
             return res
 
+        elif cmd in ("CHECK_MISSION_AUTH", "VALIDATE_MISSION_AUTHORIZATION"):
+            m_type = cmd_dict.get("mission_type", cmd_dict.get("type", "PATROL"))
+            reqs = cmd_dict.get("required_capabilities")
+            target_did = cmd_dict.get("target_drone_id")
+            res = self.sim.check_mission_authorization(
+                mission_type=m_type,
+                required_capabilities=reqs,
+                target_drone_id=target_did,
+            )
+            return res
+
         elif cmd in ("SET_COMMS_MODE", "SET_MODE"):
             mode = cmd_dict.get("mode", "TETHERED_RELAY")
             # Invariant: Physical tether umbilical cannot be attached mid-flight from GCS

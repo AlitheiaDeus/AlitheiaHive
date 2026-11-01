@@ -721,6 +721,9 @@
         if (card.elSysidBadge) {
             card.elSysidBadge.textContent = `SYSID ${drone.sysid || (drone.id + 1)}`;
         }
+        if (card.elTierBadge) {
+            card.elTierBadge.textContent = drone.full_tier_designation || `TIER-${drone.tier || 1}`;
+        }
         if (card.elUidSub) {
             card.elUidSub.textContent = `UID: ${drone.hardware_uid || 'UNKNOWN'}`;
         }
@@ -845,7 +848,8 @@
             card.el.classList.add('leader-card');
             card.elStatus.textContent = overheadMarshalActive ? 'OVERHEAD HOLD' : 'LEADER';
             card.elStatus.className = overheadMarshalActive ? 'status-tag tag-hold' : 'status-tag tag-leader';
-            card.elRole.textContent = 'FLAGSHIP';
+            const rfMode = drone.rf_power_mode || 'BORK';
+            card.elRole.textContent = `FLAGSHIP • ${rfMode}`;
             if (card.elLandBtn) {
                 card.elLandBtn.style.display = 'inline-block';
                 card.elLandBtn.textContent = 'LAND';
@@ -855,7 +859,8 @@
         } else if (drone.is_2ic) {
             card.elStatus.textContent = overheadMarshalActive ? 'OVERHEAD HOLD' : 'ACTIVE';
             card.elStatus.className = overheadMarshalActive ? 'status-tag tag-hold' : 'status-tag tag-active';
-            card.elRole.textContent = '2IC';
+            const rfMode = drone.rf_power_mode || 'YIP';
+            card.elRole.textContent = `2IC • ${rfMode}`;
             card.elRole.classList.add('badge-2ic');
             if (card.elLandBtn) {
                 card.elLandBtn.style.display = 'inline-block';
@@ -867,14 +872,16 @@
             card.el.classList.add('takeoff-card');
             card.elStatus.textContent = 'TAKEOFF';
             card.elStatus.className = 'status-tag tag-takeoff';
-            card.elRole.textContent = (drone.enrolled === false) ? 'SCOUT TAKEOFF' : 'REINFORCE';
+            const rfMode = drone.rf_power_mode || 'YIP';
+            card.elRole.textContent = (drone.enrolled === false) ? 'SCOUT TAKEOFF' : `TAKEOFF • ${rfMode}`;
             if (card.elLandBtn) card.elLandBtn.style.display = 'none';
             setActionBtn('KILL', 'card-btn-action btn-kill');
         } else if (drone.flight_state === 'EN_ROUTE') {
             card.el.classList.add('enroute-card');
             card.elStatus.textContent = (drone.enrolled === false) ? 'SCOUT REJOIN' : 'EN ROUTE';
             card.elStatus.className = 'status-tag tag-enroute';
-            card.elRole.textContent = (drone.enrolled === false) ? 'SCOUT' : `TIER-${drone.tier}`;
+            const rfMode = drone.rf_power_mode || 'YIP';
+            card.elRole.textContent = (drone.enrolled === false) ? 'SCOUT' : `EN ROUTE • ${rfMode}`;
             if (card.elLandBtn) {
                 card.elLandBtn.style.display = 'inline-block';
                 card.elLandBtn.textContent = 'LAND';
@@ -887,7 +894,7 @@
             card.elStatus.className = 'status-tag tag-yip-lost';
             const relayStr = (drone.gateway_id !== null && drone.gateway_id !== undefined && drone.gateway_id !== drone.id)
                 ? ` [RELAY #${drone.gateway_id}]` : ' [SILENT]';
-            card.elRole.textContent = `TIER-${drone.tier}${relayStr}`;
+            card.elRole.textContent = `LOST • YIP${relayStr}`;
             if (card.elLandBtn) {
                 card.elLandBtn.style.display = 'inline-block';
                 card.elLandBtn.textContent = 'LAND';
@@ -898,7 +905,8 @@
             card.el.classList.add('lkp-card');
             card.elStatus.textContent = 'LKP RECOVERY';
             card.elStatus.className = 'status-tag tag-lkp';
-            card.elRole.textContent = `TIER-${drone.tier}`;
+            const rfMode = drone.rf_power_mode || 'YIP';
+            card.elRole.textContent = `LKP • ${rfMode}`;
             if (card.elLandBtn) {
                 card.elLandBtn.style.display = 'inline-block';
                 card.elLandBtn.textContent = 'DECLARE DESTROYED';
@@ -911,7 +919,8 @@
             card.elStatus.className = 'status-tag tag-gossip';
             const relayStr = (drone.gateway_id !== null && drone.gateway_id !== undefined && drone.gateway_id !== drone.id)
                 ? ` [GW #${drone.gateway_id}]` : '';
-            card.elRole.textContent = `TIER-${drone.tier}${relayStr}`;
+            const rfMode = drone.rf_power_mode || 'YIP';
+            card.elRole.textContent = `ECHO • ${rfMode}${relayStr}`;
             if (card.elLandBtn) {
                 card.elLandBtn.style.display = 'inline-block';
                 card.elLandBtn.textContent = 'LAND';
@@ -923,7 +932,8 @@
             card.elStatus.className = overheadMarshalActive ? 'status-tag tag-hold' : 'status-tag tag-active';
             const relayStr = (drone.gateway_id !== null && drone.gateway_id !== undefined && drone.gateway_id !== drone.id)
                 ? ` [GW #${drone.gateway_id}]` : '';
-            card.elRole.textContent = `TIER-${drone.tier}${relayStr}`;
+            const rfMode = drone.rf_power_mode || 'YIP';
+            card.elRole.textContent = `ESCORT • ${rfMode}${relayStr}`;
             if (card.elLandBtn) {
                 card.elLandBtn.style.display = 'inline-block';
                 card.elLandBtn.textContent = 'LAND';
@@ -941,6 +951,7 @@
         const tailNum = drone.tail_number || `ALITHEIA-V${String(drone.id + 1).padStart(2, '0')}`;
         const sysId = drone.sysid || (drone.id + 1);
         const hwUid = drone.hardware_uid || 'UNKNOWN';
+        const tierDesig = drone.full_tier_designation || `TIER-${drone.tier || 1}`;
 
         el.innerHTML = `
             <div class="card-header">
@@ -948,7 +959,8 @@
                     <span class="drone-dot"></span>
                     <strong class="drone-id-label">${tailNum}</strong>
                     <span class="drone-sysid-badge">SYSID ${sysId}</span>
-                    <span class="drone-role-badge">TIER-${drone.tier}</span>
+                    <span class="drone-tier-badge">${tierDesig}</span>
+                    <span class="drone-role-badge">STANDBY</span>
                 </div>
                 <span class="status-tag tag-active">ACTIVE</span>
             </div>
@@ -1012,6 +1024,7 @@
             el: el,
             elIdLabel: el.querySelector('.drone-id-label'),
             elSysidBadge: el.querySelector('.drone-sysid-badge'),
+            elTierBadge: el.querySelector('.drone-tier-badge'),
             elUidSub: el.querySelector('.card-uid-sub'),
             elBriefingSub: el.querySelector('.card-briefing-sub'),
             elAlt: el.querySelector('.metric-alt'),

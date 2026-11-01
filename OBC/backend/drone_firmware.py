@@ -12,10 +12,48 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 import numpy as np
 
-# Hardware Tiers for Succession Scoring
+# Hardware Tiers & Succession (TKT-48, TKT-57)
 TIER_LEADER: int = 3
 TIER_ESCORT: int = 2
 TIER_SCOUT: int = 1
+
+# Modular Base Tiers (TKT-57)
+BASE_TIER_T0: str = "T0"         # Stationary Anchor / Heavy Ground Station
+BASE_TIER_T1_5: str = "T1.5"     # Standard Tactical Multi-Role Baseline (Beta)
+BASE_TIER_T3: str = "T3"         # Heavy Lift / Compute Specialist (Kodiak)
+
+# Modular Tether Prefixes (TKT-57)
+TETHER_NONE: str = "NONE"             # Untethered wireless
+TETHER_DATA_ONLY: str = "DATA_ONLY"   # t- prefix: Hair-thin micro-fiber, onboard LiPo, zero RF
+TETHER_POWER_DATA: str = "POWER_DATA" # T- prefix: Full ground umbilical, infinite loiter
+
+# Dynamic RF Comms Profiles (TKT-57)
+RF_MODE_YIP: str = "YIP"         # 50m Low-power whisper mode (escort standby)
+RF_MODE_BORK: str = "BORK"       # 65m Amplified PA boost mode (active leader / relay)
+RF_MODE_HOWL: str = "HOWL"       # 120m GCS mast uplink
+
+# Default Capabilities Matrix (TKT-57)
+DEFAULT_CAPABILITIES_T1_5: List[str] = [
+    "FORMATION_FLIGHT",
+    "PATROL",
+    "RECON",
+    "S&R_OPTICAL",
+    "BORK_AMPLIFY",
+]
+
+DEFAULT_CAPABILITIES_T3: List[str] = [
+    "FORMATION_FLIGHT",
+    "HEAVY_PAYLOAD",
+    "LIDAR_SCAN",
+    "JAMMER_TRIANGULATION",
+    "DROP_SERVO",
+]
+
+DEFAULT_CAPABILITIES_T0: List[str] = [
+    "BASE_ANCHOR",
+    "HIGH_GAIN_HOWL",
+    "INFINITE_LOITER",
+]
 
 
 class Drone:
@@ -30,6 +68,10 @@ class Drone:
         is_leader: bool = False,
         hardware_uid: str = "",
         tail_number: str = "",
+        base_tier: str = BASE_TIER_T1_5,
+        tether_type: str = TETHER_NONE,
+        rf_power_mode: str = RF_MODE_YIP,
+        capabilities: Optional[List[str]] = None,
     ):
         self.id: int = drone_id
         self.tier: int = tier
@@ -38,6 +80,19 @@ class Drone:
         # Airframe Hardware Identity (TKT-48)
         self.hardware_uid: str = hardware_uid or f"3842A10F9B20{drone_id + 1:04X}"
         self.tail_number: str = tail_number or f"ALITHEIA-V{drone_id + 1:02d}"
+
+        # Modular Hardware Tier & Tether Prefixes (TKT-57)
+        self.base_tier: str = base_tier
+        self.tether_type: str = tether_type
+        self.rf_power_mode: str = rf_power_mode if not is_leader else RF_MODE_BORK
+        if capabilities is not None:
+            self.capabilities: List[str] = list(capabilities)
+        elif self.base_tier == BASE_TIER_T3:
+            self.capabilities: List[str] = list(DEFAULT_CAPABILITIES_T3)
+        elif self.base_tier == BASE_TIER_T0:
+            self.capabilities: List[str] = list(DEFAULT_CAPABILITIES_T0)
+        else:
+            self.capabilities: List[str] = list(DEFAULT_CAPABILITIES_T1_5)
 
         # Kinematics
         self.pos: np.ndarray = (
@@ -244,6 +299,20 @@ class Drone:
             return False
         return float(np.linalg.norm(self.pos - self.acknowledged_target)) <= 2.5
 
+    @property
+    def full_tier_designation(self) -> str:
+        """Modular tier designation with tether prefix (TKT-57):
+        - 'T-' for Power+Data umbilical (e.g. 'T-T0')
+        - 't-' for Data-only micro-fiber (e.g. 't-T1.5')
+        - No prefix for untethered wireless (e.g. 'T1.5', 'T3')"""
+        if self.tether_type == TETHER_POWER_DATA:
+            prefix = "T-"
+        elif self.tether_type == TETHER_DATA_ONLY:
+            prefix = "t-"
+        else:
+            prefix = ""
+        return f"{prefix}{self.base_tier}"
+
     def succession_score(self) -> int:
         """Calculate autonomic succession eligibility score: (Tier * 1000) - ID."""
         return (self.tier * 1000) - self.id
@@ -256,6 +325,11 @@ class Drone:
             "hardware_uid": self.hardware_uid,
             "tail_number": self.tail_number,
             "tier": self.tier,
+            "base_tier": self.base_tier,
+            "tether_type": self.tether_type,
+            "full_tier_designation": self.full_tier_designation,
+            "rf_power_mode": self.rf_power_mode,
+            "capabilities": list(self.capabilities),
             "is_leader": self.is_leader,
             "pos": [round(float(v), 2) for v in self.pos],
             "vel": [round(float(v), 2) for v in self.vel],

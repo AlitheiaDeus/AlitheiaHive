@@ -17,10 +17,29 @@ import numpy as np
 # Radio Comms & Range Constants (Canine Taxonomy - TKT-49)
 RANGE_HOWL: float = 140.0
 RANGE_BARK: float = 90.0
+RANGE_BORK: float = 70.0
 RANGE_YIP: float = 50.0
 RANGE_P2P: float = 60.0
 RADIO_RANGE: float = RANGE_HOWL
 TETHER_ANCHOR = np.array([0.0, 0.0, 1.5], dtype=float)
+
+# Mission Type to Required Capability Tags (TKT-57)
+MISSION_CAPABILITY_REQUIREMENTS: Dict[str, List[str]] = {
+    "PATROL": ["FORMATION_FLIGHT", "PATROL"],
+    "BOX_PATROL": ["FORMATION_FLIGHT", "PATROL"],
+    "DIAMOND_SURVEY": ["FORMATION_FLIGHT", "PATROL"],
+    "HEXAGON_SWEEP": ["FORMATION_FLIGHT", "PATROL"],
+    "PATROL_TO_BINGO": ["FORMATION_FLIGHT", "PATROL"],
+    "RECON": ["RECON", "S&R_OPTICAL"],
+    "S&R": ["RECON", "S&R_OPTICAL"],
+    "SEARCH_AND_RESCUE": ["RECON", "S&R_OPTICAL"],
+    "PAYLOAD_DROP": ["HEAVY_PAYLOAD", "DROP_SERVO"],
+    "DEPOSIT": ["HEAVY_PAYLOAD", "DROP_SERVO"],
+    "LIDAR_SCAN": ["LIDAR_SCAN"],
+    "POINTCLOUD_MAPPING": ["LIDAR_SCAN"],
+    "SIGINT_TRIANGULATION": ["JAMMER_TRIANGULATION"],
+    "EW_HUNT": ["JAMMER_TRIANGULATION"],
+}
 
 # Discrete Waypoint Mission Route Presets (TKT-28 & TKT-30)
 # Schema: [x, y, z, loiter_s]
@@ -388,16 +407,124 @@ class C2Gateway:
         wps = ROUTE_PRESETS[name]
         return self.deploy_mission_route(wps, loop=True, name=name)
 
+    def check_mission_authorization(
+        self,
+        mission_type: str,
+        required_capabilities: Optional[List[str]] = None,
+        target_drone_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Verify whether enrolled fleet airframes meet capability requirements (TKT-57).
+        Enforces Operator Airgap: evaluates downlinked telemetry capabilities."""
+        m_key = mission_type.upper().replace("-", "_").replace(" ", "_")
+        reqs = list(required_capabilities) if required_capabilities else list(MISSION_CAPABILITY_REQUIREMENTS.get(m_key, ["FORMATION_FLIGHT"]))
+
+        drones = getattr(self.sim, "drones", []) if self.sim else []
+        enrolled_living = [
+            d for d in drones
+            if not d.crashed and d.flight_state not in ("LANDED", "DESCENDING", "RETRIEVED")
+        ]
+
+        if not enrolled_living:
+            return {
+                "status": "REJECTED",
+                "authorized": False,
+                "reason": "NO_AIRBORNE_AIRFRAMES",
+                "mission_type": mission_type,
+                "required_capabilities": reqs,
+                "missing_capabilities": reqs,
+            }
+
+        # If a specific target drone is commanded
+        if target_drone_id is not None:
+            candidate = next((d for d in enrolled_living if d.id == target_drone_id), None)
+            if candidate is None:
+                return {
+                    "status": "REJECTED",
+                    "authorized": False,
+                    "reason": "TARGET_DRONE_UNAVAILABLE",
+                    "target_drone_id": target_drone_id,
+                }
+            drone_caps = set(getattr(candidate, "capabilities", []))
+            missing = [r for r in reqs if r not in drone_caps]
+            if missing:
+                return {
+                    "status": "REJECTED",
+                    "authorized": False,
+                    "reason": "TIER_AUTHORIZATION_FAILED",
+                    "mission_type": mission_type,
+                    "target_drone_id": target_drone_id,
+                    "tier": getattr(candidate, "full_tier_designation", "UNKNOWN"),
+                    "required_capabilities": reqs,
+                    "missing_capabilities": missing,
+                }
+            return {
+                "status": "AUTHORIZED",
+                "authorized": True,
+                "mission_type": mission_type,
+                "target_drone_id": target_drone_id,
+                "allocated_drone_id": target_drone_id,
+                "allocated_drone_tier": getattr(candidate, "full_tier_designation", "UNKNOWN"),
+                "tier": getattr(candidate, "full_tier_designation", "UNKNOWN"),
+                "allocated_drone_ids": [target_drone_id],
+            }
+
+        # Fleet-wide search for eligible airframes
+        eligible_drones = []
+        for d in enrolled_living:
+            drone_caps = set(getattr(d, "capabilities", []))
+            if all(r in drone_caps for r in reqs):
+                eligible_drones.append(d.id)
+
+        if not eligible_drones:
+            available_caps = set()
+            for d in enrolled_living:
+                available_caps.update(getattr(d, "capabilities", []))
+            missing = [r for r in reqs if r not in available_caps]
+            return {
+                "status": "REJECTED",
+                "authorized": False,
+                "reason": "TIER_AUTHORIZATION_FAILED",
+                "mission_type": mission_type,
+                "required_capabilities": reqs,
+                "missing_capabilities": missing,
+                "enrolled_tiers": [getattr(d, "full_tier_designation", "UNKNOWN") for d in enrolled_living],
+            }
+
+        first_eligible = next((d for d in enrolled_living if d.id == eligible_drones[0]), None)
+        return {
+            "status": "AUTHORIZED",
+            "authorized": True,
+            "mission_type": mission_type,
+            "required_capabilities": reqs,
+            "allocated_drone_id": eligible_drones[0],
+            "allocated_drone_tier": getattr(first_eligible, "full_tier_designation", "UNKNOWN") if first_eligible else "UNKNOWN",
+            "allocated_drone_ids": eligible_drones,
+        }
+
     def deploy_mission_route(
         self,
         waypoints: Union[List[List[float]], List[np.ndarray], List[Dict[str, float]]],
         loop: bool = True,
         name: str = "CUSTOM",
+        mission_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Deploy discrete waypoint mission route to the swarm over physical comms uplink (TKT-28 & TKT-30).
         Supports 4D waypoints: [x, y, z, loiter_s] or {'x': x, 'y': y, 'z': z, 'loiter': loiter_s}."""
         if not waypoints:
             return {"status": "ERROR", "reason": "Empty waypoints list"}
+
+        # Pre-Flight Capability Authorization Check (TKT-57)
+        m_type = (mission_type or name).upper().replace("-", "_").replace(" ", "_")
+        if m_type in MISSION_CAPABILITY_REQUIREMENTS or mission_type is not None:
+            auth_check = self.check_mission_authorization(m_type)
+            if not auth_check.get("authorized", True) or auth_check.get("status") == "REJECTED":
+                return {
+                    "status": "ERROR",
+                    "code": "TIER_AUTHORIZATION_FAILED",
+                    "reason": auth_check.get("reason", "TIER_AUTHORIZATION_FAILED"),
+                    "missing_capabilities": auth_check.get("missing_capabilities", []),
+                    "mission_type": m_type,
+                }
 
         clean_wps: List[np.ndarray] = []
         for wp in waypoints:
