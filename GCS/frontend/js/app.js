@@ -844,6 +844,20 @@
             labelText = `#${d.id}`;
             subText = 'YIP LOST';
             dotColor = '#FF9900';
+        } else if (d.flight_state === 'PERIMETER_HOLD' || d.status === 'PERIMETER_HOLD' || d.holding_at_horizon) {
+            borderColor = '#FFB800';
+            bgColor = 'rgba(38, 26, 5, 0.92)';
+            textColor = '#FFD24D';
+            labelText = `#${d.id}`;
+            subText = 'PERIMETER HOLD';
+            dotColor = '#FFB800';
+        } else if (d.flight_state === 'BACKTRACK_HOLD' || d.status === 'BACKTRACK_HOLD') {
+            borderColor = '#FF3366';
+            bgColor = 'rgba(40, 10, 20, 0.92)';
+            textColor = '#FF6699';
+            labelText = `#${d.id}`;
+            subText = 'BACKTRACKING';
+            dotColor = '#FF3366';
         } else if (d.lost_link) {
             borderColor = '#FFB800';
             bgColor = 'rgba(38, 26, 5, 0.92)';
@@ -1001,14 +1015,15 @@
                     rotorColor = 0xFFAA00; // Bright amber jettison
                     rotorOpacity = 0.7;
                     indicatorColor = 0xFFAA00;
-                } else if (d.yip_lost) {
-            borderColor = '#FF9900';
-            bgColor = 'rgba(40, 20, 0, 0.92)';
-            textColor = '#FFB800';
-            labelText = `#${d.id}`;
-            subText = 'YIP LOST';
-            dotColor = '#FF9900';
-        } else if (d.lost_link) {
+                } else if (d.flight_state === 'PERIMETER_HOLD' || d.status === 'PERIMETER_HOLD' || d.holding_at_horizon) {
+                    rotorColor = 0xFFB800; // Amber horizon hover
+                    rotorOpacity = 0.5;
+                    indicatorColor = 0xFFB800;
+                } else if (d.flight_state === 'BACKTRACK_HOLD' || d.status === 'BACKTRACK_HOLD') {
+                    rotorColor = 0xFF3366; // Red-pink backtrack
+                    rotorOpacity = 0.6;
+                    indicatorColor = 0xFF3366;
+                } else if (d.lost_link) {
                     rotorColor = 0xFFB800; // Amber ghost for lost-link LKP freeze
                     rotorOpacity = 0.3;
                     indicatorColor = 0xFFAA00;
@@ -1248,14 +1263,6 @@
             entry.mesh.rotation.z = entry.targetYaw;
             entry.mesh.rotation.y = entry.targetPitch;
             entry.mesh.rotation.x = entry.targetRoll;
-
-            // Spin rotors around Z axis (disarmed when crashed or landed)
-            if (entry.mesh.userData.rotors && !entry.crashed && entry.flight_state !== 'LANDED') {
-                entry.mesh.userData.rotors.forEach((rotor, idx) => {
-                    const dir = (idx % 2 === 0) ? 1 : -1;
-                    rotor.rotation.z += entry.rotorSpeed * dir;
-                });
-            }
 
             // Update 3D World Drop-Line from (x, y, z) down to (x, y, 0)
             if (entry.dropLine) {

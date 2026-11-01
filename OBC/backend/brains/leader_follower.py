@@ -93,7 +93,19 @@ class LeaderFollowerBrain(BaseBrain):
 
             # 1. Leader guidance: steer toward global mission target
             if drone.is_leader:
-                if drone.lost_link:
+                if drone.flight_state == "BACKTRACK_HOLD" and getattr(drone, "backtrack_target", None) is not None:
+                    drone.target_station = drone.backtrack_target
+                    accs[drone.id] = self._steer_toward(
+                        drone.pos, drone.vel, drone.backtrack_target, max_speed=8.0
+                    )
+                    continue
+                elif drone.flight_state == "PERIMETER_HOLD" or getattr(drone, "holding_at_horizon", False):
+                    drone.target_station = drone.acknowledged_target
+                    accs[drone.id] = self._steer_toward(
+                        drone.pos, drone.vel, drone.acknowledged_target, max_speed=2.0
+                    )
+                    continue
+                elif drone.lost_link:
                     accs[drone.id] = self._steer_toward(
                         drone.pos, drone.vel, drone.lkp, max_speed=V_LKP
                     )
@@ -177,7 +189,19 @@ class LeaderFollowerBrain(BaseBrain):
 
             # 1b. Unenrolled solo scout guidance (TKT-50)
             if not getattr(drone, "enrolled", True):
-                if drone.lost_link:
+                if drone.flight_state == "BACKTRACK_HOLD" and getattr(drone, "backtrack_target", None) is not None:
+                    drone.target_station = drone.backtrack_target
+                    accs[drone.id] = self._steer_toward(
+                        drone.pos, drone.vel, drone.backtrack_target, max_speed=8.0
+                    )
+                    continue
+                elif drone.flight_state == "PERIMETER_HOLD" or getattr(drone, "holding_at_horizon", False):
+                    drone.target_station = drone.acknowledged_target
+                    accs[drone.id] = self._steer_toward(
+                        drone.pos, drone.vel, drone.acknowledged_target, max_speed=2.0
+                    )
+                    continue
+                elif drone.lost_link:
                     drone.target_station = drone.lkp
                     accs[drone.id] = self._steer_toward(
                         drone.pos, drone.vel, drone.lkp, max_speed=V_LKP
@@ -194,7 +218,20 @@ class LeaderFollowerBrain(BaseBrain):
                     )
                 continue
 
-            # 2. Lost-link guidance: autonomous navigation toward LKP
+            # 2. Backtrack & Lost-link guidance
+            if drone.flight_state == "BACKTRACK_HOLD" and getattr(drone, "backtrack_target", None) is not None:
+                drone.target_station = drone.backtrack_target
+                accs[drone.id] = self._steer_toward(
+                    drone.pos, drone.vel, drone.backtrack_target, max_speed=8.0
+                )
+                continue
+            elif drone.flight_state == "PERIMETER_HOLD" or getattr(drone, "holding_at_horizon", False):
+                drone.target_station = drone.acknowledged_target
+                accs[drone.id] = self._steer_toward(
+                    drone.pos, drone.vel, drone.acknowledged_target, max_speed=2.0
+                )
+                continue
+
             if drone.lost_link:
                 drone.target_station = drone.lkp
                 accs[drone.id] = self._steer_toward(

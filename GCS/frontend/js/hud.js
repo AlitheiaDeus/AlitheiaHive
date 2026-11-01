@@ -505,10 +505,18 @@
             const hasLostLinkLoiter = frame.lost_link_loiter_timer !== undefined && frame.lost_link_loiter_timer > 0;
             const allDronesLostLink = Array.isArray(frame.drones) && frame.drones.length > 0 && frame.drones.every(d => d.crashed || d.lost_link);
             const anyYipLost = Array.isArray(frame.drones) && frame.drones.some(d => !d.crashed && d.yip_lost);
+            const anyHoldingHorizon = Boolean(frame.fleet_holding_at_horizon) || (Array.isArray(frame.drones) && frame.drones.some(d => !d.crashed && (d.holding_at_horizon || d.status === 'PERIMETER_HOLD' || d.flight_state === 'PERIMETER_HOLD')));
+            const anyBacktracking = Boolean(frame.fleet_backtracking) || (Array.isArray(frame.drones) && frame.drones.some(d => !d.crashed && (d.flight_state === 'BACKTRACK_HOLD' || d.status === 'BACKTRACK_HOLD')));
 
-            if (isTetherSevered || hasLostLinkLoiter || allDronesLostLink || frame.swarm_rtb_active || anyYipLost) {
+            if (anyHoldingHorizon || anyBacktracking || isTetherSevered || hasLostLinkLoiter || allDronesLostLink || frame.swarm_rtb_active || anyYipLost) {
                 failsafePill.classList.remove('hidden');
-                if (frame.recovery_stage === 'LANDING' || frame.recovery_stage === 'COMPLETE') {
+                if (anyHoldingHorizon) {
+                    failsafePill.className = 'status-pill failsafe-pill failsafe-loiter';
+                    failsafeText.textContent = 'FLEET HOLDING AT RADIO HORIZON (OUT-OF-RANGE TARGET)';
+                } else if (anyBacktracking) {
+                    failsafePill.className = 'status-pill failsafe-pill failsafe-loiter';
+                    failsafeText.textContent = 'WATCHDOG TIMEOUT: BACKTRACKING ALONG BREADCRUMBS';
+                } else if (frame.recovery_stage === 'LANDING' || frame.recovery_stage === 'COMPLETE') {
                     failsafePill.className = 'status-pill failsafe-pill failsafe-rtb';
                     failsafeText.textContent = 'TACTICAL RECOVERY: COORD SOFT-LANDING ACTIVE';
                 } else if (frame.swarm_rtb_active) {

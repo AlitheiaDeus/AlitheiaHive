@@ -125,6 +125,15 @@ class Drone:
         self.mayday_reason: str = ""
         self.collision_inferred: bool = False
 
+        # Heartbeat Watchdog & Breadcrumb Backtrack (TKT-54)
+        self.gcs_heartbeat_watchdog: float = 2.0
+        self.radio_silence_permitted: bool = False
+        self.breadcrumbs: List[Tuple[float, np.ndarray]] = []
+        self.breadcrumb_record_timer: float = 0.0
+        self.holding_at_horizon: bool = False
+        self.backtrack_target: Optional[np.ndarray] = None
+        self.backtrack_hold: bool = False
+
     def reset_state(
         self,
         pos: np.ndarray,
@@ -197,6 +206,28 @@ class Drone:
         self.mayday_beacon = False
         self.mayday_reason = ""
         self.collision_inferred = False
+        self.gcs_heartbeat_watchdog = 2.0
+        self.radio_silence_permitted = False
+        self.breadcrumbs = []
+        self.breadcrumb_record_timer = 0.0
+        self.holding_at_horizon = False
+        self.backtrack_target = None
+        self.backtrack_hold = False
+
+    def record_breadcrumb(self, sim_time: float) -> None:
+        """Record current 3D position in the rolling 10-second (2 Hz) breadcrumb buffer."""
+        self.breadcrumbs.append((sim_time, np.copy(self.pos)))
+        if len(self.breadcrumbs) > 20:
+            self.breadcrumbs.pop(0)
+
+    def get_backtrack_point(self, retreat_distance: float = 18.0) -> np.ndarray:
+        """Find a breadcrumb point approximately retreat_distance back along the trail."""
+        if not self.breadcrumbs:
+            return np.copy(self.lkp)
+        for _, b_pos in reversed(self.breadcrumbs):
+            if float(np.linalg.norm(self.pos - b_pos)) >= retreat_distance:
+                return np.copy(b_pos)
+        return np.copy(self.breadcrumbs[0][1])
 
     @property
     def target_reached(self) -> bool:
@@ -269,4 +300,9 @@ class Drone:
             "mayday_beacon": self.mayday_beacon,
             "mayday_reason": self.mayday_reason,
             "collision_inferred": self.collision_inferred,
+            "gcs_heartbeat_watchdog": round(float(self.gcs_heartbeat_watchdog), 2),
+            "radio_silence_permitted": self.radio_silence_permitted,
+            "holding_at_horizon": self.holding_at_horizon,
+            "backtrack_hold": self.backtrack_hold,
+            "backtrack_target": [round(float(v), 2) for v in self.backtrack_target] if self.backtrack_target is not None else None,
         }

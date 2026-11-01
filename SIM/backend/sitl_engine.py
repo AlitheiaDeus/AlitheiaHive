@@ -700,17 +700,17 @@ class SITLWorldEngine:
 
         self.sim_time += dt
 
-        # 0b. Advance Universal Lost-Link Loiter & Automated RTB Timer (TKT-16 / TKT-19 / FIX-05)
-        fleet_link_active = self.is_in_comms_range() and not (self.comms_mode == "TETHERED_RELAY" and self.tether_severed)
-        if not fleet_link_active and not self.swarm_rtb_active:
+        # 0b. Advance Tether Severance Loiter & Automated RTB Timer (TKT-16 / TKT-19 / TKT-54)
+        # Wireless modes rely strictly on autonomous airframe OBC watchdog & breadcrumb backtrack
+        if self.comms_mode == "TETHERED_RELAY" and self.tether_severed and not self.swarm_rtb_active:
             if self.lost_link_loiter_timer <= 0.0:
-                self.lost_link_loiter_timer = 30.0 if (self.comms_mode == "TETHERED_RELAY" and self.tether_severed) else 15.0
+                self.lost_link_loiter_timer = 30.0
             else:
                 self.lost_link_loiter_timer = max(0.0, self.lost_link_loiter_timer - dt)
                 if self.lost_link_loiter_timer <= 0.0:
                     # Loiter grace period expired: automated return to base (Stage 1 Overhead Marshal)
                     self.command_rtb_hold(force_autonomous=True)
-        elif fleet_link_active and not self.swarm_rtb_active:
+        elif not (self.comms_mode == "TETHERED_RELAY" and self.tether_severed) and not self.swarm_rtb_active:
             if self.lost_link_loiter_timer > 0.0:
                 self.lost_link_loiter_timer = 0.0
 
@@ -800,6 +800,9 @@ class SITLWorldEngine:
 
         # 1. Update Physical RF Channel, Asymmetric Link Budget & Mesh Gateway (TKT-49)
         self._update_radio_comms()
+
+        # 1.1 Heartbeat Watchdog, Breadcrumb Backtrack & Perimeter Hold (TKT-54)
+        self._update_heartbeat_watchdog_and_breadcrumbs(dt)
 
         # 1b. Update In-Flight Dynamic Swarm Enrollment & P2P Handshakes (TKT-50)
         self._update_in_flight_enrollment(dt)
@@ -1220,6 +1223,7 @@ class SITLWorldEngine:
                     if d.downlink_active or d.uplink_active:
                         d.last_heartbeat_time = self.sim_time
                         d.lost_link = False
+                        d.gcs_heartbeat_watchdog = 2.0
                         d.lkp = np.copy(d.pos)
                         if d.status == "LOST_LINK":
                             d.status = "ACTIVE"
@@ -1238,6 +1242,7 @@ class SITLWorldEngine:
                         drone.yip_lost = False
                         drone.gateway_id = None
                         drone.lost_link = False
+                        drone.gcs_heartbeat_watchdog = 2.0
                         drone.last_heartbeat_time = self.sim_time
                         if drone.status == "LOST_LINK":
                             drone.status = "FLEET_LEADER"
@@ -1258,6 +1263,7 @@ class SITLWorldEngine:
                         if broadcast_tick and drone.uplink_active:
                             drone.last_heartbeat_time = self.sim_time
                             drone.lost_link = False
+                            drone.gcs_heartbeat_watchdog = 2.0
                             drone.lkp = np.copy(drone.pos)
                             if drone.status == "LOST_LINK":
                                 drone.status = "FLEET_LEADER"
@@ -1297,6 +1303,7 @@ class SITLWorldEngine:
                             drone.lkp = np.copy(current_leader.pos)
                             drone.last_heartbeat_time = self.sim_time
                             drone.lost_link = False
+                            drone.gcs_heartbeat_watchdog = 2.0
                             if drone.status == "LOST_LINK":
                                 drone.status = "ACTIVE"
                     if self.sim_time - drone.last_heartbeat_time > LINK_TIMEOUT:
@@ -1319,6 +1326,7 @@ class SITLWorldEngine:
                     if broadcast_tick and drone.uplink_active:
                         drone.last_heartbeat_time = self.sim_time
                         drone.lost_link = False
+                        drone.gcs_heartbeat_watchdog = 2.0
                         drone.lkp = np.copy(drone.pos)
                         if drone.status == "LOST_LINK":
                             drone.status = "FLEET_LEADER"
@@ -1352,6 +1360,7 @@ class SITLWorldEngine:
                             drone.lkp = np.copy(current_leader.pos)
                             drone.last_heartbeat_time = self.sim_time
                             drone.lost_link = False
+                            drone.gcs_heartbeat_watchdog = 2.0
                             if drone.status == "LOST_LINK":
                                 drone.status = "ACTIVE"
                     if self.sim_time - drone.last_heartbeat_time > LINK_TIMEOUT:
@@ -1365,6 +1374,58 @@ class SITLWorldEngine:
                 howl_rssi = float(np.clip(-20.0 - 20.0 * math.log10(max(1.0, d_gcs)), -100.0, -20.0))
                 d.rssi = round(howl_rssi, 1)
                 d.link_quality = max(0.0, min(1.0, (d.rssi - (-100.0)) / 60.0))
+
+    # ==========================================================================
+    # 1.1 Heartbeat Watchdog, Breadcrumb Backtrack & Perimeter Hold (TKT-54)
+    # ==========================================================================
+    def _update_heartbeat_watchdog_and_breadcrumbs(self, dt: float) -> None:
+        """Update 10-second rolling position breadcrumbs (@ 2 Hz) and decrement
+        heartbeat watchdogs. Triggers autonomous breadcrumb backtrack to radio horizon
+        upon watchdog expiry unless radio silence is permitted."""
+        for d in self.drones:
+            if d.crashed:
+                continue
+
+            # 1. Rolling 10s Breadcrumbs buffer (@ 2 Hz = every 0.5s)
+            if d.flight_state in ("CRUISE", "EN_ROUTE", "TAKEOFF", "OVERHEAD_HOLD") and not d.lost_link and not getattr(d, "holding_at_horizon", False):
+                d.breadcrumb_record_timer += dt
+                if d.breadcrumb_record_timer >= 0.5:
+                    d.breadcrumb_record_timer = 0.0
+                    d.record_breadcrumb(self.sim_time)
+
+            # 2. Watchdog countdown
+            d.gcs_heartbeat_watchdog = max(0.0, d.gcs_heartbeat_watchdog - dt)
+
+            # 3. Watchdog tripped -> Backtrack state machine
+            if d.gcs_heartbeat_watchdog <= 0.0:
+                d.lost_link = True
+                if not getattr(d, "radio_silence_permitted", False):
+                    # Autonomous backtrack toward radio horizon
+                    if d.flight_state not in ("BACKTRACK_HOLD", "PERIMETER_HOLD", "LANDED", "GROUND_IDLE", "CRASHED", "BREAKAWAY_JETTISON"):
+                        d.flight_state = "BACKTRACK_HOLD"
+                        d.status = "BACKTRACK_HOLD"
+                        d.backtrack_hold = True
+                        d.lkp = np.copy(d.pos)
+                        d.backtrack_target = d.get_backtrack_point(retreat_distance=18.0)
+                        d.acknowledged_target = np.copy(d.backtrack_target)
+                        d.target_station = np.copy(d.backtrack_target)
+                        if hasattr(self, "c2") and hasattr(self.c2, "log_event"):
+                            self.c2.log_event("WARN", f"Drone #{d.id} heartbeat watchdog expired! Backtracking along breadcrumbs to radio horizon.")
+                else:
+                    if d.status != "LOST_LINK" and d.flight_state not in ("LANDED", "GROUND_IDLE", "CRASHED"):
+                        d.status = "LOST_LINK"
+
+            # 4. Link restoration during backtrack
+            if d.flight_state == "BACKTRACK_HOLD" and d.gcs_heartbeat_watchdog > 0.0 and d.uplink_active:
+                d.flight_state = "PERIMETER_HOLD"
+                d.status = "PERIMETER_HOLD"
+                d.backtrack_hold = False
+                d.holding_at_horizon = True
+                d.acknowledged_target = np.copy(d.pos)
+                d.target_station = np.copy(d.pos)
+                d.vel = np.zeros(3, dtype=float)
+                if hasattr(self, "c2") and hasattr(self.c2, "log_event"):
+                    self.c2.log_event("STATUS", f"[LINK RESTORED: Drone #{d.id} holding station at radio horizon. Commanded target was out of range.]")
 
     # ==========================================================================
     # 1b. Dynamic In-Flight Swarm Enrollment & P2P Handshakes (TKT-50)
@@ -2508,6 +2569,10 @@ class SITLWorldEngine:
             for d in self.drones:
                 if d.id == 0 or d.is_leader:
                     d.acknowledged_target = np.copy(target_arr)
+                    d.holding_at_horizon = False
+                    if d.flight_state == "PERIMETER_HOLD":
+                        d.flight_state = "CRUISE"
+                        d.status = "FLEET_LEADER"
             return {
                 "status": "OK",
                 "channel": "HARDLINE_UMBILICAL",
@@ -2531,6 +2596,12 @@ class SITLWorldEngine:
                     "error": f"Leader Drone #{current_leader.id} ({d_gcs:.1f}m) out of GCS radio range ({RADIO_RANGE}m)",
                 }
             current_leader.acknowledged_target = np.copy(target_arr)
+            for d in self.drones:
+                if getattr(d, "holding_at_horizon", False):
+                    d.holding_at_horizon = False
+                    if d.flight_state == "PERIMETER_HOLD":
+                        d.flight_state = "CRUISE"
+                        d.status = "FLEET_LEADER" if d.is_leader else "ACTIVE"
             return {
                 "status": "OK",
                 "channel": "WIRELESS_STAR",
@@ -2543,6 +2614,12 @@ class SITLWorldEngine:
                 res = self.brain.inject_target(target_arr)
                 if isinstance(res, dict) and res.get("status") == "OUT_OF_RANGE":
                     return res
+                for d in self.drones:
+                    if getattr(d, "holding_at_horizon", False):
+                        d.holding_at_horizon = False
+                        if d.flight_state == "PERIMETER_HOLD":
+                            d.flight_state = "CRUISE"
+                            d.status = "ACTIVE"
                 return res if isinstance(res, dict) else {
                     "status": "OK",
                     "channel": "P2P_MESH",
@@ -2693,6 +2770,8 @@ class SITLWorldEngine:
             "lost_link_loiter_timer": round(max(0.0, float(self.lost_link_loiter_timer)), 1),
             "swarm_rtb_active": self.swarm_rtb_active,
             "overhead_marshal_active": self.overhead_marshal_active,
+            "fleet_holding_at_horizon": any(getattr(d, "holding_at_horizon", False) for d in self.drones if not d.crashed),
+            "fleet_backtracking": any(getattr(d, "backtrack_hold", False) for d in self.drones if not d.crashed),
             "recovery_stage": self.recovery_stage,
             "cold_start": bool(getattr(self, "cold_start", False)),
             "scramble_active": bool(getattr(self, "scramble_active", False)),

@@ -4,6 +4,7 @@
 # ==============================================================================
 
 # Private Specs & Landmarks (Developer & Agent Eyes Only)
+docs/internal/
 internal/
 AGENTS.md
 AGENTS.MD

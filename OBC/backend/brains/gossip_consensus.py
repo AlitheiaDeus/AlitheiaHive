@@ -341,7 +341,19 @@ class GossipConsensusBrain(BaseBrain):
         self._update_formation_heading(active_drones, consensus_target, dt)
 
         for drone in active_drones:
-            # 0. Lost-link failsafe: steer toward local LKP muster hold (TKT-41 & FIX-05)
+            # 0. Backtrack & Lost-link failsafe (TKT-54)
+            if getattr(drone, "flight_state", "") == "BACKTRACK_HOLD" and getattr(drone, "backtrack_target", None) is not None:
+                drone.target_station = drone.backtrack_target
+                accs[drone.id] = self._steer_toward(
+                    drone.pos, drone.vel, drone.backtrack_target, max_speed=8.0
+                )
+                continue
+            elif getattr(drone, "flight_state", "") == "PERIMETER_HOLD" or getattr(drone, "holding_at_horizon", False):
+                drone.target_station = drone.acknowledged_target
+                accs[drone.id] = self._steer_toward(
+                    drone.pos, drone.vel, drone.acknowledged_target, max_speed=2.0
+                )
+                continue
             if getattr(drone, "lost_link", False):
                 drone.target_station = drone.lkp
                 accs[drone.id] = self._steer_toward(

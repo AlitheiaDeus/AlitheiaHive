@@ -6,6 +6,10 @@
 > **Purpose of this document**:  
 > Whenever your head hurts, you feel lost in simulation physics, or you wonder *"How does this actually work on real drones with real hardware?"* — **read this document**.  
 > It strips away all simulation math and describes the exact, 4-wire physical reality.
+> 
+> > [!NOTE]
+> > **Evolutionary Roadmap Alignment (Phase 4: Real Stuff / HW-01)**:  
+> > While Phases 2 and 3 focus on 60 FPS FC twin kinematics, 4-zone safety, and tactical gamified missions, this blueprint defines the physical hardware bridge when flashing real companion computers and binding physical airframes.
 
 ---
 

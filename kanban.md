@@ -36,17 +36,24 @@ kanban
     tkt24["Dynamic Wind Gust Vector Field"]@{ ticket: '[TKT-24]', priority: 'Very Low' }
     tkt44["High-Scale Multi-Tier Swarms"]@{ ticket: '[TKT-44]', priority: 'Very Low' }
   backlog["Backlog (Staged / Non-Essential)"]
-    tkt51["Physical Courier / Rescue Mule"]@{ ticket: '[TKT-51]', priority: 'Medium' }
-    tkt47["Declarative Deployment Scenarios"]@{ ticket: '[TKT-47]', priority: 'Medium' }
-    tkt22["Manual RC Joystick & Gamepad"]@{ ticket: '[TKT-22]', priority: 'Medium' }
-    tkt36["Interactive 3D Route Planner"]@{ ticket: '[TKT-36]', priority: 'Low' }
-    tkt45["MAVLink v2 HMAC Signing & EW"]@{ ticket: '[TKT-45]', priority: 'Medium' }
+    pln02["PLN-02: Auxiliary Mission Engine (Waypoints 1st)"]@{ ticket: '[PLN-02]', priority: 'High' }
+    tkt55["TKT-55: Tactical Formation Headings (In/Out)"]@{ ticket: '[TKT-55]', priority: 'High' }
+    pln01["PLN-01: Airframe Class Registry & Plugins"]@{ ticket: '[PLN-01]', priority: 'Medium' }
+    pln07["PLN-07: Full MissionPlanner / QGC Parity"]@{ ticket: '[PLN-07]', priority: 'Medium' }
+    pln05["PLN-05: Off-Nominal Landing Zones & E-Land"]@{ ticket: '[PLN-05]', priority: 'Low' }
+    pln04["PLN-04: Payload Deposit & Solar Repeaters"]@{ ticket: '[PLN-04]', priority: 'Low' }
+    pln06["PLN-06: Drone Show Pathing & Splines"]@{ ticket: '[PLN-06]', priority: 'Low' }
+    pln03["PLN-03: Gamified Tactical Mission Generator"]@{ ticket: '[PLN-03]', priority: 'Low' }
+    pln08["PLN-08: Urban Canyon Geometry & Black Zones"]@{ ticket: '[PLN-08]', priority: 'Medium' }
+    pln09["PLN-09: T3 Kodiak Simulated LiDAR Stream"]@{ ticket: '[PLN-09]', priority: 'Medium' }
+    pln10["PLN-10: Adversarial Targets & Emitter Triangulation"]@{ ticket: '[PLN-10]', priority: 'Medium' }
     tkt39["Standalone OBC Socket Daemon"]@{ ticket: '[TKT-39]', priority: 'Medium' }
-    tkt37["SITL Provider (ArduPilot / PX4)"]@{ ticket: '[TKT-37]', priority: 'Low' }
-    tkt38["Hardware Provider (Radio Modem)"]@{ ticket: '[TKT-38]', priority: 'Very Low' }
+    tkt22["Manual RC Joystick & Gamepad"]@{ ticket: '[TKT-22]', priority: 'Medium' }
   todo["Todo (Active Pipeline)"]
   in_progress["In Progress (WIP = 1)"]
+
   completed["Completed (Fresh / Review)"]
+    tkt54["Heartbeat Watchdog & Breadcrumb Backtrack"]@{ ticket: '[TKT-54]', priority: 'Very High' }
     fix10["Strict Network Decoupling & Landing Huddle Fix"]@{ ticket: '[FIX-10]', priority: 'High' }
     fix09["Strict WE-GCS Airgap & Comms Integrity"]@{ ticket: '[FIX-09]', priority: 'High' }
     tkt53["Flight Formation Test Suite & Playback"]@{ ticket: '[TKT-53]', priority: 'High' }
@@ -82,6 +89,8 @@ kanban
 
 | Ticket ID | Grade | Title | Operational Inspiration | Spec Document |
 | :--- | :--- | :--- | :--- | :--- |
+| **TKT-55** | 🚀 Feature | Tactical Formation Orientations & Perimeter In/Out Headings | Align airframe yaw with mission intent at target (sentry in/out) | [`tasks/TKT-55_tactical_formation_headings.md`](tasks/TKT-55_tactical_formation_headings.md) |
+| **TKT-54** | 🚀 Feature | Heartbeat Watchdog, Breadcrumb Backtrack & Zero-Range Peeking | Eliminates range peeking; auto-backtracks to comms boundary | [`tasks/TKT-54_heartbeat_breadcrumb_backtrack.md`](tasks/TKT-54_heartbeat_breadcrumb_backtrack.md) |
 | **FIX-10** | 🛠️ Improvement | Strict Network Decoupling, Landing Huddle Fix & 3-Way Death Doctrine | Landing pad huddle, UDP canyon sockets & realistic casualty detection | [`tasks/FIX-10_network_airgap_and_landing_reformation.md`](tasks/FIX-10_network_airgap_and_landing_reformation.md) |
 | **TKT-53** | 🚀 Feature | Flight Formation Test Suite & Playback Recorder | Comprehensive formation testing & trajectory playback | [`tasks/TKT-53_flight_formation_test_suite.md`](tasks/TKT-53_flight_formation_test_suite.md) |
 | **FIX-09** | 🛠️ Improvement | Strict WE-GCS Airgap & Comms Integrity | Q2-Q5, Q7: Cold start, pad crash, comms handover & UI | [`tasks/FIX-09_strict_airgap_and_ground_truth_pads.md`](tasks/FIX-09_strict_airgap_and_ground_truth_pads.md) |
@@ -112,7 +121,26 @@ kanban
 
 ---
 
-## 3. Strict Kanban Governance Rules
+## 3. Strategic Planning Epics (PLN Roadmap)
+
+> High-level architectural pillars grouping candidate capabilities into coherent systems:
+
+| Epic ID | Title | Scope & Operational Vision | Grouped Tickets / Prereqs |
+| :--- | :--- | :--- | :--- |
+| **PLN-01** | **Airframe Class Registry & Hardware Plugins** | Register formal classes (`Den`, `Totem`, `Cairn`, `Mastiff`, `Threadfin`, `Alpha`, `Beta`, `Pup`, `Kodiak`, `Kourier`, `Bloodhound`) with hardware plugins and capabilities. | `[TKT-48]`, `[TKT-49]` |
+| **PLN-02** | **Auxiliary Mission Engine (Waypoints First)** | Discrete waypoint queues first, then composable auxiliary missions at the click of a button (`S&R`, `DEPOSIT`, `RECON`, `GO_AND_LAND`, `PATROL_TO_BINGO`). Registered airframes only. | `[PLN-02]`, `[TKT-28]`, `[TKT-30]`, `[TKT-51]` |
+| **PLN-03** | **Gamified Tactical Mission Generator** | Procedural tactical mission generator: Intercept hostile drone, corridor scanning, search & rescue, EW contested zones. | Post-PLN-02 |
+| **PLN-04** | **Payload Deposit & Solar Repeaters** | Precision payload drop zones, Cairn G1 solar repeater release, magnetic release hook mechanics. | `[PLN-04]` |
+| **PLN-05** | **Off-Nominal Landing Zones & Field E-Land** | Dynamic field landing zones, free-landing clearance, emergency touchdowns anywhere safe besides Base pads. | `[TKT-47]` |
+| **PLN-06** | **Choreographic Formations & Individual Pathing** | Drone show / custom formation curves, 3D waypoint spline grids, individual vehicle trajectory scripting. | `[TKT-36]` |
+| **PLN-07** | **Full MissionPlanner & QGC Compatibility** | Bidirectional MAVLink mission item upload/download, parameter sync, standard GCS parity. | `[TKT-46]`, `[TKT-45]`, `[TKT-37]` |
+| **PLN-08** | **Urban Canyon Geometry, Static Obstacles & Black Zones** | 3D AABB/prism colliders, Zone 4 structural clash, and LOS RF shadowing creating absolute RF black zones in urban channels. | `[PLN-08]`, `[TKT-54]` |
+| **PLN-09** | **T3 Kodiak Simulated LiDAR Stream & Point-Cloud HUD** | 16–32 ray synthetic range returns on T3 Kodiak, Polar range-bearing UDP downlink, Three.js neon point-cloud HUD overlay. | `[PLN-09]`, `[PLN-01]` |
+| **PLN-10** | **Adversarial Targets, Emitter Triangulation & Maze Exploration** | Mobile adversarial RF jammer targets, K1-EW 3-antenna AoA triangulation, autonomous maze corridor frontier exploration. | `[PLN-10]`, `[PLN-08]` |
+
+---
+
+## 4. Strict Kanban Governance Rules
 
 1. **WIP = 1**: At most one active ticket in `In Progress` at any time.
 2. **1-Card-1-Doc Scope**: All acceptance criteria, test commands, and architectural notes live in `tasks/`. `kanban.md` remains a lightweight index HUD.

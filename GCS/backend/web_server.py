@@ -103,8 +103,15 @@ class SwarmWebServer:
         self.sim_task: Optional[asyncio.Task] = None
         self.is_running: bool = False
         self.frames_broadcast: int = 0
+        self.last_telemetry_rx_time: float = -100.0
 
         self._setup_routes()
+
+    def is_link_active(self) -> bool:
+        """Assess link status strictly via downlinked telemetry freshness without omniscient range peeking (TKT-54)."""
+        if getattr(self.sim, "sim_time", 0.0) < 1.0:
+            return True
+        return (getattr(self.sim, "sim_time", 0.0) - self.last_telemetry_rx_time) <= 1.0
 
     def _setup_routes(self) -> None:
         """Configure REST, WebSocket, and static frontend file endpoints."""
@@ -484,26 +491,44 @@ class SwarmWebServer:
 
         elif cmd in ("LAND_DRONE", "COMMAND_LAND_DRONE"):
             drone_id = int(cmd_dict.get("id", cmd_dict.get("drone_id", 0)))
+            link_ok = self.is_link_active()
+            if not link_ok:
+                return {
+                    "status": "DROPPED",
+                    "cmd": cmd,
+                    "drone_id": drone_id,
+                    "reason": "LINK_LOST",
+                    "error": "No fresh telemetry downlinked from fleet. Command dropped.",
+                }
             success = self.sim.command_land_drone(drone_id)
             if success:
                 self.session_manager.add_event("ATC", f"Commanding Drone #{drone_id} to soft-land on assigned pad", sim_time=self.sim.sim_time)
             return {
-                "status": "OK" if success else ("DROPPED" if not self.sim.is_in_comms_range() else "ERROR"),
+                "status": "OK" if success else "ERROR",
                 "cmd": cmd,
                 "drone_id": drone_id,
-                "reason": "OUT_OF_RANGE" if not self.sim.is_in_comms_range() else "UNAVAILABLE",
+                "reason": "UNAVAILABLE" if not success else None,
             }
 
         elif cmd in ("TAKEOFF_DRONE", "RELAUNCH_DRONE"):
             drone_id = int(cmd_dict.get("id", cmd_dict.get("drone_id", 0)))
+            link_ok = self.is_link_active()
+            if not link_ok:
+                return {
+                    "status": "DROPPED",
+                    "cmd": cmd,
+                    "drone_id": drone_id,
+                    "reason": "LINK_LOST",
+                    "error": "No fresh telemetry downlinked from fleet. Command dropped.",
+                }
             success = self.sim.command_takeoff_drone(drone_id)
             if success:
                 self.session_manager.add_event("TAKEOFF", f"Launching Drone #{drone_id} from pad: TAKEOFF_DRONE", sim_time=self.sim.sim_time)
             return {
-                "status": "OK" if success else ("DROPPED" if not self.sim.is_in_comms_range() else "ERROR"),
+                "status": "OK" if success else "ERROR",
                 "cmd": cmd,
                 "drone_id": drone_id,
-                "reason": "OUT_OF_RANGE" if not self.sim.is_in_comms_range() else "UNAVAILABLE",
+                "reason": "UNAVAILABLE" if not success else None,
             }
 
         elif cmd in ("DECLARE_DESTROYED", "MARK_DESTROYED", "CONFIRM_CASUALTY", "DECLARE_LOST"):
@@ -517,13 +542,20 @@ class SwarmWebServer:
                 return {"status": "OK", "cmd": cmd, "drone_id": drone_id}
             return {"status": "ERROR", "error": "DRONE_NOT_FOUND"}
 
+        elif cmd in ("CONTINUE_AUTONOMOUS_SILENCE", "ALLOW_RADIO_SILENCE", "SET_RADIO_SILENCE"):
+            permitted = bool(cmd_dict.get("permitted", True))
+            for d in getattr(self.sim, "drones", []):
+                d.radio_silence_permitted = permitted
+            self.session_manager.add_event("C2", f"Radio silence permitted set to {permitted}", sim_time=self.sim.sim_time)
+            return {"status": "OK", "cmd": cmd, "radio_silence_permitted": permitted}
+
         elif cmd == "SET_BRAIN":
             name = cmd_dict.get("brain", "LEADER_FOLLOWER")
-            if not self.sim.is_in_comms_range():
+            if not self.is_link_active():
                 return {
                     "status": "DROPPED",
-                    "reason": "OUT_OF_RANGE",
-                    "error": "Fleet is beyond radio horizon. Brain hot-swap dropped.",
+                    "reason": "LINK_LOST",
+                    "error": "Fleet is beyond radio horizon (telemetry link lost). Brain hot-swap dropped.",
                 }
             ok = self.sim.set_brain(name)
             self.session_manager.add_event("CMD", f"Hot-swapping Brain Architecture -> {name}", sim_time=self.sim.sim_time)
@@ -587,6 +619,13 @@ class SwarmWebServer:
             # Broadcast state snapshot over WebSocket & UDP
             snapshot = self.sim.get_state_snapshot()
             snapshot["type"] = "TELEMETRY_FRAME"
+
+            # Telemetry Freshness Assessment (TKT-54: No range peeking)
+            drones_list = snapshot.get("drones", [])
+            tether_intact = (snapshot.get("comms_mode") == "TETHERED_RELAY" and not snapshot.get("tether", {}).get("severed", False))
+            any_downlink = any(d.get("downlink_active", False) for d in drones_list)
+            if any_downlink or tether_intact:
+                self.last_telemetry_rx_time = self.sim.sim_time
 
             # Track autonomous state transitions for session history (TKT-32 / FIX-10)
             tether_state = snapshot.get("tether", {})
