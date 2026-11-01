@@ -1214,7 +1214,7 @@ class SITLWorldEngine:
                 dropped_up = self.is_packet_dropped(d_gcs, is_hardline=False, max_range=RANGE_HOWL)
                 d.uplink_active = (d_gcs <= RANGE_HOWL and not dropped_up)
 
-                r_down = RANGE_BARK if (d.tier == TIER_LEADER or d.is_leader) else RANGE_YIP
+                r_down = RANGE_BORK if getattr(d, "rf_power_mode", None) == RF_MODE_BORK else (RANGE_BARK if (d.tier == TIER_LEADER or d.is_leader) else RANGE_YIP)
                 dropped_down = self.is_packet_dropped(d_gcs, is_hardline=False, max_range=r_down)
                 has_direct = (d_gcs <= r_down and not dropped_down)
 
@@ -1299,9 +1299,10 @@ class SITLWorldEngine:
                         else:
                             drone.rssi, drone.link_quality = self.calculate_rssi(d_gcs, is_hardline=False)
                             dropped_up = self.is_packet_dropped(d_gcs, is_hardline=False, max_range=RANGE_HOWL)
-                            dropped_down = self.is_packet_dropped(d_gcs, is_hardline=False, max_range=RANGE_BARK)
+                            r_down = RANGE_BORK if getattr(drone, "rf_power_mode", None) == RF_MODE_BORK else RANGE_BARK
+                            dropped_down = self.is_packet_dropped(d_gcs, is_hardline=False, max_range=r_down)
                             drone.uplink_active = (d_gcs <= RANGE_HOWL and not dropped_up)
-                            drone.downlink_active = (d_gcs <= RANGE_BARK and not dropped_down)
+                            drone.downlink_active = (d_gcs <= r_down and not dropped_down)
                         drone.yip_lost = bool(drone.uplink_active and not drone.downlink_active)
                         drone.gateway_id = None
                         if broadcast_tick and drone.uplink_active:
@@ -1361,9 +1362,10 @@ class SITLWorldEngine:
                     d_gcs = float(np.linalg.norm(drone.pos - self.tether_anchor))
                     drone.rssi, drone.link_quality = self.calculate_rssi(d_gcs, is_hardline=False)
                     dropped_up = self.is_packet_dropped(d_gcs, is_hardline=False, max_range=RANGE_HOWL)
-                    dropped_down = self.is_packet_dropped(d_gcs, is_hardline=False, max_range=RANGE_BARK)
+                    r_down = RANGE_BORK if getattr(drone, "rf_power_mode", None) == RF_MODE_BORK else RANGE_BARK
+                    dropped_down = self.is_packet_dropped(d_gcs, is_hardline=False, max_range=r_down)
                     drone.uplink_active = (d_gcs <= RANGE_HOWL and not dropped_up)
-                    drone.downlink_active = (d_gcs <= RANGE_BARK and not dropped_down)
+                    drone.downlink_active = (d_gcs <= r_down and not dropped_down)
                     drone.yip_lost = bool(drone.uplink_active and not drone.downlink_active)
                     drone.gateway_id = None
 
