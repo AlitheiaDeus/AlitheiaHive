@@ -47,6 +47,7 @@ kanban
   todo["Todo (Active Pipeline)"]
   in_progress["In Progress (WIP = 1)"]
   completed["Completed (Fresh / Review)"]
+    fix10["Strict Network Decoupling & Landing Huddle Fix"]@{ ticket: '[FIX-10]', priority: 'High' }
     fix09["Strict WE-GCS Airgap & Comms Integrity"]@{ ticket: '[FIX-09]', priority: 'High' }
     tkt53["Flight Formation Test Suite & Playback"]@{ ticket: '[TKT-53]', priority: 'High' }
     tkt43["Dynamic Hungarian Formation Inversion"]@{ ticket: '[TKT-43]', priority: 'High' }
@@ -81,6 +82,7 @@ kanban
 
 | Ticket ID | Grade | Title | Operational Inspiration | Spec Document |
 | :--- | :--- | :--- | :--- | :--- |
+| **FIX-10** | 🛠️ Improvement | Strict Network Decoupling, Landing Huddle Fix & 3-Way Death Doctrine | Landing pad huddle, UDP canyon sockets & realistic casualty detection | [`tasks/FIX-10_network_airgap_and_landing_reformation.md`](tasks/FIX-10_network_airgap_and_landing_reformation.md) |
 | **TKT-53** | 🚀 Feature | Flight Formation Test Suite & Playback Recorder | Comprehensive formation testing & trajectory playback | [`tasks/TKT-53_flight_formation_test_suite.md`](tasks/TKT-53_flight_formation_test_suite.md) |
 | **FIX-09** | 🛠️ Improvement | Strict WE-GCS Airgap & Comms Integrity | Q2-Q5, Q7: Cold start, pad crash, comms handover & UI | [`tasks/FIX-09_strict_airgap_and_ground_truth_pads.md`](tasks/FIX-09_strict_airgap_and_ground_truth_pads.md) |
 | **TKT-52** | 🚀 Feature | Tactical GNSS Denial & Dead-Reckoning RTB | Real EW GPS spoofing in contested airspace | [`tasks/TKT-52_tactical_gnss_denial.md`](tasks/TKT-52_tactical_gnss_denial.md) |

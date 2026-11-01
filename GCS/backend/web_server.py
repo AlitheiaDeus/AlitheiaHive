@@ -309,7 +309,9 @@ class SwarmWebServer:
 
         elif cmd == "SET_FORMATION":
             mode = cmd_dict.get("mode", "ECHELON_ESCORT")
-            self.sim.set_formation(mode)
+            res = self.sim.set_formation(mode)
+            if isinstance(res, dict) and res.get("status") in ("DROPPED", "OUT_OF_RANGE"):
+                return res
             self.session_manager.add_event("CMD", f"Changing Swarm Formation -> {mode}", sim_time=self.sim.sim_time)
             return {"status": "OK", "cmd": cmd, "formation": self.sim.formation_mode}
 
@@ -485,17 +487,44 @@ class SwarmWebServer:
             success = self.sim.command_land_drone(drone_id)
             if success:
                 self.session_manager.add_event("ATC", f"Commanding Drone #{drone_id} to soft-land on assigned pad", sim_time=self.sim.sim_time)
-            return {"status": "OK" if success else "ERROR", "cmd": cmd, "drone_id": drone_id}
+            return {
+                "status": "OK" if success else ("DROPPED" if not self.sim.is_in_comms_range() else "ERROR"),
+                "cmd": cmd,
+                "drone_id": drone_id,
+                "reason": "OUT_OF_RANGE" if not self.sim.is_in_comms_range() else "UNAVAILABLE",
+            }
 
         elif cmd in ("TAKEOFF_DRONE", "RELAUNCH_DRONE"):
             drone_id = int(cmd_dict.get("id", cmd_dict.get("drone_id", 0)))
             success = self.sim.command_takeoff_drone(drone_id)
             if success:
                 self.session_manager.add_event("TAKEOFF", f"Launching Drone #{drone_id} from pad: TAKEOFF_DRONE", sim_time=self.sim.sim_time)
-            return {"status": "OK" if success else "ERROR", "cmd": cmd, "drone_id": drone_id}
+            return {
+                "status": "OK" if success else ("DROPPED" if not self.sim.is_in_comms_range() else "ERROR"),
+                "cmd": cmd,
+                "drone_id": drone_id,
+                "reason": "OUT_OF_RANGE" if not self.sim.is_in_comms_range() else "UNAVAILABLE",
+            }
+
+        elif cmd in ("DECLARE_DESTROYED", "MARK_DESTROYED", "CONFIRM_CASUALTY", "DECLARE_LOST"):
+            drone_id = int(cmd_dict.get("id", cmd_dict.get("drone_id", 0)))
+            drone = self.sim.get_drone_by_id(drone_id)
+            if drone:
+                drone.declared_destroyed = True
+                drone.flight_state = "DECLARED_LOST"
+                drone.status = "DECLARED_LOST"
+                self.session_manager.add_event("OPERATOR", f"Operator confirmed airframe destruction: Drone #{drone_id} marked DECLARED_LOST", sim_time=self.sim.sim_time)
+                return {"status": "OK", "cmd": cmd, "drone_id": drone_id}
+            return {"status": "ERROR", "error": "DRONE_NOT_FOUND"}
 
         elif cmd == "SET_BRAIN":
             name = cmd_dict.get("brain", "LEADER_FOLLOWER")
+            if not self.sim.is_in_comms_range():
+                return {
+                    "status": "DROPPED",
+                    "reason": "OUT_OF_RANGE",
+                    "error": "Fleet is beyond radio horizon. Brain hot-swap dropped.",
+                }
             ok = self.sim.set_brain(name)
             self.session_manager.add_event("CMD", f"Hot-swapping Brain Architecture -> {name}", sim_time=self.sim.sim_time)
             return {
@@ -555,30 +584,53 @@ class SwarmWebServer:
             self.sim.step_c2(interval)
             self.sim.step(interval, advance_c2=False)
 
-            # Track autonomous state transitions for session history (TKT-32)
-            if self.sim.tether_severed and not self._last_tether_severed:
+            # Broadcast state snapshot over WebSocket & UDP
+            snapshot = self.sim.get_state_snapshot()
+            snapshot["type"] = "TELEMETRY_FRAME"
+
+            # Track autonomous state transitions for session history (TKT-32 / FIX-10)
+            tether_state = snapshot.get("tether", {})
+            tether_severed = bool(tether_state.get("severed", False))
+            if tether_severed and not self._last_tether_severed:
                 self.session_manager.add_event("FAILSAFE", "Tactical Umbilical Severed! Physical cable snap detected.", sim_time=self.sim.sim_time)
                 self._last_tether_severed = True
-            elif not self.sim.tether_severed and self._last_tether_severed:
+            elif not tether_severed and self._last_tether_severed:
                 self.session_manager.add_event("STATUS", "Tactical umbilical reconnected / swarm rebooted.", sim_time=self.sim.sim_time)
                 self._last_tether_severed = False
 
-            cur_crashed = {d.id for d in self.sim.drones if d.crashed}
-            new_crashed = cur_crashed - self._last_crashed_ids
-            for cid in new_crashed:
-                self.session_manager.add_event("CASUALTY", f"Drone #{cid} crashed! Ballistic drop initiated.", sim_time=self.sim.sim_time)
-            self._last_crashed_ids = cur_crashed
+            # Downlink Telemetry Casualty Detection: 3 Realistic Doctrines
+            downlink_drones = snapshot.get("drones", [])
+            cur_confirmed_dead = set()
+            for d_info in downlink_drones:
+                did = d_info.get("id")
+                is_dead = d_info.get("crashed", False)
+                is_declared = d_info.get("declared_destroyed", False)
+                is_mayday = d_info.get("mayday_beacon", False)
+                is_collision = d_info.get("collision_inferred", False)
 
-            cur_leader = self.sim.leader
-            cur_leader_id = cur_leader.id if cur_leader else -1
+                if is_dead or is_declared:
+                    cur_confirmed_dead.add(did)
+                    if did not in self._last_crashed_ids:
+                        if is_declared:
+                            self.session_manager.add_event("CASUALTY", f"Drone #{did} declared lost/destroyed by operator.", sim_time=self.sim.sim_time)
+                        elif is_collision:
+                            self.session_manager.add_event("CASUALTY", f"Mid-air collision confirmed for Drone #{did}! Proximity clash detected.", sim_time=self.sim.sim_time)
+                        elif is_mayday:
+                            self.session_manager.add_event("CASUALTY", f"Mayday beacon received: Drone #{did} catastrophic impact.", sim_time=self.sim.sim_time)
+                        else:
+                            self.session_manager.add_event("CASUALTY", f"Drone #{did} crash confirmed via telemetry downlink.", sim_time=self.sim.sim_time)
+            self._last_crashed_ids = cur_confirmed_dead
+
+            cur_leader_id = tether_state.get("leader_id", -1)
             if cur_leader_id != self._last_leader_id and self._last_leader_id != -1 and cur_leader_id != -1:
                 self.session_manager.add_event("SUCCESSION", f"Autonomic Succession: Drone #{cur_leader_id} promoted to Swarm Leader", sim_time=self.sim.sim_time)
                 self._last_leader_id = cur_leader_id
 
-            if self.sim.swarm_rtb_active and not self._last_rtb_active:
+            rtb_active = bool(snapshot.get("swarm_rtb_active", False))
+            if rtb_active and not self._last_rtb_active:
                 self.session_manager.add_event("RTB", "Doctrine A 30s loiter grace period expired. Swarm RTB initiated to Base (0,0,25).", sim_time=self.sim.sim_time)
                 self._last_rtb_active = True
-            elif not self.sim.swarm_rtb_active and self._last_rtb_active:
+            elif not rtb_active and self._last_rtb_active:
                 self._last_rtb_active = False
 
             # Step UDP / MAVLink bridge if attached
@@ -587,8 +639,6 @@ class SwarmWebServer:
 
             # Broadcast state snapshot over WebSocket
             if self.active_websockets:
-                snapshot = self.sim.get_state_snapshot()
-                snapshot["type"] = "TELEMETRY_FRAME"
                 payload = json.dumps(snapshot)
                 stale_sockets = []
 

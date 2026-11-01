@@ -120,6 +120,10 @@ class Drone:
         self.gnss_settled: bool = False      # Emergency blind soft-settle flag
         self.crashed_while_linked: bool = False
         self.retrieved: bool = False
+        self.declared_destroyed: bool = False
+        self.mayday_beacon: bool = False
+        self.mayday_reason: str = ""
+        self.collision_inferred: bool = False
 
     def reset_state(
         self,
@@ -189,6 +193,10 @@ class Drone:
         self.gnss_settled = False
         self.crashed_while_linked = False
         self.retrieved = False
+        self.declared_destroyed = False
+        self.mayday_beacon = False
+        self.mayday_reason = ""
+        self.collision_inferred = False
 
     @property
     def target_reached(self) -> bool:
@@ -257,4 +265,8 @@ class Drone:
             "gnss_settled": self.gnss_settled,
             "crashed_while_linked": self.crashed_while_linked,
             "retrieved": self.retrieved,
+            "declared_destroyed": self.declared_destroyed,
+            "mayday_beacon": self.mayday_beacon,
+            "mayday_reason": self.mayday_reason,
+            "collision_inferred": self.collision_inferred,
         }

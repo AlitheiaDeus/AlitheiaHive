@@ -60,30 +60,7 @@
         setupBtn('btn-mode-star', () => dispatchCommsMode('LEADER_FOLLOWER'));
         setupBtn('btn-mode-mesh', () => dispatchCommsMode('GOSSIP_CONSENSUS'));
 
-        // Electronic Warfare & RF Jamming Slider (PLN-03)
-        const jammingSlider = document.getElementById('rf-jamming-slider');
-        const jammingVal = document.getElementById('rf-jamming-val');
-        const rfEnvStatus = document.getElementById('rf-env-status');
-        if (jammingSlider) {
-            jammingSlider.addEventListener('input', (e) => {
-                isDraggingJammingSlider = true;
-                const pct = parseInt(e.target.value);
-                const rate = pct / 100.0;
-                if (jammingVal) jammingVal.textContent = `${pct}% JAMMING`;
-                if (rfEnvStatus) {
-                    rfEnvStatus.innerHTML = pct > 0 ? `RF: <strong style="color:var(--neon-amber)">CONTESTED (${pct}%)</strong>` : `RF: <strong>NOMINAL</strong>`;
-                }
-                window.swarmClient?.send({ cmd: 'SET_RF_JAMMING', rate: rate });
-            });
-            jammingSlider.addEventListener('change', () => {
-                isDraggingJammingSlider = false;
-            });
-        }
 
-
-        // Brain Selectors (Legacy / Hot-swap)
-        setupBtn('btn-brain-lf', () => dispatchBrain('LEADER_FOLLOWER'));
-        setupBtn('btn-brain-gossip', () => dispatchBrain('GOSSIP_CONSENSUS'));
 
         // Formation Selectors
         setupBtn('btn-form-echelon', () => dispatchFormation('ECHELON_ESCORT'));
@@ -146,52 +123,7 @@
             window.swarmClient?.send({ cmd: 'CANCEL_RTB' });
         });
 
-        // Casualty Lab Controls
-        setupBtn('btn-kill-leader', () => {
-            logEvent('CMD', 'Injecting casualty: KILL_LEADER');
-            window.swarmClient?.send({ cmd: 'KILL_LEADER' });
-        });
 
-        setupBtn('btn-cut-tether', () => {
-            logEvent('CMD', 'Injecting physical casualty: CUT_TETHER');
-            window.swarmClient?.send({ cmd: 'CUT_TETHER' });
-        });
-
-        setupBtn('btn-kill-random', () => {
-            const aliveFollowers = [];
-            for (let [id, card] of droneCards) {
-                if (!deadDroneIds.has(id) && id !== currentLeaderId) {
-                    aliveFollowers.push(id);
-                }
-            }
-            if (aliveFollowers.length > 0) {
-                const victimId = aliveFollowers[Math.floor(Math.random() * aliveFollowers.length)];
-                logEvent('CMD', `Injecting escort casualty: KILL_DRONE #${victimId}`);
-                window.swarmClient?.send({ cmd: 'KILL_DRONE', id: victimId });
-            } else {
-                logEvent('WARN', 'No living escort followers available to terminate.');
-            }
-        });
-
-        setupBtn('btn-respawn-dead', () => {
-            const deadCount = deadDroneIds.size;
-            if (deadCount > 0) {
-                logEvent('CMD', `Respawning ${deadCount} destroyed drone(s) in-place: REBOOT_ALL_DEAD`);
-                window.swarmClient?.send({ cmd: 'REBOOT_ALL_DEAD' });
-            } else {
-                logEvent('INFO', 'No destroyed casualties to respawn. Fleet 100% operational.');
-            }
-        });
-
-        setupBtn('btn-clear-wreckage', () => {
-            const deadCount = deadDroneIds.size;
-            if (deadCount > 0) {
-                logEvent('CMD', `Salvaging ${deadCount} destroyed wreckage: CLEAR_WRECKAGE`);
-                window.swarmClient?.send({ cmd: 'CLEAR_WRECKAGE' });
-            } else {
-                logEvent('INFO', 'No crashed wreckage on battlefield.');
-            }
-        });
 
         setupBtn('btn-scramble-swarm', () => {
             logEvent('CMD', 'Ordering sequenced pad scramble: SCRAMBLE_SWARM');
@@ -795,12 +727,18 @@
             if (title) card.elActionBtn.title = title;
         }
 
-        if (drone.crashed) {
+        if (drone.crashed || drone.declared_destroyed) {
             card.el.classList.add('crashed-card');
-            card.elStatus.textContent = 'CRASHED';
+            const crashStatus = drone.declared_destroyed
+                ? 'DECLARED LOST'
+                : (drone.collision_inferred
+                    ? 'COLLISION CONFIRMED'
+                    : (drone.mayday_beacon ? 'IMPACT CONFIRMED' : 'CRASHED'));
+            card.elStatus.textContent = crashStatus;
             card.elStatus.className = 'status-tag tag-crashed';
-            card.elRole.textContent = 'DESTROYED';
-            setActionBtn('REBOOT', 'card-btn-action btn-reboot', '[SITL Sim Lab] Revive crashed airframe');
+            card.elRole.textContent = drone.declared_destroyed
+                ? 'OPERATOR DECLARED'
+                : (drone.collision_inferred ? 'PROP CLASH' : 'CASUALTY');
             if (card.elLandBtn) card.elLandBtn.style.display = 'none';
         } else if (drone.flight_state === 'LANDED' || drone.flight_state === 'GROUND_IDLE') {
             card.el.classList.add('landed-card');
@@ -911,8 +849,12 @@
             card.elStatus.textContent = 'LKP RECOVERY';
             card.elStatus.className = 'status-tag tag-lkp';
             card.elRole.textContent = `TIER-${drone.tier}`;
-            if (card.elLandBtn) card.elLandBtn.style.display = 'none';
-            setActionBtn('KILL', 'card-btn-action btn-kill');
+            if (card.elLandBtn) {
+                card.elLandBtn.style.display = 'inline-block';
+                card.elLandBtn.textContent = 'DECLARE DESTROYED';
+                card.elLandBtn.className = 'card-btn-action btn-danger';
+                card.elLandBtn.title = 'Manual Operator Action: Confirm airframe destroyed at LKP';
+            }
         } else if (drone.status === 'PROPAGATING') {
             card.el.classList.add('gossip-card');
             card.elStatus.textContent = 'ECHO WAVE';
@@ -993,25 +935,14 @@
             </div>
         `;
 
-        const actionBtn = el.querySelector('.btn-kill');
         const landBtn = el.querySelector('.btn-land-action');
-
-        if (actionBtn) {
-            actionBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (deadDroneIds.has(drone.id)) {
-                    logEvent('CMD', `Rebooting drone #${drone.id}`);
-                    window.swarmClient?.send({ cmd: 'REBOOT_DRONE', id: drone.id });
-                } else {
-                    logEvent('CMD', `Terminating drone #${drone.id}`);
-                    window.swarmClient?.send({ cmd: 'KILL_DRONE', id: drone.id });
-                }
-            });
-        }
 
         landBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (landedDroneIds.has(drone.id)) {
+            if (drone.lost_link && !deadDroneIds.has(drone.id)) {
+                logEvent('CMD', `Operator confirmed Drone #${drone.id} destroyed: DECLARE_DESTROYED`);
+                window.swarmClient?.send({ cmd: 'DECLARE_DESTROYED', id: drone.id });
+            } else if (landedDroneIds.has(drone.id)) {
                 logEvent('CMD', `Launching Drone #${drone.id} from pad: TAKEOFF_DRONE`);
                 window.swarmClient?.send({ cmd: 'TAKEOFF_DRONE', id: drone.id });
             } else {

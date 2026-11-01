@@ -72,8 +72,16 @@ class SessionManager:
         route_wps = getattr(sim, "route_waypoints", [])
         route_loop = getattr(sim, "route_loop", True)
 
-        drones = getattr(sim, "drones", [])
-        crashed_ids = [d.id for d in drones if getattr(d, "crashed", False)]
+        # Operator Airgap: Derive confirmed crashed IDs strictly from downlink perspective
+        drones_telemetry = bundle.get("drones", [])
+        if drones_telemetry:
+            crashed_ids = [d["id"] for d in drones_telemetry if d.get("crashed", False) or d.get("declared_destroyed", False)]
+        else:
+            drones = getattr(sim, "drones", [])
+            crashed_ids = [
+                d.id for d in drones
+                if getattr(d, "declared_destroyed", False) or (getattr(d, "crashed", False) and getattr(d, "crashed_while_linked", False))
+            ]
 
         target_pos = [round(float(v), 2) for v in getattr(sim, "target_pos", [60.0, 40.0, 30.0])]
         ack_target = [round(float(v), 2) for v in getattr(sim, "get_acknowledged_target", lambda: target_pos)()]

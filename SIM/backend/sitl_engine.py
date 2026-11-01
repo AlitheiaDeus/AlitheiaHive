@@ -189,8 +189,10 @@ class SITLWorldEngine:
         self.active_brain_name: str = "LEADER_FOLLOWER"
         self.brain: BaseBrain = LeaderFollowerBrain(self)
 
-    def set_brain(self, brain_name: str) -> bool:
-        """Hot-swap the guidance brain plugin at runtime."""
+    def set_brain(self, brain_name: str, force: bool = False) -> bool:
+        """Hot-swap the guidance brain plugin at runtime. Gated by comms range unless forced."""
+        if not force and not self.is_in_comms_range():
+            return False
         key = brain_name.upper()
         if key in BRAIN_REGISTRY:
             self.active_brain_name = key
@@ -634,11 +636,33 @@ class SITLWorldEngine:
 
     @property
     def leader(self) -> Optional[Drone]:
-        """Get the active fleet leader."""
+        """Get the active fleet leader. Prefers an airborne leader over a landed/descending drone
+        when other airborne drones exist in the fleet."""
+        designated_leader = None
         for drone in self.drones:
             if drone.is_leader and not drone.crashed:
-                return drone
-        return None
+                if drone.flight_state not in ("LANDED", "DESCENDING", "RETRIEVED", "GROUND_IDLE"):
+                    return drone
+                designated_leader = drone
+
+        # If designated leader is landed or descending, check if airborne followers exist
+        airborne_candidates = [
+            d for d in self.drones
+            if not d.crashed and d.flight_state not in ("LANDED", "DESCENDING", "RETRIEVED", "GROUND_IDLE")
+        ]
+        if airborne_candidates:
+            successor = max(airborne_candidates, key=lambda d: d.succession_score())
+            if designated_leader is not None:
+                designated_leader.is_leader = False
+                if designated_leader.status == "FLEET_LEADER":
+                    designated_leader.status = "ACTIVE"
+            successor.is_leader = True
+            successor.status = "FLEET_LEADER"
+            if hasattr(self, "brain") and hasattr(self.brain, "on_succession"):
+                self.brain.on_succession(designated_leader, successor)
+            return successor
+
+        return designated_leader
 
     def get_drone_by_id(self, drone_id: int) -> Optional[Drone]:
         """Retrieve drone instance by vehicle ID."""
@@ -878,8 +902,16 @@ class SITLWorldEngine:
                 pad_pos = (
                     drone.landing_pad
                     if drone.landing_pad is not None
-                    else self.get_pad_position(drone.landing_pad_idx or 0)
+                    else (self.get_pad_position(drone.landing_pad_idx) if drone.landing_pad_idx is not None else None)
                 )
+                if pad_pos is None:
+                    # Safe overhead hover: do not dive to (0,0,0) if pad is unassigned
+                    safe_hold = np.array([drone.pos[0], drone.pos[1], 25.0], dtype=float)
+                    drone.target_station = safe_hold
+                    accs_z = float(np.clip(3.0 * (25.0 - drone.pos[2]) - 2.0 * drone.vel[2], -4.0, 4.0))
+                    guidance_accs[drone.id] = np.array([-3.0 * drone.vel[0], -3.0 * drone.vel[1], accs_z], dtype=float)
+                    continue
+
                 drone.target_station = pad_pos
 
                 if drone.landing_wait_timer > 0.0 or drone.landing_stage == "WAITING_CLEARANCE":
@@ -1663,6 +1695,8 @@ class SITLWorldEngine:
 
                 # Check Zone 4: Physical Contact / Prop Clash (d <= 1.5m)
                 if dist <= ZONE4_CLASH:
+                    drone_i.collision_inferred = True
+                    drone_j.collision_inferred = True
                     self._trigger_crash(drone_i, reason=f"CLASH_WITH_DRONE_{drone_j.id}")
                     self._trigger_crash(drone_j, reason=f"CLASH_WITH_DRONE_{drone_i.id}")
                     continue
@@ -1735,6 +1769,9 @@ class SITLWorldEngine:
         drone.crashed_while_linked = bool(drone.downlink_active)
         drone.flight_state = "CRASHED"
         drone.status = "CRASHED"
+        if drone.downlink_active:
+            drone.mayday_beacon = True
+            drone.mayday_reason = reason or "IMPACT_DETECTED"
         if hasattr(self, "fleet_registry"):
             self.fleet_registry.record_casualty(
                 drone_id=drone.id,
@@ -1766,7 +1803,18 @@ class SITLWorldEngine:
     ) -> Optional[Drone]:
         """Elect the highest-scoring surviving follower to take over fleet guidance.
         Succession Score = (HardwareTier * 1000) - DroneID."""
-        candidates = [
+        # Prioritize actively airborne candidates to prevent electing landed/descending drones
+        airborne_candidates = [
+            d for d in self.drones
+            if not d.crashed and not d.is_leader and not d.tether_lost and d.flight_state not in ("LANDED", "DESCENDING", "RETRIEVED", "GROUND_IDLE")
+        ]
+        if not airborne_candidates:
+            airborne_candidates = [
+                d for d in self.drones
+                if not d.crashed and not d.is_leader and d.flight_state not in ("LANDED", "DESCENDING", "RETRIEVED", "GROUND_IDLE")
+            ]
+
+        candidates = airborne_candidates if airborne_candidates else [
             d for d in self.drones
             if not d.crashed and not d.is_leader and not d.tether_lost
         ]
@@ -1950,6 +1998,11 @@ class SITLWorldEngine:
                 drone.gated_by_drone_id = batch_drones[i - 1].id
             queued_ids.append(drone.id)
 
+            # If leader is descending, abdicate and trigger succession among remaining airborne drones
+            if drone.is_leader:
+                drone.is_leader = False
+                self._trigger_autonomic_succession(demote_old_leader=True, retired_leader=drone)
+
         # Remaining airborne drones hold in circular orbit at overhead marshal shelves (Z in [25, 35]m)
         if marshal_drones:
             self.overhead_marshal_active = True
@@ -1976,8 +2029,12 @@ class SITLWorldEngine:
 
     def command_land_drone(self, drone_id: int) -> bool:
         """Command an individual drone to land on an available recovery pad."""
+        if not self.is_in_comms_range():
+            return False
         for drone in self.drones:
             if drone.id == drone_id and not drone.crashed and drone.flight_state not in ("LANDED", "DESCENDING"):
+                if not getattr(drone, "uplink_active", True):
+                    return False
                 used_pads = set(self.landing_pads.keys())
                 available = [p for p in range(self.atc_capacity) if p not in used_pads]
                 if not available:
@@ -1992,11 +2049,18 @@ class SITLWorldEngine:
                 drone.landing_stage = "APPROACH"
                 drone.gated_by_drone_id = None
                 drone.touchdown_confirmed = False
+
+                # If landing drone was fleet leader, abdicate and trigger succession immediately
+                if drone.is_leader:
+                    drone.is_leader = False
+                    self._trigger_autonomic_succession(demote_old_leader=True, retired_leader=drone)
                 return True
         return False
 
     def command_takeoff_drone(self, drone_id: int) -> bool:
         """Relaunch a landed or ground-idle drone from its pad via vertical takeoff."""
+        if not self.is_in_comms_range():
+            return False
         for drone in self.drones:
             if drone.id == drone_id and drone.flight_state in ("LANDED", "GROUND_IDLE"):
                 drone.flight_state = "TAKEOFF"
@@ -2399,8 +2463,16 @@ class SITLWorldEngine:
         if current_leader is not None:
             self._snap_tether(current_leader, reason="OPERATOR_SEVER_TETHER")
 
-    def set_formation(self, mode: str) -> None:
-        """Switch active formation flight mode."""
+    def set_formation(self, mode: str, force: bool = False) -> Dict[str, Any]:
+        """Switch active formation flight mode. Gated by radio horizon unless forced."""
+        if not force and not self.is_in_comms_range():
+            return {
+                "status": "DROPPED",
+                "reason": "OUT_OF_RANGE",
+                "error": f"Fleet is beyond GCS radio horizon ({RADIO_RANGE}m). Formation command dropped.",
+                "formation": self.formation_mode,
+            }
+
         mode_upper = mode.upper().replace("-", "_").strip()
         if mode_upper in ("BOIDS", "BOID", "FLOCK"):
             mode_upper = "NATURAL_FLOCK"
@@ -2415,6 +2487,8 @@ class SITLWorldEngine:
             self.formation_mode = mode_upper
             if hasattr(self.brain, "formation_mode"):
                 self.brain.formation_mode = mode_upper
+            return {"status": "OK", "formation": self.formation_mode}
+        return {"status": "INVALID_MODE", "formation": self.formation_mode}
 
     def dispatch_target_uplink(self, target_pos: Union[List[float], np.ndarray]) -> Dict[str, Any]:
         """Attempt to deliver a commanded target waypoint across the simulated C2 link (tether or RF).
