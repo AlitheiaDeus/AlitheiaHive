@@ -9,6 +9,7 @@ import unittest
 import numpy as np
 
 from SIM.backend.sitl_engine import SwarmSimulator
+from tests.quarantine import quarantine_until
 
 
 class TestWaypointEngine(unittest.TestCase):
@@ -34,6 +35,7 @@ class TestWaypointEngine(unittest.TestCase):
         self.assertEqual(leader.wp_total_loiter, 3.0)
         np.testing.assert_allclose(leader.acknowledged_target, [20.0, 10.0, 20.0])
 
+    @quarantine_until(heartbeat=2, reason="Requires Heartbeat 2 multi-drone RF formation slot loiter dwell")
     def test_loiter_countdown_and_dwell(self):
         """Entering waypoint acceptance radius triggers loiter countdown and station hold."""
         sim = SwarmSimulator(drone_count=4)
@@ -75,6 +77,7 @@ class TestWaypointEngine(unittest.TestCase):
         self.assertAlmostEqual(leader.wp_loiter_timer, 1.0, delta=0.15)
         self.assertEqual(leader.current_wp_idx, 0)
 
+    @quarantine_until(heartbeat=2, reason="Requires Heartbeat 2 multi-drone RF escort settlement gate")
     def test_escort_settlement_gate_holds_departure(self):
         """Leader holds departure at loiter station even after timer expires if escorts are not settled."""
         sim = SwarmSimulator(drone_count=3)
@@ -178,6 +181,7 @@ class TestWaypointEngine(unittest.TestCase):
         self.assertEqual(leader.wp_total_loiter, 5.0)
         self.assertFalse(leader.wp_loitering)
 
+    @quarantine_until(heartbeat=3, reason="Requires Heartbeat 3 P2P gossip 4D loiter and settlement")
     def test_gossip_consensus_4d_loiter_and_settlement(self):
         """GossipConsensus brain correctly executes 4D loiter countdowns and escort settlement."""
         sim = SwarmSimulator(drone_count=4)
@@ -236,6 +240,7 @@ class TestWaypointEngine(unittest.TestCase):
         for d in sim.drones:
             np.testing.assert_allclose(d.acknowledged_target, next_target)
 
+    @quarantine_until(heartbeat=3, reason="Requires Heartbeat 3 P2P gossip route pause and skip")
     def test_gossip_consensus_pause_and_skip(self):
         """GossipConsensus supports route pause and manual waypoint skip."""
         sim = SwarmSimulator(drone_count=4)

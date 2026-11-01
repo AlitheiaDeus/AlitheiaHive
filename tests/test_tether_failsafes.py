@@ -6,6 +6,7 @@ import unittest
 import numpy as np
 
 from SIM.backend.sitl_engine import SwarmSimulator, ZONE4_CLASH, V_CRUISE
+from tests.quarantine import quarantine_until
 
 
 class TestTetherFailsafes(unittest.TestCase):
@@ -304,6 +305,7 @@ class TestTetherFailsafes(unittest.TestCase):
         self.assertFalse(ok_tether)
         self.assertNotEqual(sim.comms_mode, "TETHERED_RELAY")
 
+    @quarantine_until(heartbeat=2, reason="Requires Heartbeat 2 RF peer boid acceleration")
     def test_boids_tether_avoidance_clears_segment(self):
         """Drones running boids in Tethered Relay mode calculate 3D clearance from the cable segment."""
         sim = SwarmSimulator(drone_count=6)

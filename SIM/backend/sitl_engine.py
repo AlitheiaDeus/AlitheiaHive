@@ -44,7 +44,17 @@ from OBC.backend.drone_firmware import (
     TETHER_NONE, TETHER_DATA_ONLY, TETHER_POWER_DATA,
     RF_MODE_YIP, RF_MODE_BORK, RF_MODE_HOWL,
 )
-from OBC.backend.brains import BaseBrain, BRAIN_REGISTRY, LeaderFollowerBrain, GossipConsensusBrain
+from OBC.backend.brains import (
+    BaseBrain,
+    RadioPacket,
+    HeardPeer,
+    LocalTelemetry,
+    FlightIntent,
+    BRAIN_REGISTRY,
+    LeaderFollowerBrain,
+    GossipConsensusBrain,
+)
+from OBC.backend.brains.gossip_consensus import DronePeerState
 from GCS.backend.c2_gateway import C2Gateway, ROUTE_PRESETS
 from SIM.backend.fleet_registry import FleetRegistry
 
@@ -198,12 +208,128 @@ class SITLWorldEngine:
         self._highest_drone_id: int = drone_count - 1
         self._init_fleet(drone_count)
 
-        # Pluggable Guidance Brain Plugin (Default: LeaderFollowerBrain)
+        # Pluggable Guidance Brain Plugin (Default: LeaderFollowerBrain per drone)
         self.active_brain_name: str = "LEADER_FOLLOWER"
-        self.brain: BaseBrain = LeaderFollowerBrain(self)
+        self.brain: BaseBrain = _LeaderFollowerSimProxy(self)
+
+    def _primary_drone_brain(self) -> Optional[BaseBrain]:
+        """Return the leader's (or lowest-ID living drone's) onboard brain instance."""
+        lead = self.leader
+        if lead is not None and hasattr(lead, "brain") and lead.brain is not None:
+            return lead.brain
+        for d in self.drones:
+            if not d.crashed and hasattr(d, "brain") and d.brain is not None:
+                return d.brain
+        return self.drones[0].brain if self.drones else None
+
+    def _build_local_telemetry(self, drone: Drone) -> LocalTelemetry:
+        """Build an immutable LocalTelemetry snapshot for a single airframe.
+        Enforces GNSS Denial Airgap: masks horizontal pos[:2] to NaN when gnss_denied=True."""
+        if getattr(drone, "gnss_denied", False):
+            pos_obs = np.array([np.nan, np.nan, float(drone.pos[2])], dtype=float)
+        else:
+            pos_obs = np.copy(drone.pos)
+
+        tether_active = (
+            self.comms_mode == "TETHERED_RELAY"
+            and not self.tether_severed
+        )
+        wps_tuple = tuple(np.copy(wp) for wp in getattr(drone, "mission_waypoints", []))
+
+        return LocalTelemetry(
+            drone_id=drone.id,
+            tier=drone.tier,
+            is_leader=drone.is_leader,
+            enrolled=bool(getattr(drone, "enrolled", True)),
+            flight_state=drone.flight_state,
+            status=drone.status,
+            clock_s=float(self.sim_time),
+            pos=pos_obs,
+            vel=np.copy(drone.vel),
+            yaw=float(drone.yaw),
+            reciprocal_heading=float(getattr(drone, "reciprocal_heading", 0.0)),
+            rssi=float(drone.rssi),
+            rssi_prev=float(getattr(drone, "rssi_prev", -100.0)),
+            link_quality=float(drone.link_quality),
+            lost_link=bool(drone.lost_link),
+            uplink_active=bool(drone.uplink_active),
+            downlink_active=bool(drone.downlink_active),
+            gnss_denied=bool(getattr(drone, "gnss_denied", False)),
+            gnss_denied_timer=float(getattr(drone, "gnss_denied_timer", 0.0)),
+            drift_radius=float(getattr(drone, "drift_radius", 0.0)),
+            gnss_settled=bool(getattr(drone, "gnss_settled", False)),
+            battery=float(drone.battery),
+            acknowledged_target=np.copy(drone.acknowledged_target),
+            lkp=np.copy(drone.lkp),
+            backtrack_target=np.copy(drone.backtrack_target) if getattr(drone, "backtrack_target", None) is not None else None,
+            holding_at_horizon=bool(getattr(drone, "holding_at_horizon", False)),
+            rejoin_target=np.copy(drone.rejoin_target) if getattr(drone, "rejoin_target", None) is not None else None,
+            mission_active=bool(getattr(drone, "mission_active", False)),
+            mission_paused=bool(getattr(drone, "mission_paused", False) or self.route_paused),
+            mission_loop=bool(getattr(drone, "mission_loop", True)),
+            mission_waypoints=wps_tuple,
+            current_wp_idx=int(getattr(drone, "current_wp_idx", 0)),
+            wp_loitering=bool(getattr(drone, "wp_loitering", False)),
+            wp_loiter_timer=float(getattr(drone, "wp_loiter_timer", 0.0)),
+            wp_total_loiter=float(getattr(drone, "wp_total_loiter", 0.0)),
+            route_acceptance_radius=float(self.route_acceptance_radius),
+            peel_off_timer=float(getattr(drone, "peel_off_timer", 0.0)),
+            peel_off_dir=np.copy(getattr(drone, "peel_off_dir", np.zeros(3, dtype=float))),
+            promotion_timer=float(getattr(drone, "promotion_timer", 0.0)),
+            enrollment_timer=float(getattr(drone, "enrollment_timer", 0.0)),
+            tether_active=bool(tether_active),
+            tether_lost=bool(getattr(drone, "tether_lost", False)),
+            tether_jettisoned=bool(getattr(drone, "tether_jettisoned", False)),
+            tether_failsafe_policy=str(getattr(drone, "tether_failsafe_policy", "REJOIN")),
+            tether_anchor_pos=np.copy(self.tether_anchor),
+            overhead_marshal_active=bool(self.overhead_marshal_active),
+            patrol_active=bool(self.patrol_active),
+        )
+
+    def _deliver_radio_packets(self, dt: float) -> None:
+        """Deliver queued outbox packets across physical RF medium to peer inboxes."""
+        living = [
+            d for d in self.drones
+            if not d.crashed and d.flight_state not in ("LANDED", "DESCENDING")
+        ]
+        for sender in living:
+            if not sender.outbox:
+                continue
+            out_packets = list(sender.outbox)
+            sender.outbox.clear()
+            max_tx = RANGE_BARK if (sender.is_leader or sender.tier == TIER_LEADER) else RANGE_P2P
+            for pkt in out_packets:
+                for receiver in living:
+                    if receiver.id == sender.id:
+                        continue
+                    dist = float(np.linalg.norm(sender.pos - receiver.pos))
+                    r_limit = RANGE_P2P if pkt.msg_type == "GOSSIP_ECHO" else max_tx
+                    if dist <= r_limit and not self.is_packet_dropped(dist, is_hardline=False, max_range=r_limit):
+                        receiver.inbox.append(pkt)
+
+    def _execute_obc_step(self, dt: float) -> Dict[int, np.ndarray]:
+        """Execute per-drone autonomous OBC step_drone(telemetry, inbox, dt) across the fleet."""
+        accs: Dict[int, np.ndarray] = {d.id: np.zeros(3, dtype=float) for d in self.drones}
+        for drone in self.drones:
+            if drone.crashed or drone.flight_state in ("LANDED", "DESCENDING"):
+                continue
+            telemetry = self._build_local_telemetry(drone)
+            inbox = list(drone.inbox)
+            drone.inbox.clear()
+            intent, outbox = drone.brain.step_drone(telemetry, inbox, dt)
+            drone.outbox.extend(outbox)
+
+            for key, val in intent.state_updates.items():
+                setattr(drone, key, np.copy(val) if isinstance(val, np.ndarray) else val)
+            if intent.target_yaw is not None:
+                drone.target_yaw = float(intent.target_yaw)
+            if intent.target_station is not None:
+                drone.target_station = np.copy(intent.target_station)
+            accs[drone.id] = np.array(intent.target_acc, dtype=float)
+        return accs
 
     def set_brain(self, brain_name: str, force: bool = False) -> bool:
-        """Hot-swap the guidance brain plugin at runtime. Gated by comms range unless forced."""
+        """Hot-swap the guidance brain plugin at runtime across all airframes. Gated by comms range unless forced."""
         if not force and not self.is_in_comms_range():
             return False
         key = brain_name.upper()
@@ -213,25 +339,33 @@ class SITLWorldEngine:
             old_init = getattr(self.brain, "heading_initialized", False)
             old_formation = getattr(self.brain, "formation_mode", "ECHELON_ESCORT")
             old_slots = dict(getattr(self.brain, "assigned_slots", {}))
+            if old_slots and key == "GOSSIP_CONSENSUS" and self.leader is not None:
+                if self.leader.id not in old_slots:
+                    old_slots[self.leader.id] = 0
 
-            self.brain = BRAIN_REGISTRY[key](self)
-            self.brain.reset()
-            self.brain.formation_mode = old_formation
-            if old_init:
-                self.brain.formation_heading = old_heading
-                self.brain.heading_initialized = True
-
-            # Preserve slot assignments across brain hot-swaps to avoid cross-path scramble
-            if old_slots:
-                if key == "GOSSIP_CONSENSUS" and self.leader is not None:
-                    if self.leader.id not in old_slots:
-                        old_slots[self.leader.id] = 0
-                self.brain.assigned_slots = old_slots
+            for d in self.drones:
+                if key == "GOSSIP_CONSENSUS":
+                    d.brain = GossipConsensusBrain(
+                        drone_id=d.id,
+                        initial_target=d.acknowledged_target,
+                        formation_mode=old_formation,
+                    )
+                else:
+                    d.brain = BRAIN_REGISTRY[key](drone_id=d.id)
+                    d.brain.formation_mode = old_formation
+                if old_init:
+                    d.brain.formation_heading = old_heading
+                    d.brain.heading_initialized = True
+                if old_slots:
+                    d.brain.assigned_slots = dict(old_slots)
 
             if key == "GOSSIP_CONSENSUS":
+                self.brain = _GossipSimProxy(self)
                 self.comms_mode = "GOSSIP_CONSENSUS"
-            elif key == "LEADER_FOLLOWER" and self.comms_mode == "GOSSIP_CONSENSUS":
-                self.comms_mode = "LEADER_FOLLOWER"
+            else:
+                self.brain = _LeaderFollowerSimProxy(self)
+                if key == "LEADER_FOLLOWER" and self.comms_mode == "GOSSIP_CONSENSUS":
+                    self.comms_mode = "LEADER_FOLLOWER"
             return True
         return False
 
@@ -462,6 +596,15 @@ class SITLWorldEngine:
 
         for d in self.drones:
             d.acknowledged_target = np.copy(self.target_pos)
+            if getattr(self, "active_brain_name", "LEADER_FOLLOWER") == "GOSSIP_CONSENSUS":
+                d.brain = GossipConsensusBrain(
+                    drone_id=d.id,
+                    initial_target=d.acknowledged_target,
+                    formation_mode=self.formation_mode,
+                )
+            else:
+                d.brain = LeaderFollowerBrain(drone_id=d.id)
+                d.brain.formation_mode = self.formation_mode
 
     # ==========================================================================
     # C2 Mission Gateway Delegated Properties (GCS Bubble 1)
@@ -2448,10 +2591,16 @@ class SITLWorldEngine:
 
         self.drones.append(drone)
 
-        # Do NOT register as an active peer in Gossip yet; enrollment occurs on P2P handshake!
-        if hasattr(self.brain, "peer_states") and hasattr(self.brain, "_get_peer_state"):
-            p_state = self.brain._get_peer_state(new_id)
-            p_state.gossip_status = "SCOUT"
+        if self.active_brain_name == "GOSSIP_CONSENSUS":
+            drone.brain = GossipConsensusBrain(
+                drone_id=new_id,
+                initial_target=drone.acknowledged_target,
+                formation_mode=self.formation_mode,
+            )
+            drone.brain.peer_state.gossip_status = "SCOUT"
+        else:
+            drone.brain = LeaderFollowerBrain(drone_id=new_id)
+            drone.brain.formation_mode = self.formation_mode
 
         return drone
 
@@ -2913,6 +3062,320 @@ class SITLWorldEngine:
             "sim_drones": sim_drones_list,
             "fleet_registry": self.fleet_registry.get_registry_snapshot() if hasattr(self, "fleet_registry") else {},
             "brain_telemetry": self.brain.get_telemetry_extra(),
+        }
+
+
+# ==============================================================================
+# Per-Drone OBC Brain Compatibility Proxies for SITL Inspection (Option A)
+# ==============================================================================
+class _LeaderFollowerSimProxy(LeaderFollowerBrain):
+    """Compatibility proxy on sim.brain that delegates inspection and C2 hooks
+    to the per-drone LeaderFollowerBrain instances without leaking SIM into OBC."""
+
+    def __init__(self, engine: SITLWorldEngine) -> None:
+        object.__setattr__(self, "_engine", engine)
+        object.__setattr__(self, "_formation_mode", "ECHELON_ESCORT")
+        object.__setattr__(self, "_formation_heading", 0.0)
+        object.__setattr__(self, "_heading_initialized", False)
+        object.__setattr__(self, "_assigned_slots", {})
+        super().__init__(drone_id=0)
+
+    def _lead_brain(self) -> Optional[LeaderFollowerBrain]:
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        b = eng._primary_drone_brain()
+        return b if isinstance(b, LeaderFollowerBrain) else None
+
+    @property
+    def formation_mode(self) -> str:
+        b = self._lead_brain()
+        return b.formation_mode if b is not None else object.__getattribute__(self, "_formation_mode")
+
+    @formation_mode.setter
+    def formation_mode(self, val: str) -> None:
+        object.__setattr__(self, "_formation_mode", val)
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and d.brain is not None:
+                    d.brain.formation_mode = val
+
+    @property
+    def formation_heading(self) -> float:
+        b = self._lead_brain()
+        return b.formation_heading if b is not None else object.__getattribute__(self, "_formation_heading")
+
+    @formation_heading.setter
+    def formation_heading(self, val: float) -> None:
+        object.__setattr__(self, "_formation_heading", float(val))
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and d.brain is not None:
+                    d.brain.formation_heading = float(val)
+
+    @property
+    def heading_initialized(self) -> bool:
+        b = self._lead_brain()
+        return b.heading_initialized if b is not None else object.__getattribute__(self, "_heading_initialized")
+
+    @heading_initialized.setter
+    def heading_initialized(self, val: bool) -> None:
+        object.__setattr__(self, "_heading_initialized", bool(val))
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and d.brain is not None:
+                    d.brain.heading_initialized = bool(val)
+
+    @property
+    def assigned_slots(self) -> Dict[int, int]:
+        b = self._lead_brain()
+        return b.assigned_slots if b is not None else object.__getattribute__(self, "_assigned_slots")
+
+    @assigned_slots.setter
+    def assigned_slots(self, val: Dict[int, int]) -> None:
+        object.__setattr__(self, "_assigned_slots", dict(val))
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and d.brain is not None:
+                    d.brain.assigned_slots = dict(val)
+
+    def reset(self) -> None:
+        object.__setattr__(self, "_formation_mode", "ECHELON_ESCORT")
+        object.__setattr__(self, "_formation_heading", 0.0)
+        object.__setattr__(self, "_heading_initialized", False)
+        object.__setattr__(self, "_assigned_slots", {})
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and d.brain is not None:
+                    d.brain.reset()
+
+    def update_comms(self, dt: float) -> None:
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        eng._deliver_radio_packets(dt)
+
+    def compute_guidance(self, dt: float) -> Dict[int, np.ndarray]:
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        return eng._execute_obc_step(dt)
+
+    def on_succession(self, old_leader: Optional[Drone], new_leader: Drone) -> None:
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        old_id = old_leader.id if old_leader is not None else None
+        for d in eng.drones:
+            if hasattr(d, "brain") and d.brain is not None:
+                d.brain.on_succession(old_id, new_leader.id)
+
+    def handle_command(self, cmd_dict: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        res = None
+        for d in eng.drones:
+            if hasattr(d, "brain") and d.brain is not None:
+                r = d.brain.handle_command(cmd_dict)
+                if r is not None:
+                    res = r
+        cmd = str(cmd_dict.get("cmd", "")).upper()
+        if cmd == "PAUSE_ROUTE":
+            self.route_paused = True
+            for d in eng.drones:
+                d.mission_paused = True
+        elif cmd == "RESUME_ROUTE":
+            self.route_paused = False
+            for d in eng.drones:
+                d.mission_paused = False
+        return res
+
+
+class _GossipSimProxy(GossipConsensusBrain):
+    """Compatibility proxy on sim.brain that delegates inspection and C2 hooks
+    to the per-drone GossipConsensusBrain instances without leaking SIM into OBC."""
+
+    def __init__(self, engine: SITLWorldEngine) -> None:
+        object.__setattr__(self, "_engine", engine)
+        object.__setattr__(self, "_formation_mode", getattr(engine, "formation_mode", "PERIMETER_PATROL"))
+        object.__setattr__(self, "_formation_heading", 0.0)
+        object.__setattr__(self, "_heading_initialized", False)
+        object.__setattr__(self, "_assigned_slots", {})
+        super().__init__(
+            drone_id=0,
+            initial_target=getattr(engine, "target_pos", np.array([60.0, 40.0, 30.0])),
+            formation_mode=getattr(engine, "formation_mode", "PERIMETER_PATROL"),
+        )
+
+    def _apex_brain(self) -> Optional[GossipConsensusBrain]:
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        b = eng._primary_drone_brain()
+        return b if isinstance(b, GossipConsensusBrain) else None
+
+    @property
+    def peer_states(self) -> Dict[int, DronePeerState]:
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        states: Dict[int, DronePeerState] = {}
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and isinstance(d.brain, GossipConsensusBrain):
+                    states[d.id] = d.brain.peer_state
+        return states
+
+    @peer_states.setter
+    def peer_states(self, val: Dict[int, DronePeerState]) -> None:
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if d.id in val and hasattr(d, "brain") and isinstance(d.brain, GossipConsensusBrain):
+                    d.brain.peer_state = val[d.id]
+
+    def _get_peer_state(self, drone_id: Optional[int] = None) -> DronePeerState:
+        did = 0 if drone_id is None else int(drone_id)
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if d.id == did and hasattr(d, "brain") and isinstance(d.brain, GossipConsensusBrain):
+                    return d.brain.peer_state
+        return DronePeerState(did, getattr(eng, "target_pos", np.array([60.0, 40.0, 30.0])))
+
+    @property
+    def formation_mode(self) -> str:
+        b = self._apex_brain()
+        return b.formation_mode if b is not None else object.__getattribute__(self, "_formation_mode")
+
+    @formation_mode.setter
+    def formation_mode(self, val: str) -> None:
+        object.__setattr__(self, "_formation_mode", val)
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and d.brain is not None:
+                    d.brain.formation_mode = val
+
+    @property
+    def formation_heading(self) -> float:
+        b = self._apex_brain()
+        return b.formation_heading if b is not None else object.__getattribute__(self, "_formation_heading")
+
+    @formation_heading.setter
+    def formation_heading(self, val: float) -> None:
+        object.__setattr__(self, "_formation_heading", float(val))
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and d.brain is not None:
+                    d.brain.formation_heading = float(val)
+
+    @property
+    def heading_initialized(self) -> bool:
+        b = self._apex_brain()
+        return b.heading_initialized if b is not None else object.__getattribute__(self, "_heading_initialized")
+
+    @heading_initialized.setter
+    def heading_initialized(self, val: bool) -> None:
+        object.__setattr__(self, "_heading_initialized", bool(val))
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and d.brain is not None:
+                    d.brain.heading_initialized = bool(val)
+
+    @property
+    def assigned_slots(self) -> Dict[int, int]:
+        b = self._apex_brain()
+        return b.assigned_slots if b is not None else object.__getattribute__(self, "_assigned_slots")
+
+    @assigned_slots.setter
+    def assigned_slots(self, val: Dict[int, int]) -> None:
+        object.__setattr__(self, "_assigned_slots", dict(val))
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and d.brain is not None:
+                    d.brain.assigned_slots = dict(val)
+
+    def reset(self) -> None:
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        if hasattr(eng, "drones"):
+            for d in eng.drones:
+                if hasattr(d, "brain") and isinstance(d.brain, GossipConsensusBrain):
+                    d.brain._default_target = np.copy(eng.target_pos)
+                    d.brain.reset()
+
+    def update_comms(self, dt: float) -> None:
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        eng._deliver_radio_packets(dt)
+
+    def compute_guidance(self, dt: float) -> Dict[int, np.ndarray]:
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        return eng._execute_obc_step(dt)
+
+    def inject_target(self, target_pos: Any) -> Dict[str, Any]:
+        """Deliver a GCS C2 target Howl uplink to the closest mesh node within RANGE_HOWL."""
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        target_arr = np.array(target_pos, dtype=float)
+        active_drones = [d for d in eng.drones if not d.crashed]
+        if not active_drones:
+            return {"status": "ERROR", "error": "No active drones in fleet"}
+
+        gcs_pos = eng.tether_anchor
+        seed_drone = min(
+            active_drones,
+            key=lambda d: float(np.linalg.norm(d.pos - gcs_pos)),
+        )
+        min_dist = float(np.linalg.norm(seed_drone.pos - gcs_pos))
+
+        if min_dist > RANGE_HOWL:
+            return {
+                "status": "OUT_OF_RANGE",
+                "reason": "RADIO_RANGE_EXCEEDED",
+                "error": f"Nearest mesh node ({min_dist:.1f}m) out of GCS Howl range ({RANGE_HOWL}m)",
+            }
+
+        self.current_seq += 1
+        seq = self.current_seq
+        if hasattr(seed_drone, "brain") and isinstance(seed_drone.brain, GossipConsensusBrain):
+            seed_drone.brain.current_seq = seq
+            pstate = seed_drone.brain.peer_state
+            pstate.pending_seq = seq
+            pstate.pending_target = np.copy(target_arr)
+            pstate.echo_ack_peers = {seed_drone.id}
+            pstate.gossip_status = "PROPAGATING"
+
+        return {
+            "status": "OK",
+            "seed_drone_id": seed_drone.id,
+            "seq": seq,
+            "target_seq": seq,
+            "dist_to_gcs": round(min_dist, 1),
+        }
+
+    def handle_command(self, cmd_dict: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        cmd = str(cmd_dict.get("cmd", "")).upper()
+        if cmd == "SET_TARGET":
+            pos = cmd_dict.get("pos", [60.0, 40.0, 30.0])
+            return self.inject_target(pos)
+        res = None
+        for d in eng.drones:
+            if hasattr(d, "brain") and d.brain is not None:
+                r = d.brain.handle_command(cmd_dict)
+                if r is not None:
+                    res = r
+        return res
+
+    def get_telemetry_extra(self) -> Dict[str, Any]:
+        eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        active_drones = [d for d in eng.drones if not d.crashed]
+        propagating_count = 0
+        for d in active_drones:
+            if hasattr(d, "brain") and isinstance(d.brain, GossipConsensusBrain):
+                if d.brain.peer_state.gossip_status == "PROPAGATING":
+                    propagating_count += 1
+        return {
+            "brain_mode": "GOSSIP_CONSENSUS",
+            "formation": self.formation_mode,
+            "formation_heading_deg": round(math.degrees(self.formation_heading) % 360.0, 1),
+            "target_seq": self.current_seq,
+            "propagating_drones": propagating_count,
+            "consensus_reached": (propagating_count == 0),
         }
 
 

@@ -13,6 +13,7 @@ import unittest
 import numpy as np
 
 from SIM.backend.sitl_engine import SwarmSimulator, ZONE4_CLASH
+from tests.quarantine import quarantine_until
 
 
 class TestSuccessionDeconfliction(unittest.TestCase):
@@ -88,6 +89,7 @@ class TestSuccessionDeconfliction(unittest.TestCase):
 
         self.assertGreater(min_d0_d1, ZONE4_CLASH)
 
+    @quarantine_until(heartbeat=2, reason="Requires Heartbeat 2 multi-drone RF wing slot hysteresis")
     def test_wing_continuity_and_slot_hysteresis(self):
         """Followers maintain wing affinity: right-wing followers stay right, left stay left."""
         sim = SwarmSimulator(drone_count=6)

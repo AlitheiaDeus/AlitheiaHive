@@ -9,8 +9,10 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Tuple, Any, Union
 import numpy as np
+
+from OBC.backend.brains import BaseBrain, LeaderFollowerBrain, RadioPacket
 
 # Hardware Tiers & Succession (TKT-48, TKT-57)
 TIER_LEADER: int = 3
@@ -193,6 +195,11 @@ class Drone:
         self.backtrack_target: Optional[np.ndarray] = None
         self.backtrack_hold: bool = False
 
+        # Per-Drone Autonomous Brain & Packet Mailboxes (TLK-01 Pure I/O Boundary)
+        self.inbox: List[RadioPacket] = []
+        self.outbox: List[RadioPacket] = []
+        self.brain: BaseBrain = LeaderFollowerBrain(drone_id=self.id)
+
     def reset_state(
         self,
         pos: np.ndarray,
@@ -276,10 +283,14 @@ class Drone:
         self.holding_at_horizon = False
         self.backtrack_target = None
         self.backtrack_hold = False
+        self.inbox.clear()
+        self.outbox.clear()
+        if hasattr(self, "brain") and self.brain is not None:
+            self.brain.reset()
 
-    def record_breadcrumb(self, sim_time: float) -> None:
+    def record_breadcrumb(self, clock_s: float) -> None:
         """Record current 3D position in the rolling 10-second (2 Hz) breadcrumb buffer."""
-        self.breadcrumbs.append((sim_time, np.copy(self.pos)))
+        self.breadcrumbs.append((clock_s, np.copy(self.pos)))
         if len(self.breadcrumbs) > 20:
             self.breadcrumbs.pop(0)
 

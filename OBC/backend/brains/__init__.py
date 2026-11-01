@@ -1,10 +1,16 @@
 """
 SwarmTech3_UpRising: Pluggable Guidance Brain Architecture (OBC Brain Airgap)
-Defines BaseBrain interface and registry for hot-swappable guidance plugins.
+Defines BaseBrain interface, pure I/O boundary contracts, and registry for hot-swappable guidance plugins.
 """
 
 from typing import Dict, Type
-from .base import BaseBrain
+from .base import (
+    BaseBrain,
+    RadioPacket,
+    HeardPeer,
+    LocalTelemetry,
+    FlightIntent,
+)
 from .leader_follower import LeaderFollowerBrain
 from .gossip_consensus import GossipConsensusBrain
 
@@ -25,6 +31,10 @@ def register_brain(name: str):
 
 __all__ = [
     "BaseBrain",
+    "RadioPacket",
+    "HeardPeer",
+    "LocalTelemetry",
+    "FlightIntent",
     "BRAIN_REGISTRY",
     "register_brain",
     "LeaderFollowerBrain",

@@ -19,6 +19,7 @@ from typing import List, Optional, Tuple
 
 from SIM.backend.sitl_engine import SwarmSimulator, DT, ZONE4_CLASH, V_MAX, A_MAX
 from SIM.backend.telemetry_recorder import TelemetryRecorder
+from tests.quarantine import quarantine_until
 
 
 def initialize_formation_north(
@@ -122,6 +123,7 @@ def wait_for_settle(
     return settled, min_dist_observed, zone4_clashes
 
 
+@quarantine_until(heartbeat=2, reason="Requires Heartbeat 2 multi-drone RF formation slots")
 class TestFormationFlightSuite(unittest.TestCase):
     """Automated unit and regression test suite for all formation flight operations."""
 

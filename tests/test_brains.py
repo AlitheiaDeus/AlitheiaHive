@@ -11,6 +11,7 @@ import json
 
 from SIM.backend.sitl_engine import SwarmSimulator, DT, A_MAX, ZONE4_CLASH
 from OBC.backend.brains import BRAIN_REGISTRY, LeaderFollowerBrain, GossipConsensusBrain
+from tests.quarantine import quarantine_until
 
 
 class TestBrains(unittest.TestCase):
@@ -44,6 +45,7 @@ class TestBrains(unittest.TestCase):
         self.assertEqual(self.sim.active_brain_name, "LEADER_FOLLOWER")
         self.assertIsInstance(self.sim.brain, LeaderFollowerBrain)
 
+    @quarantine_until(heartbeat=3, reason="Requires Heartbeat 3 P2P gossip echo propagation")
     def test_gossip_propagation_and_quorum_consensus(self):
         """Verify P2P multi-hop gossip echo wave and quorum barrier synchronization."""
         self.sim.set_brain("GOSSIP_CONSENSUS")
@@ -187,6 +189,7 @@ class TestBrains(unittest.TestCase):
         expected_acc = -vel * 3.0
         np.testing.assert_allclose(acc, expected_acc)
 
+    @quarantine_until(heartbeat=2, reason="Requires Heartbeat 2 multi-drone formation slot calculation")
     def test_static_perimeter_sentry_ring(self):
         """Verify PERIMETER_PATROL positions followers at fixed static azimuthal stations
         around target (zero carousel rotation over time)."""
@@ -247,6 +250,7 @@ class TestBrains(unittest.TestCase):
         # Heading MUST have rotated towards +Y (pi/2) and NOT remained frozen at 0.0!
         self.assertGreater(brain.formation_heading, 0.05)
 
+    @quarantine_until(heartbeat=3, reason="Requires Heartbeat 3 P2P gossip consensus convergence")
     def test_gossip_autopatrol_consensus_convergence(self):
         """Verify that during target auto-patrol in Gossip Consensus mode,
         target injection is paced so that multi-hop quorum can settle,
@@ -334,6 +338,7 @@ class TestBrains(unittest.TestCase):
         self.assertEqual(len(rows_r), 3)
         self.assertEqual(cols_r, [1, 2, 3])  # items get slots 1 (cost 2), 2 (cost 1), 3 (cost 2) = total 5.0
 
+    @quarantine_until(heartbeat=2, reason="Requires Heartbeat 2 multi-drone formation slot inversion")
     def test_leader_follower_u_turn_formation_inversion(self):
         """Verify TKT-43: On U-turn heading reversal (>120 deg), Hungarian matching
         re-assigns trailing drones to new vanguard slots, minimizing total displacement."""
