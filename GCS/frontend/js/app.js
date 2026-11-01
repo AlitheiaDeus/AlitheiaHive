@@ -596,13 +596,25 @@
                 m.dropLine.computeLineDistances();
 
                 if (i === currentIdx) {
-                    m.sphere.material.color.setHex(0x00FFAA);
-                    m.sphere.material.opacity = 0.85;
-                    m.sphere.scale.set(1.3, 1.3, 1.3);
-                    m.circle.material.color.setHex(0x00FFAA);
-                    m.circle.material.opacity = 0.7;
-                    m.dropLine.material.color.setHex(0x00FFAA);
-                    m.dropLine.material.opacity = 0.65;
+                    const isPaused = !!routeData.paused;
+                    const isLoitering = !!routeData.loitering;
+                    const now = Date.now() * 0.005;
+                    const pulse = 1.3 + 0.25 * Math.sin(now);
+
+                    let activeColor = 0x00FFAA;
+                    if (isPaused) {
+                        activeColor = 0xFFB800; // Neon Amber for PAUSED
+                    } else if (isLoitering) {
+                        activeColor = 0xFFD700; // Glowing Gold for LOITER / DWELL
+                    }
+
+                    m.sphere.material.color.setHex(activeColor);
+                    m.sphere.material.opacity = isLoitering ? 0.95 : 0.85;
+                    m.sphere.scale.set(pulse, pulse, pulse);
+                    m.circle.material.color.setHex(activeColor);
+                    m.circle.material.opacity = 0.75;
+                    m.dropLine.material.color.setHex(activeColor);
+                    m.dropLine.material.opacity = 0.7;
                 } else {
                     m.sphere.material.color.setHex(0x00F0FF);
                     m.sphere.material.opacity = 0.4;

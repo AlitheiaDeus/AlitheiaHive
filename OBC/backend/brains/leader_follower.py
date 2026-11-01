@@ -46,6 +46,7 @@ class LeaderFollowerBrain(BaseBrain):
         self.heading_initialized: bool = False
         self.assigned_slots: Dict[int, int] = {}
         self.inversion_cooldown: float = 0.0
+        self.route_paused: bool = False
 
     def reset(self) -> None:
         self.last_heartbeat_broadcast = -1.0
@@ -53,6 +54,7 @@ class LeaderFollowerBrain(BaseBrain):
         self.heading_initialized = False
         self.assigned_slots.clear()
         self.inversion_cooldown = 0.0
+        self.route_paused = False
 
     def on_succession(self, old_leader: Optional[Drone], new_leader: Drone) -> None:
         """Deconflict slot assignments during leadership transitions (TKT-15).
@@ -119,8 +121,9 @@ class LeaderFollowerBrain(BaseBrain):
                 else:
                     leader_speed = V_CRUISE
 
-                # Discrete Waypoint Mission Route Progression (TKT-28 & TKT-30)
+                # Discrete Waypoint Mission Route Progression (TKT-28, TKT-30, TKT-56)
                 if getattr(drone, "mission_active", False) and getattr(drone, "mission_waypoints", None):
+                    is_paused = getattr(drone, "mission_paused", False) or getattr(self, "route_paused", False)
                     wps = drone.mission_waypoints
                     idx = drone.current_wp_idx
                     if 0 <= idx < len(wps):
@@ -130,55 +133,64 @@ class LeaderFollowerBrain(BaseBrain):
                         drone.acknowledged_target = target_wp
                         dist = float(np.linalg.norm(drone.pos - target_wp))
 
-                        if dist <= self.sim.route_acceptance_radius:
+                        if is_paused:
+                            # Hold station at current waypoint target without countdown
+                            leader_speed = 2.0
+                        elif dist <= self.sim.route_acceptance_radius:
+                            # Check escorts formation settlement gate (<= 4.5m)
+                            living_escorts = [
+                                f for f in self.sim.drones
+                                if not f.crashed and not f.is_leader and f.flight_state not in ("LANDED", "DESCENDING") and not f.lost_link and getattr(f, "enrolled", True)
+                            ]
+                            escorts_settled = all(
+                                float(np.linalg.norm(f.pos - self._get_formation_slot(f, drone))) <= 4.5
+                                for f in living_escorts
+                            ) if living_escorts else True
+
                             if not getattr(drone, "wp_loitering", False) and loiter_duration > 0.0:
                                 # Enter WAYPOINT_LOITER state and initialize countdown
                                 drone.wp_loitering = True
-                                drone.wp_loiter_timer = loiter_duration
+                                drone.wp_loiter_timer = max(0.0, loiter_duration - dt)
+                                drone.wp_total_loiter = loiter_duration
                             elif getattr(drone, "wp_loitering", False):
                                 # Count down loiter timer
                                 drone.wp_loiter_timer = max(0.0, drone.wp_loiter_timer - dt)
 
-                                # Formation Stabilization Gate: verify living escorts are settled near slots (<= 4.0m)
-                                living_escorts = [
-                                    f for f in self.sim.drones
-                                    if not f.crashed and not f.is_leader and f.flight_state == "CRUISE" and not f.lost_link and getattr(f, "enrolled", True)
-                                ]
-                                escorts_settled = True
-                                for f in living_escorts:
-                                    slot = self._get_formation_slot(f, drone)
-                                    if float(np.linalg.norm(f.pos - slot)) > 4.0:
-                                        escorts_settled = False
-                                        break
-
-                                # Advance only if timer elapsed AND formation is settled (or no active escorts)
+                                # Advance only if loiter timer elapsed AND formation is settled
                                 if drone.wp_loiter_timer <= 0.0 and escorts_settled:
                                     drone.wp_loitering = False
                                     drone.wp_loiter_timer = 0.0
                                     if idx + 1 < len(wps):
                                         drone.current_wp_idx += 1
-                                        drone.acknowledged_target = np.array(wps[drone.current_wp_idx][:3], dtype=float)
+                                        next_wp = wps[drone.current_wp_idx]
+                                        drone.acknowledged_target = np.array(next_wp[:3], dtype=float)
+                                        drone.wp_total_loiter = float(next_wp[3]) if len(next_wp) > 3 else 0.0
                                     elif getattr(drone, "mission_loop", True):
                                         drone.current_wp_idx = 0
                                         drone.acknowledged_target = np.array(wps[0][:3], dtype=float)
+                                        drone.wp_total_loiter = float(wps[0][3]) if len(wps[0]) > 3 else 0.0
                                     else:
                                         drone.mission_active = False
                             else:
-                                # Zero loiter: advance immediately
+                                # Zero-duration fly-through waypoint: advance immediately
                                 drone.wp_loitering = False
                                 drone.wp_loiter_timer = 0.0
                                 if idx + 1 < len(wps):
                                     drone.current_wp_idx += 1
-                                    drone.acknowledged_target = np.array(wps[drone.current_wp_idx][:3], dtype=float)
+                                    next_wp = wps[drone.current_wp_idx]
+                                    drone.acknowledged_target = np.array(next_wp[:3], dtype=float)
+                                    drone.wp_total_loiter = float(next_wp[3]) if len(next_wp) > 3 else 0.0
                                 elif getattr(drone, "mission_loop", True):
                                     drone.current_wp_idx = 0
-                                    drone.acknowledged_target = np.array(wps[0][:3], dtype=float)
+                                    next_wp = wps[0]
+                                    drone.acknowledged_target = np.array(next_wp[:3], dtype=float)
+                                    drone.wp_total_loiter = float(next_wp[3]) if len(next_wp) > 3 else 0.0
                                 else:
                                     drone.mission_active = False
 
                         # If loitering, hold station at target_wp with gentle braking speed
                         if getattr(drone, "wp_loitering", False):
-                            leader_speed = 3.0
+                            leader_speed = 2.0
 
                 target_dest = getattr(drone, "acknowledged_target", self.sim.target_pos)
                 drone.target_station = target_dest
@@ -764,6 +776,49 @@ class LeaderFollowerBrain(BaseBrain):
             if mode_upper in valid:
                 self.formation_mode = mode_upper
                 return {"status": "OK", "formation": self.formation_mode}
+
+        elif cmd == "PAUSE_ROUTE":
+            self.route_paused = True
+            if self.sim:
+                for d in self.sim.drones:
+                    d.mission_paused = True
+            return {"status": "OK", "action": "ROUTE_PAUSED"}
+
+        elif cmd == "RESUME_ROUTE":
+            self.route_paused = False
+            if self.sim:
+                for d in self.sim.drones:
+                    d.mission_paused = False
+            return {"status": "OK", "action": "ROUTE_RESUMED"}
+
+        elif cmd == "SKIP_WAYPOINT":
+            leader = getattr(self.sim, "leader", None)
+            if leader and getattr(leader, "mission_waypoints", None):
+                wps = leader.mission_waypoints
+                idx = leader.current_wp_idx
+                if idx + 1 < len(wps):
+                    leader.current_wp_idx += 1
+                elif getattr(leader, "mission_loop", True):
+                    leader.current_wp_idx = 0
+                else:
+                    leader.mission_active = False
+                new_idx = leader.current_wp_idx
+                leader.acknowledged_target = np.array(wps[new_idx][:3], dtype=float)
+                leader.wp_loitering = False
+                leader.wp_loiter_timer = 0.0
+                leader.wp_total_loiter = float(wps[new_idx][3]) if len(wps[new_idx]) > 3 else 0.0
+                return {"status": "OK", "action": "WAYPOINT_SKIPPED", "current_wp_idx": new_idx}
+            return {"status": "ERROR", "reason": "No active mission waypoints"}
+
+        elif cmd in ("ABORT_ROUTE", "STOP_ROUTE"):
+            self.route_paused = False
+            if self.sim:
+                for d in self.sim.drones:
+                    d.mission_active = False
+                    d.mission_paused = False
+                    d.wp_loitering = False
+                    d.mission_waypoints = []
+            return {"status": "OK", "action": "ROUTE_ABORTED"}
         return None
 
     def get_telemetry_extra(self) -> Dict[str, Any]:

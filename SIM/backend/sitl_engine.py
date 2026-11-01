@@ -505,6 +505,14 @@ class SITLWorldEngine:
         self.c2.route_active = val
 
     @property
+    def route_paused(self) -> bool:
+        return self.c2.route_paused
+
+    @route_paused.setter
+    def route_paused(self, val: bool) -> None:
+        self.c2.route_paused = val
+
+    @property
     def route_name(self) -> str:
         return self.c2.route_name
 
@@ -2671,6 +2679,18 @@ class SITLWorldEngine:
         """Stop active mission route and hold current position (TKT-28)."""
         return self.c2.stop_mission_route()
 
+    def pause_mission_route(self) -> Dict[str, Any]:
+        """Pause active mission route; drones hold station at current waypoint (TKT-56)."""
+        return self.c2.pause_mission_route()
+
+    def resume_mission_route(self) -> Dict[str, Any]:
+        """Resume active mission route from current waypoint (TKT-56)."""
+        return self.c2.resume_mission_route()
+
+    def skip_mission_waypoint(self) -> Dict[str, Any]:
+        """Skip currently targeted waypoint and advance immediately to next (TKT-56)."""
+        return self.c2.skip_mission_waypoint()
+
     def is_target_reached(self, threshold: float = 2.5) -> bool:
         """Deterministic arrival check: whether active swarm guidance has arrived within threshold."""
         return self.c2.is_target_reached(threshold)
@@ -2725,28 +2745,37 @@ class SITLWorldEngine:
 
         ack_target = self.get_acknowledged_target()
 
-        # Determine active route current waypoint index & loiter state (TKT-28 & TKT-30)
+        # Determine active route current waypoint index & loiter state (TKT-28, TKT-30, TKT-56)
         if self.active_brain_name == "GOSSIP_CONSENSUS":
             current_wp_idx = getattr(self.brain, "current_route_wp_idx", 0)
             current_loitering = getattr(self.brain, "wp_loitering", False)
             current_loiter_timer = getattr(self.brain, "wp_loiter_timer", 0.0)
+            current_total_loiter = getattr(self.brain, "wp_total_loiter", 0.0)
+            is_paused = getattr(self.c2, "route_paused", False) or getattr(self.brain, "route_paused", False)
         elif current_leader is not None:
             current_wp_idx = current_leader.current_wp_idx
             current_loitering = getattr(current_leader, "wp_loitering", False)
             current_loiter_timer = getattr(current_leader, "wp_loiter_timer", 0.0)
+            current_total_loiter = getattr(current_leader, "wp_total_loiter", 0.0)
+            is_paused = getattr(self.c2, "route_paused", False) or getattr(current_leader, "mission_paused", False)
         else:
             current_wp_idx = 0
             current_loitering = False
             current_loiter_timer = 0.0
+            current_total_loiter = 0.0
+            is_paused = getattr(self.c2, "route_paused", False)
 
         route_data = {
             "active": self.route_active,
+            "paused": is_paused,
             "name": self.route_name,
             "loop": self.route_loop,
             "current_wp_idx": current_wp_idx,
+            "total_wps": len(self.route_waypoints),
             "waypoints": [[round(float(v), 2) for v in wp] for wp in self.route_waypoints],
             "loitering": current_loitering,
             "loiter_timer": round(max(0.0, float(current_loiter_timer)), 1),
+            "total_loiter": round(max(0.0, float(current_total_loiter)), 1),
         }
 
         return {

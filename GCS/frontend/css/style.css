@@ -1095,6 +1095,29 @@ body:has(#right-panel.collapsed) #tab-restore-right,
   animation: pulse-patrol 1s infinite alternate !important;
 }
 
+.badge-route-paused {
+  background: rgba(255, 184, 0, 0.2) !important;
+  border: 1px solid var(--neon-amber) !important;
+  color: var(--neon-amber) !important;
+  text-shadow: 0 0 6px rgba(255, 184, 0, 0.6) !important;
+  animation: none !important;
+}
+
+.badge-route-holding {
+  background: rgba(255, 204, 0, 0.25) !important;
+  border: 1px solid #FFD700 !important;
+  color: #FFD700 !important;
+  text-shadow: 0 0 8px rgba(255, 215, 0, 0.8) !important;
+  animation: pulse-patrol 1s infinite alternate !important;
+}
+
+.btn-active-pause {
+  background: rgba(255, 184, 0, 0.3) !important;
+  border-color: var(--neon-amber) !important;
+  color: var(--neon-amber) !important;
+  box-shadow: 0 0 8px rgba(255, 184, 0, 0.5) inset !important;
+}
+
 .btn-rng-offline {
   border-color: var(--neon-red) !important;
   color: var(--neon-red) !important;

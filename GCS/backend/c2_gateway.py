@@ -67,12 +67,13 @@ class C2Gateway:
         self.patrol_scale: np.ndarray = np.array([50.0, 35.0, 10.0], dtype=float)
         self.last_gossip_inject_time: float = 0.0
 
-        # Discrete Waypoint Mission Routes (TKT-28)
+        # Discrete Waypoint Mission Routes (TKT-28 & TKT-56)
         self.route_active: bool = False
+        self.route_paused: bool = False
         self.route_name: str = "NONE"
         self.route_waypoints: List[np.ndarray] = []
         self.route_loop: bool = True
-        self.route_acceptance_radius: float = 2.5
+        self.route_acceptance_radius: float = 4.0
 
         # Tactical RNG Touch-and-Go Reconnaissance (TKT-29 & TKT-31)
         self.rng_recon_active: bool = False
@@ -456,6 +457,7 @@ class C2Gateway:
 
         # Link healthy: deploy to GCS C2 state
         self.route_active = True
+        self.route_paused = False
         self.route_name = name
         self.route_waypoints = clean_wps
         self.route_loop = loop
@@ -469,10 +471,13 @@ class C2Gateway:
         target_drone.mission_waypoints = [np.copy(wp) for wp in clean_wps]
         target_drone.current_wp_idx = 0
         target_drone.mission_active = True
+        target_drone.mission_name = name
+        target_drone.mission_paused = False
         target_drone.mission_loop = loop
         target_drone.acknowledged_target = np.copy(clean_wps[0][:3])
         target_drone.wp_loiter_timer = 0.0
         target_drone.wp_loitering = False
+        target_drone.wp_total_loiter = float(clean_wps[0][3]) if len(clean_wps[0]) > 3 else 0.0
 
         # If Gossip brain, disseminate route to peers
         brain = getattr(self.sim, "brain", None)
@@ -490,15 +495,79 @@ class C2Gateway:
             "loop": self.route_loop,
         }
 
+    def pause_mission_route(self) -> Dict[str, Any]:
+        """Pause active mission route; drones hold station at current waypoint (TKT-56)."""
+        if not self.route_active:
+            return {"status": "ERROR", "reason": "No active route to pause"}
+        self.route_paused = True
+        if self.sim:
+            for d in getattr(self.sim, "drones", []):
+                d.mission_paused = True
+            brain = getattr(self.sim, "brain", None)
+            if brain and hasattr(brain, "route_paused"):
+                brain.route_paused = True
+        return {"status": "OK", "action": "ROUTE_PAUSED"}
+
+    def resume_mission_route(self) -> Dict[str, Any]:
+        """Resume active mission route from current waypoint (TKT-56)."""
+        if not self.route_active:
+            return {"status": "ERROR", "reason": "No active route to resume"}
+        self.route_paused = False
+        if self.sim:
+            for d in getattr(self.sim, "drones", []):
+                d.mission_paused = False
+            brain = getattr(self.sim, "brain", None)
+            if brain and hasattr(brain, "route_paused"):
+                brain.route_paused = False
+        return {"status": "OK", "action": "ROUTE_RESUMED"}
+
+    def skip_mission_waypoint(self) -> Dict[str, Any]:
+        """Skip currently targeted waypoint and advance immediately to next (TKT-56)."""
+        if not self.route_active or not self.route_waypoints:
+            return {"status": "ERROR", "reason": "No active route to skip waypoint"}
+
+        brain = getattr(self.sim, "brain", None)
+        active_brain = getattr(self.sim, "active_brain_name", "")
+        if active_brain == "GOSSIP_CONSENSUS" and brain and hasattr(brain, "skip_waypoint"):
+            new_idx = brain.skip_waypoint()
+        else:
+            leader = getattr(self.sim, "leader", None)
+            if leader is None:
+                return {"status": "ERROR", "reason": "No active leader to skip waypoint"}
+            wps = leader.mission_waypoints if leader.mission_waypoints else self.route_waypoints
+            idx = leader.current_wp_idx
+            if idx + 1 < len(wps):
+                leader.current_wp_idx += 1
+            elif leader.mission_loop:
+                leader.current_wp_idx = 0
+            else:
+                leader.mission_active = False
+            new_idx = leader.current_wp_idx
+            leader.acknowledged_target = np.array(wps[new_idx][:3], dtype=float)
+            leader.wp_loitering = False
+            leader.wp_loiter_timer = 0.0
+            leader.wp_total_loiter = float(wps[new_idx][3]) if len(wps[new_idx]) > 3 else 0.0
+            self._target_pos = np.copy(leader.acknowledged_target)
+
+        return {"status": "OK", "action": "WAYPOINT_SKIPPED", "current_wp_idx": new_idx}
+
     def stop_mission_route(self) -> Dict[str, Any]:
-        """Stop active mission route and hold current position (TKT-28)."""
+        """Stop active mission route and hold current position (TKT-28 & TKT-56)."""
         self.route_active = False
+        self.route_paused = False
         if self.sim:
             for d in getattr(self.sim, "drones", []):
                 d.mission_active = False
+                d.mission_paused = False
+                d.wp_loitering = False
             brain = getattr(self.sim, "brain", None)
-            if brain and hasattr(brain, "route_active"):
-                brain.route_active = False
+            if brain:
+                if hasattr(brain, "route_active"):
+                    brain.route_active = False
+                if hasattr(brain, "route_paused"):
+                    brain.route_paused = False
+                if hasattr(brain, "wp_loitering"):
+                    brain.wp_loitering = False
         return {"status": "OK", "action": "ROUTE_STOPPED"}
 
     def toggle_rng_recon(self, active: Optional[bool] = None) -> bool:

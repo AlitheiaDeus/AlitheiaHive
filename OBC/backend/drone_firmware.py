@@ -98,13 +98,16 @@ class Drone:
         )
         self.target_station: Optional[np.ndarray] = None
 
-        # Discrete Waypoint Mission Queue & Loiter Timers (TKT-28 & TKT-30)
+        # Discrete Waypoint Mission Queue & Loiter Timers (TKT-28, TKT-30, TKT-56)
         self.mission_waypoints: List[np.ndarray] = []
         self.current_wp_idx: int = 0
         self.mission_active: bool = False
         self.mission_loop: bool = True
+        self.mission_name: str = ""
+        self.mission_paused: bool = False
         self.wp_loiter_timer: float = 0.0
         self.wp_loitering: bool = False
+        self.wp_total_loiter: float = 0.0
 
         # Dynamic Swarm Enrollment & Solo Scout Rejoin (TKT-50)
         self.enrolled: bool = True
@@ -190,8 +193,11 @@ class Drone:
         self.current_wp_idx = 0
         self.mission_active = False
         self.mission_loop = True
+        self.mission_name = ""
+        self.mission_paused = False
         self.wp_loiter_timer = 0.0
         self.wp_loitering = False
+        self.wp_total_loiter = 0.0
         self.enrolled = True
         self.enrollment_status = "ENROLLED"
         self.enrollment_timer = 0.0
@@ -308,4 +314,11 @@ class Drone:
             "holding_at_horizon": self.holding_at_horizon,
             "backtrack_hold": self.backtrack_hold,
             "backtrack_target": [round(float(v), 2) for v in self.backtrack_target] if self.backtrack_target is not None else None,
+            "mission_active": self.mission_active,
+            "mission_name": self.mission_name,
+            "mission_paused": self.mission_paused,
+            "current_wp_idx": self.current_wp_idx,
+            "wp_loitering": self.wp_loitering,
+            "wp_loiter_timer": round(float(self.wp_loiter_timer), 1),
+            "wp_total_loiter": round(float(self.wp_total_loiter), 1),
         }

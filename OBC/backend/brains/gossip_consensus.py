@@ -71,8 +71,10 @@ class GossipConsensusBrain(BaseBrain):
         self.route_waypoints: List[np.ndarray] = []
         self.current_route_wp_idx: int = 0
         self.route_active: bool = False
+        self.route_paused: bool = False
         self.route_loop: bool = True
         self.wp_loiter_timer: float = 0.0
+        self.wp_total_loiter: float = 0.0
         self.wp_loitering: bool = False
         self.assigned_slots: Dict[int, int] = {}
         self.inversion_cooldown: float = 0.0
@@ -88,8 +90,10 @@ class GossipConsensusBrain(BaseBrain):
         self.route_waypoints.clear()
         self.current_route_wp_idx = 0
         self.route_active = False
+        self.route_paused = False
         self.route_loop = True
         self.wp_loiter_timer = 0.0
+        self.wp_total_loiter = 0.0
         self.wp_loitering = False
         for drone in self.sim.drones:
             self.peer_states[drone.id] = DronePeerState(
@@ -101,8 +105,10 @@ class GossipConsensusBrain(BaseBrain):
         self.route_waypoints = [np.copy(wp) for wp in clean_wps]
         self.current_route_wp_idx = 0
         self.route_active = True
+        self.route_paused = False
         self.route_loop = loop
         self.wp_loiter_timer = 0.0
+        self.wp_total_loiter = float(clean_wps[0][3]) if len(clean_wps[0]) > 3 else 0.0
         self.wp_loitering = False
         self.current_seq += 1
         first_wp = clean_wps[0][:3]
@@ -110,9 +116,11 @@ class GossipConsensusBrain(BaseBrain):
             drone.mission_waypoints = [np.copy(wp) for wp in clean_wps]
             drone.current_wp_idx = 0
             drone.mission_active = True
+            drone.mission_paused = False
             drone.mission_loop = loop
             drone.acknowledged_target = np.copy(first_wp)
             drone.wp_loiter_timer = 0.0
+            drone.wp_total_loiter = self.wp_total_loiter
             drone.wp_loitering = False
             if drone.id in self.peer_states:
                 state = self.peer_states[drone.id]
@@ -263,7 +271,16 @@ class GossipConsensusBrain(BaseBrain):
         if living_count == 0:
             return accs
 
-        # Check Mission Route waypoint advancement for Gossip Quorum (TKT-28 & TKT-30)
+        # Deterministic decentralized slot indexing based on living drone IDs
+        sorted_ids = sorted([d.id for d in active_drones])
+        active_ids = {d.id for d in active_drones}
+        for did in list(self.assigned_slots.keys()):
+            if did not in active_ids:
+                del self.assigned_slots[did]
+
+        is_paused = getattr(self, "route_paused", False)
+
+        # Check Mission Route waypoint advancement for Gossip Quorum (TKT-28, TKT-30, TKT-56)
         if self.route_active and self.route_waypoints:
             wps = self.route_waypoints
             idx = self.current_route_wp_idx
@@ -273,31 +290,58 @@ class GossipConsensusBrain(BaseBrain):
                 loiter_duration = float(raw_wp[3]) if len(raw_wp) > 3 else 0.0
                 centroid = np.mean([d.pos for d in active_drones], axis=0)
                 dist_centroid = float(np.linalg.norm(centroid - target_wp))
+                min_peer_dist = min(float(np.linalg.norm(d.pos - target_wp)) for d in active_drones) if active_drones else 999.0
+                arrival_dist = min(dist_centroid, min_peer_dist)
 
-                if dist_centroid <= self.sim.route_acceptance_radius:
+                for d in active_drones:
+                    d.wp_total_loiter = loiter_duration
+                    d.wp_loiter_timer = self.wp_loiter_timer
+                    d.wp_loitering = self.wp_loitering
+                    d.mission_paused = is_paused
+
+                if not is_paused and arrival_dist <= self.sim.route_acceptance_radius:
+                    peers_settled = all(
+                        float(np.linalg.norm(d.pos - self._get_formation_slot(d, self.assigned_slots.get(d.id, sorted_ids.index(d.id)), living_count, target_wp))) <= 4.5
+                        for d in active_drones
+                    ) if living_count > 1 else True
+
                     if not self.wp_loitering and loiter_duration > 0.0:
                         self.wp_loitering = True
-                        self.wp_loiter_timer = loiter_duration
+                        self.wp_loiter_timer = max(0.0, loiter_duration - dt)
+                        self.wp_total_loiter = loiter_duration
+                        for d in active_drones:
+                            d.wp_loitering = True
+                            d.wp_loiter_timer = self.wp_loiter_timer
+                            d.wp_total_loiter = loiter_duration
                     elif self.wp_loitering:
                         self.wp_loiter_timer = max(0.0, self.wp_loiter_timer - dt)
-                        if self.wp_loiter_timer <= 0.0:
+                        for d in active_drones:
+                            d.wp_loiter_timer = self.wp_loiter_timer
+                        if self.wp_loiter_timer <= 0.0 and peers_settled:
                             self.wp_loitering = False
                             self.wp_loiter_timer = 0.0
                             if idx + 1 < len(wps):
                                 self.current_route_wp_idx += 1
                                 next_wp = np.array(wps[self.current_route_wp_idx][:3], dtype=float)
+                                next_loiter = float(wps[self.current_route_wp_idx][3]) if len(wps[self.current_route_wp_idx]) > 3 else 0.0
                             elif self.route_loop:
                                 self.current_route_wp_idx = 0
                                 next_wp = np.array(wps[0][:3], dtype=float)
+                                next_loiter = float(wps[0][3]) if len(wps[0]) > 3 else 0.0
                             else:
                                 self.route_active = False
                                 next_wp = target_wp
+                                next_loiter = 0.0
 
+                            self.wp_total_loiter = next_loiter
                             if self.route_active:
                                 self.current_seq += 1
                                 for d in active_drones:
                                     d.current_wp_idx = self.current_route_wp_idx
                                     d.acknowledged_target = np.copy(next_wp)
+                                    d.wp_loitering = False
+                                    d.wp_loiter_timer = 0.0
+                                    d.wp_total_loiter = next_loiter
                                     if d.id in self.peer_states:
                                         p_state = self.peer_states[d.id]
                                         p_state.active_seq = self.current_seq
@@ -305,36 +349,37 @@ class GossipConsensusBrain(BaseBrain):
                                         p_state.active_target = np.copy(next_wp)
                                         p_state.pending_target = np.copy(next_wp)
                     else:
+                        # Zero-duration fly-through waypoint
                         self.wp_loitering = False
                         self.wp_loiter_timer = 0.0
                         if idx + 1 < len(wps):
                             self.current_route_wp_idx += 1
                             next_wp = np.array(wps[self.current_route_wp_idx][:3], dtype=float)
+                            next_loiter = float(wps[self.current_route_wp_idx][3]) if len(wps[self.current_route_wp_idx]) > 3 else 0.0
                         elif self.route_loop:
                             self.current_route_wp_idx = 0
                             next_wp = np.array(wps[0][:3], dtype=float)
+                            next_loiter = float(wps[0][3]) if len(wps[0]) > 3 else 0.0
                         else:
                             self.route_active = False
                             next_wp = target_wp
+                            next_loiter = 0.0
 
+                        self.wp_total_loiter = next_loiter
                         if self.route_active:
                             self.current_seq += 1
                             for d in active_drones:
                                 d.current_wp_idx = self.current_route_wp_idx
                                 d.acknowledged_target = np.copy(next_wp)
+                                d.wp_loitering = False
+                                d.wp_loiter_timer = 0.0
+                                d.wp_total_loiter = next_loiter
                                 if d.id in self.peer_states:
                                     p_state = self.peer_states[d.id]
                                     p_state.active_seq = self.current_seq
                                     p_state.pending_seq = self.current_seq
                                     p_state.active_target = np.copy(next_wp)
                                     p_state.pending_target = np.copy(next_wp)
-
-        # Deterministic decentralized slot indexing based on living drone IDs
-        sorted_ids = sorted([d.id for d in active_drones])
-        active_ids = {d.id for d in active_drones}
-        for did in list(self.assigned_slots.keys()):
-            if did not in active_ids:
-                del self.assigned_slots[did]
 
         # Update virtual swarm heading toward consensus target
         consensus_target = self.sim.get_acknowledged_target()
@@ -378,7 +423,9 @@ class GossipConsensusBrain(BaseBrain):
 
                 # 1. Target Pursuit: Arrive steering toward decentralized geometric slot
                 target_speed = V_CRUISE
-                if getattr(drone, "enrollment_timer", 0.0) > 0.0:
+                if is_paused or getattr(self, "wp_loitering", False):
+                    target_speed = 2.0
+                elif getattr(drone, "enrollment_timer", 0.0) > 0.0:
                     ramp = max(0.0, min(1.0, 1.0 - (drone.enrollment_timer / 2.5)))
                     target_speed = 7.0 + (V_CRUISE - 7.0) * ramp
 
@@ -837,6 +884,52 @@ class GossipConsensusBrain(BaseBrain):
             "target": [round(float(v), 2) for v in new_target_arr],
         }
 
+    def skip_waypoint(self) -> int:
+        """Skip current waypoint and transition active gossip quorum immediately to the next (TKT-56)."""
+        if not self.route_active or not self.route_waypoints:
+            return self.current_route_wp_idx
+
+        wps = self.route_waypoints
+        idx = self.current_route_wp_idx
+        if idx + 1 < len(wps):
+            self.current_route_wp_idx += 1
+            next_wp = np.array(wps[self.current_route_wp_idx][:3], dtype=float)
+            next_loiter = float(wps[self.current_route_wp_idx][3]) if len(wps[self.current_route_wp_idx]) > 3 else 0.0
+        elif self.route_loop:
+            self.current_route_wp_idx = 0
+            next_wp = np.array(wps[0][:3], dtype=float)
+            next_loiter = float(wps[0][3]) if len(wps[0]) > 3 else 0.0
+        else:
+            self.route_active = False
+            next_wp = np.array(wps[idx][:3], dtype=float)
+            next_loiter = 0.0
+
+        self.wp_loitering = False
+        self.wp_loiter_timer = 0.0
+        self.wp_total_loiter = next_loiter
+        self.current_seq += 1
+
+        active_drones = [
+            d for d in self.sim.drones
+            if not d.crashed and d.flight_state not in ("LANDED", "DESCENDING")
+        ]
+        for d in active_drones:
+            d.current_wp_idx = self.current_route_wp_idx
+            d.acknowledged_target = np.copy(next_wp)
+            d.wp_loitering = False
+            d.wp_loiter_timer = 0.0
+            d.wp_total_loiter = next_loiter
+            if d.id in self.peer_states:
+                p_state = self.peer_states[d.id]
+                p_state.active_seq = self.current_seq
+                p_state.pending_seq = self.current_seq
+                p_state.active_target = np.copy(next_wp)
+                p_state.pending_target = np.copy(next_wp)
+                p_state.echo_ack_peers = {p.id for p in active_drones}
+                p_state.gossip_status = "COORDINATED"
+
+        return self.current_route_wp_idx
+
     def handle_command(self, cmd_dict: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         cmd = cmd_dict.get("cmd", "").upper()
         if cmd in ("SET_TARGET", "DISPATCH_TARGET"):
@@ -858,6 +951,30 @@ class GossipConsensusBrain(BaseBrain):
             if mode_upper in valid:
                 self.formation_mode = mode_upper
                 return {"status": "OK", "cmd": cmd, "formation": self.formation_mode}
+        elif cmd == "PAUSE_ROUTE":
+            self.route_paused = True
+            for d in self.sim.drones:
+                d.mission_paused = True
+            return {"status": "OK", "action": "ROUTE_PAUSED"}
+        elif cmd == "RESUME_ROUTE":
+            self.route_paused = False
+            for d in self.sim.drones:
+                d.mission_paused = False
+            return {"status": "OK", "action": "ROUTE_RESUMED"}
+        elif cmd == "SKIP_WAYPOINT":
+            new_idx = self.skip_waypoint()
+            return {"status": "OK", "action": "WAYPOINT_SKIPPED", "current_wp_idx": new_idx}
+        elif cmd in ("ABORT_ROUTE", "STOP_ROUTE"):
+            self.route_active = False
+            self.route_paused = False
+            self.wp_loitering = False
+            self.wp_loiter_timer = 0.0
+            for d in self.sim.drones:
+                d.mission_active = False
+                d.mission_paused = False
+                d.wp_loitering = False
+                d.mission_waypoints = []
+            return {"status": "OK", "action": "ROUTE_ABORTED"}
         return None
 
     def get_telemetry_extra(self) -> Dict[str, Any]:

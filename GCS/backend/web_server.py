@@ -259,6 +259,22 @@ class SwarmWebServer:
             self.session_manager.add_event("CMD", "Aborted active mission route: STOP_ROUTE", sim_time=self.sim.sim_time)
             return res
 
+        elif cmd in ("PAUSE_MISSION_ROUTE", "PAUSE_ROUTE"):
+            res = self.sim.pause_mission_route()
+            self.session_manager.add_event("CMD", "Mission Route Paused: PAUSE_ROUTE", sim_time=self.sim.sim_time)
+            return res
+
+        elif cmd in ("RESUME_MISSION_ROUTE", "RESUME_ROUTE"):
+            res = self.sim.resume_mission_route()
+            self.session_manager.add_event("CMD", "Mission Route Resumed: RESUME_ROUTE", sim_time=self.sim.sim_time)
+            return res
+
+        elif cmd in ("SKIP_MISSION_WAYPOINT", "SKIP_WAYPOINT", "SKIP_WP"):
+            res = self.sim.skip_mission_waypoint()
+            new_idx = res.get("current_wp_idx", "?")
+            self.session_manager.add_event("CMD", f"Waypoint Skipped -> Advancing to WP #{new_idx}", sim_time=self.sim.sim_time)
+            return res
+
         elif cmd in ("SET_COMMS_MODE", "SET_MODE"):
             mode = cmd_dict.get("mode", "TETHERED_RELAY")
             # Invariant: Physical tether umbilical cannot be attached mid-flight from GCS

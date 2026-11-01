@@ -48,10 +48,13 @@ kanban
     tkt39["Standalone OBC Socket Daemon"]@{ ticket: '[TKT-39]', priority: 'Medium' }
     tkt22["Manual RC Joystick & Gamepad"]@{ ticket: '[TKT-22]', priority: 'Medium' }
   todo["Todo (Active Pipeline)"]
-    pln02["PLN-02: Auxiliary Mission Engine (Waypoints 1st)"]@{ ticket: '[PLN-02]', priority: 'High' }
+    tkt58["1-Click Aux Mission: Patrol to BINGO RTB"]@{ ticket: '[TKT-58]', priority: 'Medium' }
+    pln02["PLN-02: Auxiliary Mission Engine Master"]@{ ticket: '[PLN-02]', priority: 'High' }
   in_progress["In Progress (WIP = 1)"]
+    tkt57["Airframe Tier Registry & Authorization Gate"]@{ ticket: '[TKT-57]', priority: 'Medium' }
 
   completed["Completed (Fresh / Review)"]
+    tkt56["4D Waypoint Queue & Loiter Progress Engine"]@{ ticket: '[TKT-56]', priority: 'High' }
     tkt55["Tactical Formation Orientations & Perimeter Headings"]@{ ticket: '[TKT-55]', priority: 'High' }
     tkt54["Heartbeat Watchdog & Breadcrumb Backtrack"]@{ ticket: '[TKT-54]', priority: 'Very High' }
     fix10["Strict Network Decoupling & Landing Huddle Fix"]@{ ticket: '[FIX-10]', priority: 'High' }
@@ -89,6 +92,7 @@ kanban
 
 | Ticket ID | Grade | Title | Operational Inspiration | Spec Document |
 | :--- | :--- | :--- | :--- | :--- |
+| **TKT-56** | 🚀 Feature | 4D Waypoint Queue & Loiter Progress Engine | Deterministic 4D waypoint execution [x, y, z, loiter] & live loiter stream | [`tasks/TKT-56_waypoint_queue_loiter_engine.md`](tasks/TKT-56_waypoint_queue_loiter_engine.md) |
 | **TKT-55** | 🚀 Feature | Tactical Formation Orientations & Perimeter In/Out Headings | Align airframe yaw with mission intent at target (sentry in/out) | [`tasks/TKT-55_tactical_formation_headings.md`](tasks/TKT-55_tactical_formation_headings.md) |
 | **PLN-02** | 🏗️ Epic | Auxiliary Mission Concepts & Waypoint Engine (Waypoints First) | Phased mission workflows: Waypoint queues & discrete missions | [`tasks/PLN-02_auxiliary_mission_engine.md`](tasks/PLN-02_auxiliary_mission_engine.md) |
 | **TKT-54** | 🚀 Feature | Heartbeat Watchdog, Breadcrumb Backtrack & Zero-Range Peeking | Eliminates range peeking; auto-backtracks to comms boundary | [`tasks/TKT-54_heartbeat_breadcrumb_backtrack.md`](tasks/TKT-54_heartbeat_breadcrumb_backtrack.md) |
@@ -129,7 +133,7 @@ kanban
 | Epic ID | Title | Scope & Operational Vision | Grouped Tickets / Prereqs |
 | :--- | :--- | :--- | :--- |
 | **PLN-01** | **Airframe Class Registry & Hardware Plugins** | Register formal classes (`Den`, `Totem`, `Cairn`, `Mastiff`, `Threadfin`, `Alpha`, `Beta`, `Pup`, `Kodiak`, `Kourier`, `Bloodhound`) with hardware plugins and capabilities. | `[TKT-48]`, `[TKT-49]` |
-| **PLN-02** | **Auxiliary Mission Engine (Waypoints First)** | Discrete waypoint queues first, then composable auxiliary missions at the click of a button (`S&R`, `DEPOSIT`, `RECON`, `GO_AND_LAND`, `PATROL_TO_BINGO`). Registered airframes only. | `[PLN-02]`, `[TKT-28]`, `[TKT-30]`, `[TKT-51]` |
+| **PLN-02** | **Auxiliary Mission Engine (Waypoints First)** | Discrete waypoint queues first, then composable auxiliary missions at the click of a button (`S&R`, `DEPOSIT`, `RECON`, `GO_AND_LAND`, `PATROL_TO_BINGO`). Registered airframes only. | `[PLN-02]`, `[TKT-56]`, `[TKT-57]`, `[TKT-58]` |
 | **PLN-03** | **Gamified Tactical Mission Generator** | Procedural tactical mission generator: Intercept hostile drone, corridor scanning, search & rescue, EW contested zones. | Post-PLN-02 |
 | **PLN-04** | **Payload Deposit & Solar Repeaters** | Precision payload drop zones, Cairn G1 solar repeater release, magnetic release hook mechanics. | `[PLN-04]` |
 | **PLN-05** | **Off-Nominal Landing Zones & Field E-Land** | Dynamic field landing zones, free-landing clearance, emergency touchdowns anywhere safe besides Base pads. | `[TKT-47]` |

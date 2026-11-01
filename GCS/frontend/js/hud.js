@@ -79,6 +79,8 @@
         setupBtn('btn-route-box', () => deployRoutePreset('BOX_PATROL'));
         setupBtn('btn-route-diamond', () => deployRoutePreset('DIAMOND_SURVEY'));
         setupBtn('btn-route-hexagon', () => deployRoutePreset('HEXAGON_SWEEP'));
+        setupBtn('btn-pause-route', () => togglePauseRoute());
+        setupBtn('btn-skip-wp', () => skipRouteWaypoint());
         setupBtn('btn-stop-route', () => stopMissionRoute());
 
         setupBtn('btn-toggle-patrol', () => {
@@ -265,11 +267,30 @@
         window.swarmClient?.send({ cmd: 'STOP_MISSION_ROUTE' });
     }
 
+    function togglePauseRoute() {
+        const isPaused = latestTelemetryFrame?.mission_route?.paused;
+        if (isPaused) {
+            logEvent('CMD', 'Resuming active mission route: RESUME_MISSION_ROUTE');
+            window.swarmClient?.send({ cmd: 'RESUME_MISSION_ROUTE' });
+        } else {
+            logEvent('CMD', 'Pausing active mission route: PAUSE_MISSION_ROUTE');
+            window.swarmClient?.send({ cmd: 'PAUSE_MISSION_ROUTE' });
+        }
+    }
+
+    function skipRouteWaypoint() {
+        logEvent('CMD', 'Skipping current waypoint: SKIP_MISSION_WAYPOINT');
+        window.swarmClient?.send({ cmd: 'SKIP_MISSION_WAYPOINT' });
+    }
+
+    let latestTelemetryFrame = null;
+
     // =========================================================================
     // 2. Telemetry Ingestion & Real-Time Card Updates
     // =========================================================================
     function onTelemetry(frame) {
         if (!frame) return;
+        latestTelemetryFrame = frame;
 
         // 0. Update Comms Mode & RF Jamming (TKT-17)
         if (frame.comms_mode && frame.comms_mode !== currentCommsMode) {
@@ -376,9 +397,11 @@
             }
         }
 
-        // 4b2. Monitor Discrete Mission Route State (TKT-28)
+        // 4b2. Monitor Discrete Mission Route State (TKT-28, TKT-30, TKT-56)
         const routeData = frame.mission_route;
         const routeActiveBadge = document.getElementById('route-active-badge');
+        const routeControlRow = document.getElementById('route-control-row');
+        const btnPauseRoute = document.getElementById('btn-pause-route');
         const btnStopRoute = document.getElementById('btn-stop-route');
         const btnRouteBox = document.getElementById('btn-route-box');
         const btnRouteDiamond = document.getElementById('btn-route-diamond');
@@ -386,13 +409,30 @@
 
         if (routeData && routeData.active) {
             const currentIdx = (routeData.current_wp_idx || 0) + 1;
-            const totalWps = (routeData.waypoints ? routeData.waypoints.length : 0);
+            const totalWps = (routeData.total_wps || (routeData.waypoints ? routeData.waypoints.length : 0));
+            const isPaused = !!routeData.paused;
+
             if (routeActiveBadge) {
-                routeActiveBadge.className = 'badge-route-active';
-                if (routeData.loitering && routeData.loiter_timer > 0) {
-                    routeActiveBadge.textContent = `${routeData.name} [WP ${currentIdx}/${totalWps} (LOITER ${Number(routeData.loiter_timer).toFixed(1)}s)]`;
+                if (isPaused) {
+                    routeActiveBadge.className = 'badge-route-active badge-route-paused';
+                    routeActiveBadge.textContent = `${routeData.name} [PAUSED @ WP ${currentIdx}/${totalWps}]`;
+                } else if (routeData.loitering && routeData.loiter_timer > 0) {
+                    routeActiveBadge.className = 'badge-route-active badge-route-holding';
+                    routeActiveBadge.textContent = `${routeData.name} [HOLDING: ${Number(routeData.loiter_timer).toFixed(1)}s (WP ${currentIdx}/${totalWps})]`;
                 } else {
+                    routeActiveBadge.className = 'badge-route-active';
                     routeActiveBadge.textContent = `${routeData.name} [${currentIdx}/${totalWps}]`;
+                }
+            }
+
+            if (routeControlRow) routeControlRow.style.display = 'grid';
+            if (btnPauseRoute) {
+                if (isPaused) {
+                    btnPauseRoute.innerHTML = '&#x25B6; RESUME';
+                    btnPauseRoute.classList.add('btn-active-pause');
+                } else {
+                    btnPauseRoute.innerHTML = '&#x23F8; PAUSE';
+                    btnPauseRoute.classList.remove('btn-active-pause');
                 }
             }
             if (btnStopRoute) btnStopRoute.style.display = 'block';
@@ -405,6 +445,7 @@
                 routeActiveBadge.className = 'badge-route-inactive';
                 routeActiveBadge.textContent = 'STANDBY';
             }
+            if (routeControlRow) routeControlRow.style.display = 'none';
             if (btnStopRoute) btnStopRoute.style.display = 'none';
             if (btnRouteBox) btnRouteBox.classList.remove('active-route');
             if (btnRouteDiamond) btnRouteDiamond.classList.remove('active-route');
