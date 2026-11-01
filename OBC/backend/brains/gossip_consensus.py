@@ -402,6 +402,41 @@ class GossipConsensusBrain(BaseBrain):
 
                 accs[drone.id] = target_acc + flock_acc
 
+        # 3. Tactical Formation Orientations & Headings (TKT-55)
+        for drone in active_drones:
+            speed_xy = math.hypot(drone.vel[0], drone.vel[1])
+
+            # Failsafe modes face velocity heading
+            if getattr(drone, "gnss_denied", False) or getattr(drone, "lost_link", False) or getattr(drone, "flight_state", "") == "BACKTRACK_HOLD":
+                if speed_xy > 0.5:
+                    drone.target_yaw = math.atan2(drone.vel[1], drone.vel[0])
+                continue
+
+            state = self._get_peer_state(drone.id)
+            center = getattr(state, "active_target", consensus_target)
+
+            if self.formation_mode in ("PERIMETER_PATROL", "PERIMETER_IN", "PERIMETER_OUT"):
+                r_xy = math.hypot(drone.pos[0] - center[0], drone.pos[1] - center[1])
+                if self.formation_mode == "PERIMETER_OUT":
+                    psi_target = math.atan2(drone.pos[1] - center[1], drone.pos[0] - center[0]) if r_xy > 0.5 else self.formation_heading
+                else:  # PERIMETER_PATROL or PERIMETER_IN
+                    psi_target = math.atan2(center[1] - drone.pos[1], center[0] - drone.pos[0]) if r_xy > 0.5 else self.formation_heading
+
+                dist_to_slot = float(np.linalg.norm(drone.pos - getattr(drone, "target_station", drone.pos)))
+                if dist_to_slot > 6.0 and speed_xy > 2.0:
+                    drone.target_yaw = math.atan2(drone.vel[1], drone.vel[0])
+                else:
+                    drone.target_yaw = psi_target
+
+            elif self.formation_mode == "ECHELON_ESCORT":
+                drone.target_yaw = self.formation_heading
+
+            elif self.formation_mode == "ORBIT_VORTEX":
+                drone.target_yaw = math.atan2(drone.vel[1], drone.vel[0]) if speed_xy > 0.5 else self.formation_heading
+
+            elif self.formation_mode == "NATURAL_FLOCK":
+                drone.target_yaw = math.atan2(drone.vel[1], drone.vel[0]) if speed_xy > 0.2 else float(drone.yaw)
+
         return accs
 
     def _update_formation_heading(self, active_drones: List[Drone], target_pos: np.ndarray, dt: float) -> None:
@@ -544,8 +579,8 @@ class GossipConsensusBrain(BaseBrain):
             radius = 20.0
             return np.array([radius * math.cos(azimuth), radius * math.sin(azimuth), 25.0], dtype=float)
 
-        if self.formation_mode == "PERIMETER_PATROL":
-            # Static defensive sentry ring holding equidistant guard stations around target (R = 25m)
+        if self.formation_mode in ("PERIMETER_PATROL", "PERIMETER_IN", "PERIMETER_OUT"):
+            # Static defensive sentry ring holding equidistant guard stations around target (R = 25m) (TKT-55)
             radius = 25.0
             return (
                 target_pos
@@ -809,8 +844,19 @@ class GossipConsensusBrain(BaseBrain):
             return self.inject_target(pos)
         elif cmd == "SET_FORMATION":
             mode = cmd_dict.get("mode", "PERIMETER_PATROL")
-            if mode in ("PERIMETER_PATROL", "ECHELON_ESCORT", "ORBIT_VORTEX", "NATURAL_FLOCK"):
-                self.formation_mode = mode
+            mode_upper = mode.upper().replace("-", "_").strip()
+            if mode_upper in ("BOIDS", "BOID", "FLOCK"):
+                mode_upper = "NATURAL_FLOCK"
+            elif mode_upper in ("PERIMETER_PATROL_IN", "PERIMETER_IN"):
+                mode_upper = "PERIMETER_IN"
+            elif mode_upper in ("PERIMETER_PATROL_OUT", "PERIMETER_OUT"):
+                mode_upper = "PERIMETER_OUT"
+            elif mode_upper == "PERIMETER":
+                mode_upper = "PERIMETER_PATROL"
+
+            valid = ("PERIMETER_PATROL", "PERIMETER_IN", "PERIMETER_OUT", "ECHELON_ESCORT", "ORBIT_VORTEX", "NATURAL_FLOCK")
+            if mode_upper in valid:
+                self.formation_mode = mode_upper
                 return {"status": "OK", "cmd": cmd, "formation": self.formation_mode}
         return None
 

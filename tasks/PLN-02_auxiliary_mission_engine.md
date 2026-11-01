@@ -1,6 +1,6 @@
 # [PLN-02] Auxiliary Mission Concepts & Waypoint Engine (Registered Drones Only)
 
-* **Grade**: 🏗️ Epic | **Type**: Modular Mission Architecture (`Backlog / Epic`) | **Priority**: High
+* **Grade**: 🏗️ Epic | **Type**: Modular Mission Architecture (`Todo / Active Pipeline`) | **Priority**: High
 * **Target Files**: `GCS/backend/c2_gateway.py`, `OBC/backend/drone_firmware.py`, `OBC/backend/mission_engine.py`, `SIM/backend/sitl_engine.py`, `GCS/frontend/js/app.js`
 * **Operational Inspiration**:
   - Replaces bespoke, one-off state flags with a unified, airframe-agnostic **Mission Execution Engine**.

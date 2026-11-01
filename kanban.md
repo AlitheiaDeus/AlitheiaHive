@@ -36,8 +36,6 @@ kanban
     tkt24["Dynamic Wind Gust Vector Field"]@{ ticket: '[TKT-24]', priority: 'Very Low' }
     tkt44["High-Scale Multi-Tier Swarms"]@{ ticket: '[TKT-44]', priority: 'Very Low' }
   backlog["Backlog (Staged / Non-Essential)"]
-    pln02["PLN-02: Auxiliary Mission Engine (Waypoints 1st)"]@{ ticket: '[PLN-02]', priority: 'High' }
-    tkt55["TKT-55: Tactical Formation Headings (In/Out)"]@{ ticket: '[TKT-55]', priority: 'High' }
     pln01["PLN-01: Airframe Class Registry & Plugins"]@{ ticket: '[PLN-01]', priority: 'Medium' }
     pln07["PLN-07: Full MissionPlanner / QGC Parity"]@{ ticket: '[PLN-07]', priority: 'Medium' }
     pln05["PLN-05: Off-Nominal Landing Zones & E-Land"]@{ ticket: '[PLN-05]', priority: 'Low' }
@@ -50,9 +48,11 @@ kanban
     tkt39["Standalone OBC Socket Daemon"]@{ ticket: '[TKT-39]', priority: 'Medium' }
     tkt22["Manual RC Joystick & Gamepad"]@{ ticket: '[TKT-22]', priority: 'Medium' }
   todo["Todo (Active Pipeline)"]
+    pln02["PLN-02: Auxiliary Mission Engine (Waypoints 1st)"]@{ ticket: '[PLN-02]', priority: 'High' }
   in_progress["In Progress (WIP = 1)"]
 
   completed["Completed (Fresh / Review)"]
+    tkt55["Tactical Formation Orientations & Perimeter Headings"]@{ ticket: '[TKT-55]', priority: 'High' }
     tkt54["Heartbeat Watchdog & Breadcrumb Backtrack"]@{ ticket: '[TKT-54]', priority: 'Very High' }
     fix10["Strict Network Decoupling & Landing Huddle Fix"]@{ ticket: '[FIX-10]', priority: 'High' }
     fix09["Strict WE-GCS Airgap & Comms Integrity"]@{ ticket: '[FIX-09]', priority: 'High' }
@@ -90,6 +90,7 @@ kanban
 | Ticket ID | Grade | Title | Operational Inspiration | Spec Document |
 | :--- | :--- | :--- | :--- | :--- |
 | **TKT-55** | 🚀 Feature | Tactical Formation Orientations & Perimeter In/Out Headings | Align airframe yaw with mission intent at target (sentry in/out) | [`tasks/TKT-55_tactical_formation_headings.md`](tasks/TKT-55_tactical_formation_headings.md) |
+| **PLN-02** | 🏗️ Epic | Auxiliary Mission Concepts & Waypoint Engine (Waypoints First) | Phased mission workflows: Waypoint queues & discrete missions | [`tasks/PLN-02_auxiliary_mission_engine.md`](tasks/PLN-02_auxiliary_mission_engine.md) |
 | **TKT-54** | 🚀 Feature | Heartbeat Watchdog, Breadcrumb Backtrack & Zero-Range Peeking | Eliminates range peeking; auto-backtracks to comms boundary | [`tasks/TKT-54_heartbeat_breadcrumb_backtrack.md`](tasks/TKT-54_heartbeat_breadcrumb_backtrack.md) |
 | **FIX-10** | 🛠️ Improvement | Strict Network Decoupling, Landing Huddle Fix & 3-Way Death Doctrine | Landing pad huddle, UDP canyon sockets & realistic casualty detection | [`tasks/FIX-10_network_airgap_and_landing_reformation.md`](tasks/FIX-10_network_airgap_and_landing_reformation.md) |
 | **TKT-53** | 🚀 Feature | Flight Formation Test Suite & Playback Recorder | Comprehensive formation testing & trajectory playback | [`tasks/TKT-53_flight_formation_test_suite.md`](tasks/TKT-53_flight_formation_test_suite.md) |

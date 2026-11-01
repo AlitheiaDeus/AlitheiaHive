@@ -1,6 +1,6 @@
 # [TKT-55] Tactical Formation Orientations & Perimeter In/Out Headings
 
-* **Grade**: 🚀 Feature | **Type**: Formation Guidance & Kinematics (`Backlog / Staged`) | **Priority**: High
+* **Grade**: 🚀 Feature | **Type**: Formation Guidance & Kinematics (`Completed / Fresh Review`) | **Priority**: High
 * **Target Files**: `OBC/backend/brains/leader_follower.py`, `OBC/backend/brains/gossip_consensus.py`, `SIM/backend/sitl_engine.py`, `tests/test_formation_flight_suite.py`
 * **Operational Inspiration**:
   - Drones currently freeze their yaw heading at whatever arbitrary arrival angle they stopped at when cruising speed drops below $0.5\text{m/s}$.

@@ -66,7 +66,8 @@
         setupBtn('btn-form-echelon', () => dispatchFormation('ECHELON_ESCORT'));
         setupBtn('btn-form-boids', () => dispatchFormation('NATURAL_FLOCK'));
         setupBtn('btn-form-vortex', () => dispatchFormation('ORBIT_VORTEX'));
-        setupBtn('btn-form-patrol', () => dispatchFormation('PERIMETER_PATROL'));
+        setupBtn('btn-form-patrol', () => dispatchFormation('PERIMETER_IN'));
+        setupBtn('btn-form-patrol-out', () => dispatchFormation('PERIMETER_OUT'));
 
         // Preset Waypoints
         setupBtn('btn-wp-alpha', () => dispatchTarget([60.0, 40.0, 30.0], 'ALPHA'));
@@ -1023,6 +1024,8 @@
             'NATURAL_FLOCK': 'btn-form-boids',
             'ORBIT_VORTEX': 'btn-form-vortex',
             'PERIMETER_PATROL': 'btn-form-patrol',
+            'PERIMETER_IN': 'btn-form-patrol',
+            'PERIMETER_OUT': 'btn-form-patrol-out',
         };
 
         for (let [mode, btnId] of Object.entries(map)) {
@@ -1120,10 +1123,12 @@
                 'ECHELON_ESCORT': 'btn-form-echelon',
                 'NATURAL_FLOCK': 'btn-form-boids',
                 'ORBIT_VORTEX': 'btn-form-vortex',
-                'PERIMETER_PATROL': 'btn-form-patrol'
+                'PERIMETER_PATROL': 'btn-form-patrol',
+                'PERIMETER_IN': 'btn-form-patrol',
+                'PERIMETER_OUT': 'btn-form-patrol-out'
             };
             const activeId = formMap[bundle.formation];
-            ['btn-form-echelon', 'btn-form-boids', 'btn-form-vortex', 'btn-form-patrol'].forEach(id => {
+            ['btn-form-echelon', 'btn-form-boids', 'btn-form-vortex', 'btn-form-patrol', 'btn-form-patrol-out'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) {
                     if (id === activeId) el.classList.add('active');

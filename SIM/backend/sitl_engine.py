@@ -1109,13 +1109,22 @@ class SITLWorldEngine:
                 drone.status = "LANDED"
                 drone.rotor_rpm = 0.0
 
-            # Orientation update
-            speed_xy = math.hypot(drone.vel[0], drone.vel[1])
-            if speed_xy > 0.2:
-                target_yaw = math.atan2(drone.vel[1], drone.vel[0])
-                # Smooth yaw slew
+            # Orientation update (TKT-55: Bounded yaw slew rate <= 45 deg/s)
+            if not drone.crashed and drone.flight_state not in ("LANDED", "GROUND_IDLE"):
+                speed_xy = math.hypot(drone.vel[0], drone.vel[1])
+                target_yaw = getattr(drone, "target_yaw", None)
+                if target_yaw is None:
+                    if speed_xy > 0.2:
+                        target_yaw = math.atan2(drone.vel[1], drone.vel[0])
+                    else:
+                        target_yaw = drone.yaw
+
+                # Slew rate clamp: <= 45 deg/s in standard flight, <= 60 deg/s in patrol pursuit
+                max_yaw_rate = math.radians(60.0) if getattr(self, "patrol_active", False) else math.radians(45.0)
+                max_step = max_yaw_rate * dt
                 yaw_diff = (target_yaw - drone.yaw + math.pi) % (2.0 * math.pi) - math.pi
-                drone.yaw += yaw_diff * min(1.0, 8.0 * dt)
+                slew = float(np.clip(yaw_diff, -max_step, max_step))
+                drone.yaw = (drone.yaw + slew + math.pi) % (2.0 * math.pi) - math.pi
 
             # Bank tilt from acceleration
             drone.pitch = float(np.clip(-drone.acc[0] * 0.04, -0.4, 0.4))
@@ -2537,12 +2546,20 @@ class SITLWorldEngine:
         mode_upper = mode.upper().replace("-", "_").strip()
         if mode_upper in ("BOIDS", "BOID", "FLOCK"):
             mode_upper = "NATURAL_FLOCK"
+        elif mode_upper in ("PERIMETER_PATROL_IN", "PERIMETER_IN"):
+            mode_upper = "PERIMETER_IN"
+        elif mode_upper in ("PERIMETER_PATROL_OUT", "PERIMETER_OUT"):
+            mode_upper = "PERIMETER_OUT"
+        elif mode_upper == "PERIMETER":
+            mode_upper = "PERIMETER_PATROL"
 
         valid_modes = [
             "ECHELON_ESCORT",
             "NATURAL_FLOCK",
             "ORBIT_VORTEX",
             "PERIMETER_PATROL",
+            "PERIMETER_IN",
+            "PERIMETER_OUT",
         ]
         if mode_upper in valid_modes:
             self.formation_mode = mode_upper

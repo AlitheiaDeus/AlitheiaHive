@@ -48,6 +48,7 @@ class Drone:
 
         # Orientation & Visuals
         self.yaw: float = 0.0          # Radians (0 = +X axis)
+        self.target_yaw: Optional[float] = None # Commanded heading from guidance brain (rad) (TKT-55)
         self.pitch: float = 0.0        # Radians
         self.roll: float = 0.0         # Radians
         self.rotor_rpm: float = 5200.0 # Visual rotor speed
@@ -151,6 +152,7 @@ class Drone:
         self.vel = np.zeros(3, dtype=float)
         self.acc = np.zeros(3, dtype=float)
         self.yaw = 0.0
+        self.target_yaw = None
         self.pitch = 0.0
         self.roll = 0.0
         self.rotor_rpm = 5200.0
@@ -252,6 +254,7 @@ class Drone:
             "pos": [round(float(v), 2) for v in self.pos],
             "vel": [round(float(v), 2) for v in self.vel],
             "yaw": round(float(self.yaw), 3),
+            "target_yaw": round(float(self.target_yaw), 3) if self.target_yaw is not None else None,
             "pitch": round(float(self.pitch), 3),
             "roll": round(float(self.roll), 3),
             "crashed": self.crashed,

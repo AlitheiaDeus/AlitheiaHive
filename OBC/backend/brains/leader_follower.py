@@ -328,6 +328,46 @@ class LeaderFollowerBrain(BaseBrain):
             else:
                 accs[drone.id] = -drone.vel * 2.0
 
+        # 5. Tactical Formation Orientations & Headings (TKT-55)
+        for drone in self.sim.drones:
+            if drone.crashed or drone.flight_state in ("LANDED", "DESCENDING"):
+                continue
+
+            speed_xy = math.hypot(drone.vel[0], drone.vel[1])
+
+            # Failsafe modes face velocity heading
+            if getattr(drone, "gnss_denied", False) or drone.lost_link or drone.flight_state == "BACKTRACK_HOLD":
+                if speed_xy > 0.5:
+                    drone.target_yaw = math.atan2(drone.vel[1], drone.vel[0])
+                continue
+
+            if self.formation_mode in ("PERIMETER_PATROL", "PERIMETER_IN", "PERIMETER_OUT"):
+                center = (
+                    current_leader.acknowledged_target
+                    if current_leader is not None and hasattr(current_leader, "acknowledged_target") and current_leader.acknowledged_target is not None
+                    else self.sim.target_pos
+                )
+                r_xy = math.hypot(drone.pos[0] - center[0], drone.pos[1] - center[1])
+                if self.formation_mode == "PERIMETER_OUT":
+                    psi_target = math.atan2(drone.pos[1] - center[1], drone.pos[0] - center[0]) if r_xy > 0.5 else self.formation_heading
+                else:  # PERIMETER_PATROL or PERIMETER_IN
+                    psi_target = math.atan2(center[1] - drone.pos[1], center[0] - drone.pos[0]) if r_xy > 0.5 else self.formation_heading
+
+                dist_to_slot = float(np.linalg.norm(drone.pos - getattr(drone, "target_station", drone.pos)))
+                if dist_to_slot > 6.0 and speed_xy > 2.0:
+                    drone.target_yaw = math.atan2(drone.vel[1], drone.vel[0])
+                else:
+                    drone.target_yaw = psi_target
+
+            elif self.formation_mode == "ECHELON_ESCORT":
+                drone.target_yaw = self.formation_heading
+
+            elif self.formation_mode == "ORBIT_VORTEX":
+                drone.target_yaw = math.atan2(drone.vel[1], drone.vel[0]) if speed_xy > 0.5 else self.formation_heading
+
+            elif self.formation_mode == "NATURAL_FLOCK":
+                drone.target_yaw = math.atan2(drone.vel[1], drone.vel[0]) if speed_xy > 0.2 else float(drone.yaw)
+
         return accs
 
     def _update_formation_heading(self, leader: Drone, dt: float) -> None:
@@ -511,8 +551,8 @@ class LeaderFollowerBrain(BaseBrain):
                 + np.array([radius * math.cos(angle), radius * math.sin(angle), z_offset])
             )
 
-        elif self.formation_mode == "PERIMETER_PATROL":
-            # Static defensive sentry ring holding equidistant guard stations around target
+        elif self.formation_mode in ("PERIMETER_PATROL", "PERIMETER_IN", "PERIMETER_OUT"):
+            # Static defensive sentry ring holding equidistant guard stations around target (TKT-55)
             radius = 25.0
             angle = (2.0 * math.pi * (k - 1)) / max(1, len(living_followers))
             center = (
@@ -710,10 +750,20 @@ class LeaderFollowerBrain(BaseBrain):
         cmd = cmd_dict.get("cmd", "").upper()
         if cmd == "SET_FORMATION":
             mode = cmd_dict.get("mode", "ECHELON_ESCORT")
-            valid = ["ECHELON_ESCORT", "NATURAL_FLOCK", "ORBIT_VORTEX", "PERIMETER_PATROL"]
-            if mode in valid:
-                self.formation_mode = mode
-                return {"status": "OK", "formation": mode}
+            mode_upper = mode.upper().replace("-", "_").strip()
+            if mode_upper in ("BOIDS", "BOID", "FLOCK"):
+                mode_upper = "NATURAL_FLOCK"
+            elif mode_upper in ("PERIMETER_PATROL_IN", "PERIMETER_IN"):
+                mode_upper = "PERIMETER_IN"
+            elif mode_upper in ("PERIMETER_PATROL_OUT", "PERIMETER_OUT"):
+                mode_upper = "PERIMETER_OUT"
+            elif mode_upper == "PERIMETER":
+                mode_upper = "PERIMETER_PATROL"
+
+            valid = ["ECHELON_ESCORT", "NATURAL_FLOCK", "ORBIT_VORTEX", "PERIMETER_PATROL", "PERIMETER_IN", "PERIMETER_OUT"]
+            if mode_upper in valid:
+                self.formation_mode = mode_upper
+                return {"status": "OK", "formation": self.formation_mode}
         return None
 
     def get_telemetry_extra(self) -> Dict[str, Any]:
