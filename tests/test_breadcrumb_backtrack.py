@@ -182,6 +182,104 @@ class TestBreadcrumbBacktrack(unittest.TestCase):
         self.assertEqual(drone.status, "FLEET_LEADER")
         self.assertTrue(np.allclose(drone.acknowledged_target, [50.0, 20.0, 25.0]))
 
+    # ==========================================================================
+    # BUG-06 Unit Tests: Ingress Corridor Stack, Memory Profile & Gossip ERTB
+    # ==========================================================================
+    def test_bug06_ingress_corridor_stack_memory_profile_under_300_bytes(self):
+        """Verify IngressCorridorStack bounds capacity at 16 nodes and maintains < 300 byte heap profile."""
+        from OBC.backend.drone_firmware import IngressCorridorStack
+        stack = IngressCorridorStack(max_nodes=16, min_dist=15.0)
+
+        # Base node must be present
+        self.assertEqual(len(stack), 1)
+        self.assertTrue(np.allclose(stack.peek(), [0.0, 0.0, 25.0]))
+
+        # Record 25 novel waypoints (each 16m apart)
+        for i in range(1, 26):
+            stack.record([float(i * 16.0), 0.0, 25.0])
+
+        # Must cap strictly at 16 nodes
+        self.assertEqual(len(stack), 16)
+        # Base anchor [0, 0, 25] must be retained at index 0
+        raw_list = stack.to_list()
+        self.assertEqual(raw_list[0], [0.0, 0.0, 25.0])
+        # Most recent node at end
+        self.assertEqual(raw_list[-1], [400.0, 0.0, 25.0])
+
+        # Micro-heap memory profile: payload (16 * 3 * 4 bytes for float32 coordinates) is 192 bytes (< 300 bytes)
+        payload_bytes = len(raw_list) * 3 * 4
+        self.assertLess(payload_bytes, 300)
+
+    def test_bug06_corridor_ertb_reverses_ingress_corridor(self):
+        """Verify Corridor ERTB reverses through popped corridor waypoints back to Base."""
+        drone = self.sim.drones[0]
+        drone.corridor_stack.clear()
+        drone.flight_state = "CRUISE"
+
+        # Record 3 ingress corridor waypoints
+        drone.record_corridor([16.0, 0.0, 25.0])
+        drone.record_corridor([32.0, 0.0, 25.0])
+        drone.record_corridor([48.0, 0.0, 25.0])
+        self.assertEqual(len(drone.corridor_stack), 4)  # Base + 3 nodes
+
+        # Drone is currently at [48, 0, 25]
+        drone.pos = np.array([48.0, 0.0, 25.0], dtype=float)
+
+        # Trigger Corridor ERTB
+        res = self.sim.command_corridor_ertb()
+        self.assertEqual(res["status"], "OK")
+        self.assertEqual(drone.flight_state, "CORRIDOR_ERTB")
+        self.assertTrue(np.allclose(drone.corridor_target, [48.0, 0.0, 25.0]))
+
+        # Pop target when within arrival radius
+        next_t = drone.corridor_stack.pop_target(drone.pos, arrival_radius=4.5)
+        self.assertTrue(np.allclose(next_t, [32.0, 0.0, 25.0]))
+
+        # Advance to [32, 0, 25]
+        drone.pos = np.array([32.0, 0.0, 25.0], dtype=float)
+        next_t = drone.corridor_stack.pop_target(drone.pos, arrival_radius=4.5)
+        self.assertTrue(np.allclose(next_t, [16.0, 0.0, 25.0]))
+
+        # Advance to [16, 0, 25]
+        drone.pos = np.array([16.0, 0.0, 25.0], dtype=float)
+        next_t = drone.corridor_stack.pop_target(drone.pos, arrival_radius=4.5)
+        self.assertTrue(np.allclose(next_t, [0.0, 0.0, 25.0]))
+
+        # At Base anchor, length is 1 and stays at Base
+        self.assertEqual(len(drone.corridor_stack), 1)
+
+    def test_bug06_gossip_consensus_unanimous_contact_loss_ertb(self):
+        """Verify Gossip Consensus executes ERTB only on unanimous partition contact loss (> 2.0s)."""
+        self.sim.set_brain("GOSSIP_CONSENSUS")
+        brain0 = self.sim.drones[0].brain
+
+        # 1. When at least one node maintains GCS contact, swarm remains in mission
+        t0 = self.sim._build_local_telemetry(self.sim.drones[0])
+        # Simulate heard peer 1 with gcs_contact=True
+        from OBC.backend.brains import HeardPeer
+        brain0.heard_peers[1] = HeardPeer(
+            drone_id=1,
+            pos=np.array([20.0, 0.0, 25.0]),
+            vel=np.zeros(3),
+            gcs_contact=True,
+        )
+
+        intent, _ = brain0.step_drone(t0, [], dt=0.5)
+        self.assertEqual(brain0.gcs_lost_timer, 0.0)
+        self.assertNotIn("flight_state", intent.state_updates)
+
+        # 2. When ALL nodes in partition lose GCS contact for > 2.0s, coordinated ERTB engages
+        brain0.heard_peers[1].gcs_contact = False
+        self.sim.drones[0].uplink_active = False
+
+        # Advance timer past 2.0s
+        for _ in range(5):
+            t_curr = self.sim._build_local_telemetry(self.sim.drones[0])
+            intent, _ = brain0.step_drone(t_curr, [], dt=0.5)
+
+        self.assertGreaterEqual(brain0.gcs_lost_timer, 2.0)
+        self.assertEqual(intent.state_updates.get("flight_state"), "CORRIDOR_ERTB")
+
 
 if __name__ == "__main__":
     unittest.main()

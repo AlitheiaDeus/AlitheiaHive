@@ -694,7 +694,11 @@
                 }
 
                 // Update / Build Card DOM
-                updateOrCreateDroneCard(d);
+                try {
+                    updateOrCreateDroneCard(d);
+                } catch (cardErr) {
+                    console.error(`[GCS HUD] Error updating card for Drone #${d?.id}:`, cardErr);
+                }
             });
 
             // Detect Autonomic Succession
@@ -709,9 +713,26 @@
         let card = droneCards.get(drone.id);
 
         if (!card) {
-            card = createCardElement(drone);
-            cardsContainer.appendChild(card.el);
-            droneCards.set(drone.id, card);
+            try {
+                card = createCardElement(drone);
+                cardsContainer.appendChild(card.el);
+                droneCards.set(drone.id, card);
+            } catch (err) {
+                console.error(`[GCS HUD] Failed to create telemetry card for Drone #${drone?.id}:`, err);
+                const fallbackEl = document.createElement('div');
+                fallbackEl.className = 'drone-telemetry-card crashed-card';
+                fallbackEl.id = `card-drone-${drone?.id ?? 'err'}`;
+                fallbackEl.innerHTML = `
+                    <div class="card-header">
+                        <strong class="drone-id-label">DRONE #${drone?.id ?? '?'}</strong>
+                        <span class="status-tag tag-crashed">RENDER ERROR</span>
+                    </div>
+                    <div class="card-briefing-sub" style="display:block; color:#ff4466;">Telemetry render failed</div>
+                `;
+                cardsContainer.appendChild(fallbackEl);
+                droneCards.set(drone.id, { el: fallbackEl });
+                return;
+            }
         }
 
         // Update In-Place for High-FPS smoothness
@@ -736,13 +757,16 @@
             }
         }
 
-        const speed = Math.hypot(drone.vel[0], drone.vel[1], drone.vel[2]).toFixed(1);
-        const alt = drone.pos[2].toFixed(1);
+        const vel = drone.vel || [0, 0, 0];
+        const pos = drone.pos || [0, 0, 0];
+        const battery = typeof drone.battery === 'number' ? drone.battery : 100;
+        const speed = Math.hypot(vel[0] || 0, vel[1] || 0, vel[2] || 0).toFixed(1);
+        const alt = (pos[2] || 0).toFixed(1);
 
-        card.elAlt.textContent = `${alt}m`;
-        card.elVel.textContent = `${speed}m/s`;
-        card.elBat.textContent = `${drone.battery.toFixed(0)}%`;
-        card.elBatBar.style.width = `${Math.max(0, Math.min(100, drone.battery))}%`;
+        if (card.elAlt) card.elAlt.textContent = `${alt}m`;
+        if (card.elVel) card.elVel.textContent = `${speed}m/s`;
+        if (card.elBat) card.elBat.textContent = `${battery.toFixed(0)}%`;
+        if (card.elBatBar) card.elBatBar.style.width = `${Math.max(0, Math.min(100, battery))}%`;
 
         // Signal RSSI & Link Quality (TKT-17)
         if (card.elRssi) {
@@ -998,20 +1022,36 @@
         `;
 
         const landBtn = el.querySelector('.btn-land-action');
+        const actionBtn = el.querySelector('.btn-kill') || el.querySelector('.card-btn-action:not(.btn-land-action)') || null;
 
-        landBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (drone.lost_link && !deadDroneIds.has(drone.id)) {
-                logEvent('CMD', `Operator confirmed Drone #${drone.id} destroyed: DECLARE_DESTROYED`);
-                window.swarmClient?.send({ cmd: 'DECLARE_DESTROYED', id: drone.id });
-            } else if (landedDroneIds.has(drone.id)) {
-                logEvent('CMD', `Launching Drone #${drone.id} from pad: TAKEOFF_DRONE`);
-                window.swarmClient?.send({ cmd: 'TAKEOFF_DRONE', id: drone.id });
-            } else {
-                logEvent('CMD', `Commanding Drone #${drone.id} to soft-land: LAND_DRONE`);
-                window.swarmClient?.send({ cmd: 'LAND_DRONE', id: drone.id });
-            }
-        });
+        if (actionBtn) {
+            actionBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (deadDroneIds.has(drone.id)) {
+                    logEvent('CMD', `Rebooting drone #${drone.id}`);
+                    window.swarmClient?.send({ cmd: 'REBOOT_DRONE', id: drone.id });
+                } else {
+                    logEvent('CMD', `Terminating drone #${drone.id}`);
+                    window.swarmClient?.send({ cmd: 'KILL_DRONE', id: drone.id });
+                }
+            });
+        }
+
+        if (landBtn) {
+            landBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (drone.lost_link && !deadDroneIds.has(drone.id)) {
+                    logEvent('CMD', `Operator confirmed Drone #${drone.id} destroyed: DECLARE_DESTROYED`);
+                    window.swarmClient?.send({ cmd: 'DECLARE_DESTROYED', id: drone.id });
+                } else if (landedDroneIds.has(drone.id)) {
+                    logEvent('CMD', `Launching Drone #${drone.id} from pad: TAKEOFF_DRONE`);
+                    window.swarmClient?.send({ cmd: 'TAKEOFF_DRONE', id: drone.id });
+                } else {
+                    logEvent('CMD', `Commanding Drone #${drone.id} to soft-land: LAND_DRONE`);
+                    window.swarmClient?.send({ cmd: 'LAND_DRONE', id: drone.id });
+                }
+            });
+        }
 
         el.addEventListener('click', () => {
             logEvent('NAV', `Tactical camera focused on Drone #${drone.id}`);

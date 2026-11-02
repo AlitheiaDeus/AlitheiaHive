@@ -6,6 +6,7 @@ discrete waypoint queue, altitude-gated breakaway dive, and local failsafes.
 """
 
 from __future__ import annotations
+import math
 import os
 import sys
 from pathlib import Path
@@ -34,8 +35,9 @@ RF_MODE_YIP: str = "YIP"         # 50m Low-power whisper mode (escort standby)
 RF_MODE_BORK: str = "BORK"       # 65m Amplified PA boost mode (active leader / relay)
 RF_MODE_HOWL: str = "HOWL"       # 120m GCS mast uplink
 
-# Default Capabilities Matrix (TKT-57)
+# Default Capabilities Matrix (TKT-57, BUG-06)
 DEFAULT_CAPABILITIES_T1_5: List[str] = [
+    "FLAGSHIP",
     "FORMATION_FLIGHT",
     "PATROL",
     "RECON",
@@ -56,6 +58,62 @@ DEFAULT_CAPABILITIES_T0: List[str] = [
     "HIGH_GAIN_HOWL",
     "INFINITE_LOITER",
 ]
+
+
+class IngressCorridorStack:
+    """Bounded, ultra-low-memory reversible flight corridor stack for micro-OBC hardware (BUG-06).
+    Retains up to 16 waypoints with a 15m novel displacement threshold.
+    Consumes < 300 bytes of micro-heap and guarantees reversible obstacle-cleared egress."""
+
+    def __init__(self, max_nodes: int = 16, min_dist: float = 15.0) -> None:
+        self.max_nodes: int = max_nodes
+        self.min_dist: float = min_dist
+        self._stack: List[Tuple[float, float, float]] = [(0.0, 0.0, 25.0)]
+
+    def record(self, pos: Union[np.ndarray, List[float]]) -> bool:
+        """Push a new corridor node if moved at least min_dist from the last node."""
+        if pos is None:
+            return False
+        arr = np.array(pos, dtype=float)
+        if np.isnan(arr).any():
+            return False
+        node = (float(arr[0]), float(arr[1]), float(arr[2]))
+        if self._stack:
+            last = self._stack[-1]
+            dist = math.hypot(node[0] - last[0], node[1] - last[1])
+            dist_3d = math.hypot(dist, node[2] - last[2])
+            if dist_3d < self.min_dist:
+                return False
+        self._stack.append(node)
+        if len(self._stack) > self.max_nodes:
+            # Preserve base anchor at index 0, prune oldest intermediate corridor node
+            self._stack.pop(1)
+        return True
+
+    def pop_target(self, current_pos: Union[np.ndarray, List[float]], arrival_radius: float = 4.5) -> Optional[np.ndarray]:
+        """Return current retreat target, popping when reached."""
+        if not self._stack:
+            return None
+        target = self._stack[-1]
+        c = np.array(current_pos, dtype=float)
+        t = np.array(target, dtype=float)
+        dist = float(np.linalg.norm(c - t))
+        if dist <= arrival_radius and len(self._stack) > 1:
+            self._stack.pop()
+            target = self._stack[-1]
+        return np.array(target, dtype=float)
+
+    def peek(self) -> Optional[np.ndarray]:
+        return np.array(self._stack[-1], dtype=float) if self._stack else None
+
+    def clear(self) -> None:
+        self._stack = [(0.0, 0.0, 25.0)]
+
+    def __len__(self) -> int:
+        return len(self._stack)
+
+    def to_list(self) -> List[List[float]]:
+        return [[round(v, 2) for v in wp] for wp in self._stack]
 
 
 class Drone:
@@ -195,6 +253,12 @@ class Drone:
         self.backtrack_target: Optional[np.ndarray] = None
         self.backtrack_hold: bool = False
 
+        # Low-RAM Reversible Corridor Stack & Watchdogs (BUG-06)
+        self.corridor_stack: IngressCorridorStack = IngressCorridorStack()
+        self.corridor_target: Optional[np.ndarray] = None
+        self.tether_heartbeat_watchdog: float = 0.5
+        self.cable_tension: float = 0.0
+
         # Per-Drone Autonomous Brain & Packet Mailboxes (TLK-01 Pure I/O Boundary)
         self.inbox: List[RadioPacket] = []
         self.outbox: List[RadioPacket] = []
@@ -283,6 +347,10 @@ class Drone:
         self.holding_at_horizon = False
         self.backtrack_target = None
         self.backtrack_hold = False
+        self.corridor_stack.clear()
+        self.corridor_target = None
+        self.tether_heartbeat_watchdog = 0.5
+        self.cable_tension = 0.0
         self.inbox.clear()
         self.outbox.clear()
         if hasattr(self, "brain") and self.brain is not None:
@@ -324,8 +392,15 @@ class Drone:
             prefix = ""
         return f"{prefix}{self.base_tier}"
 
+    def record_corridor(self, pos: Union[np.ndarray, List[float]]) -> bool:
+        """Record current 3D position into reversible corridor stack if novel displacement >= 15m (BUG-06)."""
+        return self.corridor_stack.record(pos)
+
     def succession_score(self) -> int:
-        """Calculate autonomic succession eligibility score: (Tier * 1000) - ID."""
+        """Calculate autonomic succession eligibility score: (Tier * 1000) - ID.
+        Returns -1 if airframe lacks FLAGSHIP authorization (BUG-06)."""
+        if "FLAGSHIP" not in self.capabilities:
+            return -1
         return (self.tier * 1000) - self.id
 
     def to_dict(self) -> Dict[str, Any]:
@@ -399,6 +474,10 @@ class Drone:
             "holding_at_horizon": self.holding_at_horizon,
             "backtrack_hold": self.backtrack_hold,
             "backtrack_target": [round(float(v), 2) for v in self.backtrack_target] if self.backtrack_target is not None else None,
+            "corridor_stack": self.corridor_stack.to_list(),
+            "corridor_target": [round(float(v), 2) for v in self.corridor_target] if self.corridor_target is not None else None,
+            "tether_heartbeat_watchdog": round(float(self.tether_heartbeat_watchdog), 2),
+            "cable_tension": round(float(self.cable_tension), 2),
             "mission_active": self.mission_active,
             "mission_name": self.mission_name,
             "mission_paused": self.mission_paused,

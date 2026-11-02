@@ -122,7 +122,19 @@ class LeaderFollowerBrain(BaseBrain):
             self._emit_periodic_packets(telemetry, updates, outbox, dt)
             return intent, outbox
 
-        # 2. Universal Onboard Failsafe Hierarchy (Backtrack, Horizon Hold, Lost-Link)
+        # 2. Universal Onboard Failsafe Hierarchy (Corridor ERTB, Backtrack, Horizon Hold, Lost-Link)
+        if telemetry.flight_state == "CORRIDOR_ERTB":
+            ct = telemetry.corridor_target if telemetry.corridor_target is not None else np.array([0.0, 0.0, 25.0], dtype=float)
+            acc = self._steer_toward(telemetry.pos, telemetry.vel, ct, max_speed=8.0)
+            yaw = self._velocity_yaw(telemetry.vel)
+            self._emit_periodic_packets(telemetry, updates, outbox, dt)
+            return FlightIntent(
+                target_acc=acc,
+                target_yaw=yaw,
+                target_station=np.copy(ct),
+                state_updates=updates,
+            ), outbox
+
         if telemetry.flight_state == "BACKTRACK_HOLD":
             bt = telemetry.backtrack_target if telemetry.backtrack_target is not None else telemetry.lkp
             acc = self._steer_toward(telemetry.pos, telemetry.vel, bt, max_speed=8.0)
@@ -368,6 +380,8 @@ class LeaderFollowerBrain(BaseBrain):
                             flight_state=str(p.get("flight_state", "CRUISE")),
                             acknowledged_target=np.array(ack_raw, dtype=float),
                             last_heard_clock=float(telemetry.clock_s),
+                            gcs_contact=bool(p.get("gcs_contact", False)),
+                            gateway_id=p.get("gateway_id"),
                         )
 
             if pkt.msg_type == "LEADER_HEARTBEAT" and not telemetry.is_leader:
@@ -385,11 +399,11 @@ class LeaderFollowerBrain(BaseBrain):
                     l_pos = np.array(p["pos"], dtype=float)
                     if not np.isnan(l_pos).any():
                         if telemetry.enrolled:
-                            updates["lkp"] = np.copy(l_pos)
+                            updates["lkp"] = np.copy(telemetry.pos)
                             updates["lost_link"] = False
                             updates["last_heartbeat_time"] = float(telemetry.clock_s)
                         elif telemetry.rejoin_target is None:
-                            updates["lkp"] = np.copy(l_pos)
+                            updates["lkp"] = np.copy(telemetry.pos)
                             updates["lost_link"] = False
                             updates["last_heartbeat_time"] = float(telemetry.clock_s)
 
@@ -397,6 +411,22 @@ class LeaderFollowerBrain(BaseBrain):
                 if "target" in p:
                     updates["acknowledged_target"] = np.array(p["target"], dtype=float)
                 self.handle_command(dict(p))
+
+        # Flagship Gateway Relay Discovery: if leader lacks direct GCS contact, bind heard peer relay
+        if telemetry.is_leader:
+            if not telemetry.uplink_active:
+                active_relays = [
+                    peer for peer in self.heard_peers.values()
+                    if peer.drone_id != telemetry.drone_id and peer.gcs_contact and not peer.crashed
+                ]
+                if active_relays:
+                    active_relays.sort(key=lambda r: (r.tier * 1000) - r.drone_id, reverse=True)
+                    updates["gateway_id"] = active_relays[0].drone_id
+                    updates["uplink_active"] = True
+                else:
+                    updates["gateway_id"] = None
+            else:
+                updates["gateway_id"] = None
 
     def _emit_periodic_packets(
         self,
@@ -435,6 +465,8 @@ class LeaderFollowerBrain(BaseBrain):
                         "formation_heading": float(self.formation_heading),
                         "assigned_slots": dict(self.assigned_slots),
                         "is_10hz": is_10hz,
+                        "gcs_contact": bool(telemetry.uplink_active),
+                        "gateway_id": updates.get("gateway_id"),
                     },
                 )
             )
@@ -455,6 +487,8 @@ class LeaderFollowerBrain(BaseBrain):
                         "flight_state": str(telemetry.flight_state),
                         "acknowledged_target": [float(v) for v in ack_t],
                         "is_10hz": is_10hz,
+                        "gcs_contact": bool(telemetry.uplink_active),
+                        "gateway_id": updates.get("gateway_id"),
                     },
                 )
             )

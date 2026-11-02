@@ -46,6 +46,8 @@ class HeardPeer:
     echo_seq: int = 1
     echo_target: Optional[np.ndarray] = None
     gossip_status: str = "COORDINATED"
+    gcs_contact: bool = False
+    gateway_id: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -108,6 +110,8 @@ class LocalTelemetry:
     tether_anchor_pos: np.ndarray
     overhead_marshal_active: bool
     patrol_active: bool
+    tether_heartbeat_watchdog: float = 0.5
+    corridor_target: Optional[np.ndarray] = None
 
 
 @dataclass

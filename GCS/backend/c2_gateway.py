@@ -20,6 +20,7 @@ RANGE_BARK: float = 90.0
 RANGE_BORK: float = 70.0
 RANGE_YIP: float = 50.0
 RANGE_P2P: float = 60.0
+RF_MODE_BORK: str = "BORK"
 RADIO_RANGE: float = RANGE_HOWL
 TETHER_ANCHOR = np.array([0.0, 0.0, 1.5], dtype=float)
 
@@ -126,6 +127,9 @@ class C2Gateway:
                     d_gcs = float(np.linalg.norm(current_leader.pos - anchor))
                     if d_gcs <= RADIO_RANGE:
                         current_leader.acknowledged_target = np.copy(self._target_pos)
+            elif getattr(self.sim, "comms_mode", "") in ("GOSSIP_CONSENSUS", "P2P_MESH", "P2P_GOSSIP_MESH", "MESH"):
+                if hasattr(self.sim, "brain") and hasattr(self.sim.brain, "inject_target"):
+                    self.sim.brain.inject_target(self._target_pos)
 
     def attach_sim(self, sim: Any) -> None:
         """Attach underlying simulation or network bridge interface."""
@@ -243,24 +247,25 @@ class C2Gateway:
             if leader is None or leader.crashed or getattr(leader, "lost_link", False):
                 return False
             d_gcs = float(np.linalg.norm(leader.pos - anchor))
-            if d_gcs > RANGE_BARK:
+            r_down = RANGE_BORK if getattr(leader, "rf_power_mode", None) == RF_MODE_BORK or getattr(leader, "tier", None) == 1.5 else RANGE_BARK
+            if d_gcs > r_down:
                 return False
             if hasattr(leader, "downlink_active") and not leader.downlink_active:
                 return False
-            if hasattr(self.sim, "is_packet_dropped") and self.sim.is_packet_dropped(d_gcs, is_hardline=False, max_range=RANGE_BARK):
+            if hasattr(self.sim, "is_packet_dropped") and self.sim.is_packet_dropped(d_gcs, is_hardline=False, max_range=r_down):
                 return False
             return True
 
         # 3. P2P Gossip Mesh: Needs at least one non-crashed gateway drone with active downlink
-        elif active_brain == "GOSSIP_CONSENSUS" or comms_mode == "P2P_GOSSIP_MESH":
+        elif active_brain == "GOSSIP_CONSENSUS" or comms_mode in ("GOSSIP_CONSENSUS", "P2P_GOSSIP_MESH", "P2P_MESH", "MESH"):
             living = [d for d in drones if not d.crashed]
             if not living:
                 return False
-            if living and hasattr(living[0], "downlink_active"):
-                return any(d.downlink_active for d in living)
             min_dist = min(float(np.linalg.norm(d.pos - anchor)) for d in living)
             if min_dist > RANGE_HOWL:
                 return False
+            if living and hasattr(living[0], "downlink_active"):
+                return any(d.downlink_active for d in living)
             if hasattr(self.sim, "is_packet_dropped") and self.sim.is_packet_dropped(min_dist, is_hardline=False):
                 return False
             return True

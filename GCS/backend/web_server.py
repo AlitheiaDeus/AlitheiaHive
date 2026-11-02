@@ -452,6 +452,11 @@ class SwarmWebServer:
                 "overhead_marshal_active": self.sim.overhead_marshal_active,
             }
 
+        elif cmd in ("CORRIDOR_ERTB", "ERTB", "EMERGENCY_RTB"):
+            res = self.sim.command_corridor_ertb()
+            self.session_manager.add_event("RTB", "Initiating Corridor ERTB along ingress breadcrumbs back to Base", sim_time=self.sim.sim_time)
+            return {"status": "OK", "cmd": cmd, "result": res}
+
         elif cmd in ("CANCEL_RTB", "RESUME_MISSION"):
             self.sim.cancel_rtb()
             self.session_manager.add_event("STATUS", "Cancelling recovery: Resuming normal swarm cruise", sim_time=self.sim.sim_time)

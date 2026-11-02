@@ -322,6 +322,109 @@ class TestTetherFailsafes(unittest.TestCase):
         self.assertGreater(acc[0], 0.0)
         self.assertGreater(acc[0], 5.0, "Tether avoidance force must be strong enough to prevent collision")
 
+    # ==========================================================================
+    # BUG-06 Unit Tests: t-GCSH Split, Strain Trigger, Loiter Preemption & Relays
+    # ==========================================================================
+    def test_bug06_tether_heartbeat_watchdog_timeout_triggers_breakaway(self):
+        """Verify hardline t-GCSH watchdog expiration (0.5s) snaps cable and triggers breakaway."""
+        sim = SwarmSimulator(drone_count=4)
+        for _ in range(30):
+            sim.step()
+
+        d0 = sim.drones[0]
+        self.assertTrue(d0.is_leader)
+        self.assertFalse(sim.tether_severed)
+
+        # Force t-GCSH signal loss
+        sim.t_gcsh_active = False
+        d0.tether_heartbeat_watchdog = 0.0
+        sim._update_tether_dynamics(dt=0.016)
+
+        self.assertTrue(sim.tether_severed)
+        self.assertEqual(d0.status, "BREAKAWAY_JETTISON")
+        self.assertEqual(sim.lost_link_loiter_timer, 30.0)
+
+    def test_bug06_cable_strain_sensor_threshold_triggers_breakaway(self):
+        """Verify cable tension exceeding 35N strain threshold snaps cable immediately."""
+        sim = SwarmSimulator(drone_count=4)
+        for _ in range(30):
+            sim.step()
+
+        d0 = sim.drones[0]
+        self.assertTrue(d0.is_leader)
+        self.assertFalse(sim.tether_severed)
+
+        # Apply excessive cable strain (T = 42.5N > 35N)
+        d0.cable_tension = 42.5
+        sim._update_tether_dynamics(dt=0.016)
+
+        self.assertTrue(sim.tether_severed)
+        self.assertEqual(d0.status, "BREAKAWAY_JETTISON")
+        self.assertEqual(sim.lost_link_loiter_timer, 30.0)
+
+    def test_bug06_loiter_suppresses_heartbeat_watchdog_backtrack_race_condition(self):
+        """Verify 30s tether loiter timer suppresses premature 2.0s watchdog backtrack preemption."""
+        sim = SwarmSimulator(drone_count=4)
+        for _ in range(30):
+            sim.step()
+
+        sim.cut_tether()
+        self.assertTrue(sim.tether_severed)
+        self.assertEqual(sim.lost_link_loiter_timer, 30.0)
+
+        # Advance 3.0 seconds (180 ticks): gcs_heartbeat_watchdog (2.0s) has expired
+        for _ in range(180):
+            sim.step()
+
+        # Loiter timer should be ~27s; no drone should have entered BACKTRACK_HOLD
+        self.assertGreater(sim.lost_link_loiter_timer, 25.0)
+        for d in sim.drones:
+            if not d.crashed:
+                self.assertFalse(d.backtrack_hold, f"Drone #{d.id} must not enter BACKTRACK_HOLD during 30s tether loiter!")
+                self.assertNotEqual(d.flight_state, "BACKTRACK_HOLD")
+
+    def test_bug06_non_flagship_t2_pup_cannot_usurp_leadership_acts_as_gateway_relay(self):
+        """Verify non-flagship airframe (T2 Pup) cannot accept leadership and acts strictly as gateway relay."""
+        sim = SwarmSimulator(drone_count=3)
+        # Configure Drone 0: T1.5 Flagship (Leader)
+        # Configure Drone 1: T2 Pup (Non-flagship escort with higher ID than Drone 2)
+        # Configure Drone 2: T1.5 Flagship (2IC)
+        d0, d1, d2 = sim.drones[0], sim.drones[1], sim.drones[2]
+        d1.tier = 2
+        d1.capabilities = ["FORMATION_FLIGHT", "SCOUT_OPTICAL"]  # No FLAGSHIP!
+        d2.tier = 2
+        d2.capabilities = ["FLAGSHIP", "FORMATION_FLIGHT", "BORK_AMPLIFY"]
+
+        # Succession score for d1 must be -1
+        self.assertEqual(d1.succession_score(), -1)
+        self.assertGreater(d2.succession_score(), 0)
+
+        # 2IC must be Drone 2, skipping non-flagship Drone 1
+        two_ic = sim.get_2ic()
+        self.assertIsNotNone(two_ic)
+        self.assertEqual(two_ic.id, 2)
+
+        # Sever tether -> Drone 2 promoted to leader, Drone 1 remains escort
+        sim.cut_tether()
+        self.assertTrue(d2.is_leader)
+        self.assertFalse(d1.is_leader)
+
+        # Move new leader (Drone 2) out to 150m (beyond HOWL 140m range)
+        # Keep Drone 1 at 80m (inside HOWL range and inside BARK range to Drone 2: |150-80| = 70m <= 90m)
+        d2.pos = np.array([150.0, 0.0, 25.0], dtype=float)
+        d1.pos = np.array([80.0, 0.0, 25.0], dtype=float)
+
+        sim.set_comms_mode("LEADER_FOLLOWER")
+        sim._update_radio_comms()
+
+        # Drone 1 hears GCS directly
+        self.assertTrue(d1.uplink_active)
+        # Drone 2 cannot hear GCS directly, but receives link via Drone 1 gateway relay!
+        self.assertTrue(d2.uplink_active)
+        self.assertEqual(d2.gateway_id, 1)
+        # Drone 1 is still NOT leader
+        self.assertFalse(d1.is_leader)
+
 
 if __name__ == "__main__":
     unittest.main()

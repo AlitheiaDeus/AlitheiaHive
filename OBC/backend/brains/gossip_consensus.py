@@ -51,6 +51,8 @@ class DronePeerState:
         self.echo_ack_peers: Set[int] = {int(drone_id)}
         self.gossip_status: str = "COORDINATED"
         self.last_tx_time: float = 0.0
+        self.target_timestamp: float = 0.0
+        self.propagating_timer: float = 0.0
 
 
 class GossipConsensusBrain(BaseBrain):
@@ -88,6 +90,7 @@ class GossipConsensusBrain(BaseBrain):
         self.assigned_slots: Dict[int, int] = {}
         self.inversion_cooldown: float = 0.0
         self._last_clock_s: float = 0.0
+        self.gcs_lost_timer: float = 0.0
 
     def reset(self) -> None:
         super().reset()
@@ -108,6 +111,7 @@ class GossipConsensusBrain(BaseBrain):
         self.wp_total_loiter = 0.0
         self.wp_loitering = False
         self._last_clock_s = 0.0
+        self.gcs_lost_timer = 0.0
 
     def _get_peer_state(self, drone_id: Optional[int] = None) -> DronePeerState:
         did = self.drone_id if drone_id is None else int(drone_id)
@@ -130,6 +134,8 @@ class GossipConsensusBrain(BaseBrain):
                     "yaw": float(hp.yaw),
                     "enrolled": bool(hp.enrolled),
                     "flight_state": str(hp.flight_state),
+                    "last_heard": float(hp.last_heard_clock),
+                    "gcs_contact": bool(hp.gcs_contact),
                 }
         if pos_list is not None and telemetry.enrolled:
             mesh_summary[int(telemetry.drone_id)] = {
@@ -138,6 +144,8 @@ class GossipConsensusBrain(BaseBrain):
                 "yaw": float(telemetry.yaw),
                 "enrolled": bool(telemetry.enrolled),
                 "flight_state": str(telemetry.flight_state),
+                "last_heard": float(telemetry.clock_s),
+                "gcs_contact": bool(telemetry.uplink_active),
             }
 
         return RadioPacket(
@@ -156,6 +164,8 @@ class GossipConsensusBrain(BaseBrain):
                 "echo_seq": int(self.peer_state.pending_seq),
                 "echo_target": [float(v) for v in self.peer_state.pending_target],
                 "echo_ack_peers": list(self.peer_state.echo_ack_peers),
+                "target_timestamp": float(getattr(self.peer_state, "target_timestamp", telemetry.clock_s)),
+                "gcs_contact": bool(telemetry.uplink_active),
                 "mesh_summary": mesh_summary,
             },
         )
@@ -165,6 +175,7 @@ class GossipConsensusBrain(BaseBrain):
         telemetry: LocalTelemetry,
         inbox: List[RadioPacket],
         living_peer_ids: Optional[Set[int]] = None,
+        dt: float = 0.016,
     ) -> None:
         """Process incoming GOSSIP_ECHO and GCS_UPLINK packets and evaluate 75% quorum barrier."""
         self._last_clock_s = float(telemetry.clock_s)
@@ -187,6 +198,7 @@ class GossipConsensusBrain(BaseBrain):
                 echo_seq=self.peer_state.pending_seq,
                 echo_target=np.copy(self.peer_state.pending_target),
                 gossip_status=self.peer_state.gossip_status,
+                gcs_contact=bool(telemetry.uplink_active),
             )
 
         for pkt in inbox:
@@ -211,6 +223,7 @@ class GossipConsensusBrain(BaseBrain):
                             active_seq=int(p.get("active_seq", 1)),
                             echo_seq=int(p.get("echo_seq", 1)),
                             echo_target=np.array(p.get("echo_target", self.peer_state.pending_target), dtype=float),
+                            gcs_contact=bool(p.get("gcs_contact", False)),
                         )
                 mesh_sum = p.get("mesh_summary")
                 if isinstance(mesh_sum, dict):
@@ -220,6 +233,11 @@ class GossipConsensusBrain(BaseBrain):
                             continue
                         m_pos = m_info.get("pos")
                         if m_pos is not None:
+                            m_last_heard = float(m_info.get("last_heard", telemetry.clock_s))
+                            if mid in self.heard_peers:
+                                effective_clock = max(self.heard_peers[mid].last_heard_clock, m_last_heard)
+                            else:
+                                effective_clock = m_last_heard
                             self.heard_peers[mid] = HeardPeer(
                                 drone_id=mid,
                                 pos=np.array(m_pos, dtype=float),
@@ -227,21 +245,45 @@ class GossipConsensusBrain(BaseBrain):
                                 yaw=float(m_info.get("yaw", 0.0)),
                                 enrolled=bool(m_info.get("enrolled", True)),
                                 flight_state=str(m_info.get("flight_state", "CRUISE")),
-                                last_heard_clock=float(telemetry.clock_s),
+                                last_heard_clock=effective_clock,
+                                gcs_contact=bool(m_info.get("gcs_contact", False)),
                             )
 
             if pkt.msg_type == "GOSSIP_ECHO":
                 peer_echo_seq = int(p.get("echo_seq", 1))
                 peer_echo_target = np.array(p.get("echo_target", self.peer_state.pending_target), dtype=float)
                 peer_acks = {int(a) for a in p.get("echo_ack_peers", [])}
+                peer_target_ts = float(p.get("target_timestamp", telemetry.clock_s))
+
                 if peer_echo_seq > self.peer_state.pending_seq:
                     self.peer_state.pending_seq = peer_echo_seq
                     self.peer_state.pending_target = np.copy(peer_echo_target)
+                    self.peer_state.target_timestamp = peer_target_ts
+                    self.peer_state.propagating_timer = 0.0
                     self.peer_state.echo_ack_peers = {telemetry.drone_id, int(pkt.sender_id)} | peer_acks
                     self.peer_state.gossip_status = "PROPAGATING"
                 elif peer_echo_seq == self.peer_state.pending_seq:
-                    self.peer_state.echo_ack_peers.add(int(pkt.sender_id))
-                    self.peer_state.echo_ack_peers.update(peer_acks)
+                    target_diff = float(np.linalg.norm(peer_echo_target - self.peer_state.pending_target))
+                    if target_diff < 0.1:
+                        self.peer_state.echo_ack_peers.add(int(pkt.sender_id))
+                        self.peer_state.echo_ack_peers.update(peer_acks)
+                    else:
+                        # Tie-breaking for equal seq with divergent targets:
+                        # Newer target_timestamp wins. If tied within 1e-4, lower drone/sender ID wins.
+                        my_ts = float(getattr(self.peer_state, "target_timestamp", 0.0))
+                        peer_wins = False
+                        if peer_target_ts > my_ts + 1e-4:
+                            peer_wins = True
+                        elif abs(peer_target_ts - my_ts) <= 1e-4:
+                            if int(pkt.sender_id) < telemetry.drone_id:
+                                peer_wins = True
+
+                        if peer_wins:
+                            self.peer_state.pending_target = np.copy(peer_echo_target)
+                            self.peer_state.target_timestamp = peer_target_ts
+                            self.peer_state.propagating_timer = 0.0
+                            self.peer_state.echo_ack_peers = {telemetry.drone_id, int(pkt.sender_id)} | peer_acks
+                            self.peer_state.gossip_status = "PROPAGATING"
 
             elif pkt.msg_type in ("GCS_UPLINK", "C2_COMMAND"):
                 if "target" in p:
@@ -250,6 +292,8 @@ class GossipConsensusBrain(BaseBrain):
                     self.current_seq = max(self.current_seq, seq)
                     self.peer_state.pending_seq = seq
                     self.peer_state.pending_target = np.copy(t_arr)
+                    self.peer_state.target_timestamp = float(telemetry.clock_s)
+                    self.peer_state.propagating_timer = 0.0
                     self.peer_state.active_seq = seq
                     self.peer_state.active_target = np.copy(t_arr)
                     self.peer_state.echo_ack_peers = {telemetry.drone_id}
@@ -277,10 +321,15 @@ class GossipConsensusBrain(BaseBrain):
         ack_ratio = len(acks_in_range) / float(living_count)
 
         if self.peer_state.pending_seq > self.peer_state.active_seq:
-            if ack_ratio >= QUORUM_RATIO:
+            self.peer_state.propagating_timer += dt
+            can_commit = (ack_ratio >= QUORUM_RATIO) or (
+                self.peer_state.propagating_timer >= 2.0 and len(acks_in_range) >= living_count
+            )
+            if can_commit:
                 self.peer_state.active_seq = self.peer_state.pending_seq
                 self.peer_state.active_target = np.copy(self.peer_state.pending_target)
                 self.peer_state.gossip_status = "COORDINATED"
+                self.peer_state.propagating_timer = 0.0
                 self.current_seq = max(self.current_seq, self.peer_state.active_seq)
 
     # ==========================================================================
@@ -297,8 +346,7 @@ class GossipConsensusBrain(BaseBrain):
         outbox: List[RadioPacket] = []
         updates: Dict[str, Any] = {}
 
-        if inbox:
-            self.ingest_gossip_packets(telemetry, inbox)
+        self.ingest_gossip_packets(telemetry, inbox, dt=dt)
 
         if telemetry.flight_state in ("LANDED", "DESCENDING", "GROUND_IDLE", "CRASHED"):
             return FlightIntent(target_acc=np.zeros(3, dtype=float)), outbox
@@ -328,7 +376,32 @@ class GossipConsensusBrain(BaseBrain):
                 state_updates=updates,
             ), outbox
 
-        # 3. Backtrack, Horizon Hold, and Lost-Link Failsafes (TKT-54)
+        # 3. Quorum GCS Contact Bitmask & Corridor ERTB (BUG-06)
+        any_gcs = any(peer.gcs_contact for peer in self.heard_peers.values())
+        if any_gcs:
+            self.gcs_lost_timer = 0.0
+            if telemetry.flight_state == "CORRIDOR_ERTB":
+                updates["flight_state"] = "PERIMETER_HOLD"
+                updates["status"] = "PERIMETER_HOLD"
+        else:
+            self.gcs_lost_timer += dt
+            if self.gcs_lost_timer >= 2.0 and telemetry.flight_state not in ("CORRIDOR_ERTB", "BACKTRACK_HOLD", "PERIMETER_HOLD", "LANDED", "GROUND_IDLE", "CRASHED", "DESCENDING"):
+                updates["flight_state"] = "CORRIDOR_ERTB"
+                updates["status"] = "CORRIDOR_ERTB"
+
+        if telemetry.flight_state == "CORRIDOR_ERTB" or updates.get("flight_state") == "CORRIDOR_ERTB":
+            ct = telemetry.corridor_target if telemetry.corridor_target is not None else np.array([0.0, 0.0, 25.0], dtype=float)
+            acc = self._steer_toward(telemetry.pos, telemetry.vel, ct, max_speed=8.0)
+            speed_xy = math.hypot(telemetry.vel[0], telemetry.vel[1])
+            yaw = math.atan2(telemetry.vel[1], telemetry.vel[0]) if speed_xy > 0.5 else None
+            return FlightIntent(
+                target_acc=acc,
+                target_yaw=yaw,
+                target_station=np.copy(ct),
+                state_updates=updates,
+            ), outbox
+
+        # 4. Backtrack, Horizon Hold, and Lost-Link Failsafes (TKT-54)
         if telemetry.flight_state == "BACKTRACK_HOLD":
             bt = telemetry.backtrack_target if telemetry.backtrack_target is not None else telemetry.lkp
             acc = self._steer_toward(telemetry.pos, telemetry.vel, bt, max_speed=8.0)

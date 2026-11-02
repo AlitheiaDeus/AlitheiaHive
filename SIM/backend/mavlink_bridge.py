@@ -25,7 +25,7 @@ try:
 except ImportError:
     HAVE_PYMAVLINK = False
 
-from SIM.backend.sitl_engine import SwarmSimulator
+from SIM.backend.sitl_engine import SwarmSimulator, RADIO_RANGE, RANGE_HOWL
 from OBC.backend.drone_firmware import Drone
 
 
@@ -813,7 +813,7 @@ class MavlinkBridge:
             x = delta_lon * 111139.0 * math.cos(math.radians(self.home_lat))
 
             dist_horiz = math.hypot(x, y)
-            GEOFENCE_RADIUS = 120.0  # Max GCS RF range / arena boundary (m)
+            GEOFENCE_RADIUS = RANGE_HOWL  # Max GCS RF Howl uplink horizon / arena boundary (m)
 
             if dist_horiz > GEOFENCE_RADIUS:
                 # Reject click beyond tactical geofence
@@ -859,7 +859,7 @@ class MavlinkBridge:
             z_sim = -float(msg.z)
 
             dist_horiz = math.hypot(x_sim, y_sim)
-            GEOFENCE_RADIUS = 120.0
+            GEOFENCE_RADIUS = RANGE_HOWL  # Max GCS RF Howl uplink horizon / arena boundary (m)
 
             if dist_horiz > GEOFENCE_RADIUS:
                 self.send_mavlink_statustext(

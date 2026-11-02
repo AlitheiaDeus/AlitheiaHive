@@ -285,6 +285,52 @@ class TestWebServer(unittest.IsolatedAsyncioTestCase):
         # With 1ms WinMM timer, FPS must be >= 50 FPS.
         self.assertGreaterEqual(fps, 45.0, f"Expected >= 45 FPS, got {fps:.1f} FPS")
 
+    async def test_bug01_telemetry_schema_and_hud_contract(self):
+        """Verify BUG-01: Backend telemetry schema exports all required card primitives and hud.js binds cleanly."""
+        # 1. Verify SITL state snapshot schema for GCS telemetry cards
+        snapshot = self.sim.get_state_snapshot()
+        self.assertIn("drones", snapshot)
+        self.assertEqual(len(snapshot["drones"]), 5)
+
+        required_card_keys = [
+            "id", "sysid", "hardware_uid", "tail_number", "tier",
+            "full_tier_designation", "rf_power_mode", "pos", "vel",
+            "battery", "rssi", "flight_state"
+        ]
+
+        for d in snapshot["drones"]:
+            for key in required_card_keys:
+                self.assertIn(key, d, f"Missing telemetry card key '{key}' in drone #{d.get('id')}")
+            # Ensure primitive types suitable for JSON wire serialization
+            self.assertIsInstance(d["id"], int)
+            self.assertIsInstance(d["sysid"], int)
+            self.assertIsInstance(d["tail_number"], str)
+            self.assertIsInstance(d["tier"], int)
+            self.assertIsInstance(d["battery"], (int, float))
+            self.assertIsInstance(d["rssi"], (int, float))
+            self.assertIsInstance(d["pos"], list)
+            self.assertIsInstance(d["vel"], list)
+            self.assertEqual(len(d["pos"]), 3)
+            self.assertEqual(len(d["vel"]), 3)
+
+        # Ensure full JSON serialization succeeds without non-primitive types
+        serialized = json.dumps(snapshot)
+        self.assertIsInstance(serialized, str)
+
+        # 2. Verify hud.js contract: safe actionBtn binding and defensive try-catch card boundary
+        async with ClientSession() as session:
+            async with session.get(f"http://127.0.0.1:{self.port}/js/hud.js") as resp:
+                self.assertEqual(resp.status, 200)
+                hud_js = await resp.text()
+
+                # Verify actionBtn is properly declared in createCardElement scope
+                self.assertIn("const actionBtn = ", hud_js)
+                self.assertIn("elActionBtn: actionBtn", hud_js)
+
+                # Verify defensive error boundary in updateOrCreateDroneCard
+                self.assertIn("Failed to create telemetry card for Drone", hud_js)
+                self.assertIn("RENDER ERROR", hud_js)
+
 
 if __name__ == "__main__":
     unittest.main()

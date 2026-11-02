@@ -991,7 +991,8 @@
 
                 // Update target kinematics for interpolation
                 // When telemetry link is lost, freeze avatar at LKP (The Operator Airgap)
-                const renderPos = ((d.lost_link || !d.downlink_active) && Array.isArray(d.lkp)) ? d.lkp : d.pos;
+                // Grounded airframes on pads remain fixed to pad positions, never snapping to airborne LKP
+                const renderPos = ((d.lost_link || !d.downlink_active) && Array.isArray(d.lkp) && d.flight_state !== 'GROUND_IDLE' && d.flight_state !== 'LANDED') ? d.lkp : d.pos;
                 entry.targetPos.set(renderPos[0], renderPos[1], renderPos[2]);
                 entry.targetYaw = d.yaw || 0;
                 entry.targetPitch = d.pitch || 0;

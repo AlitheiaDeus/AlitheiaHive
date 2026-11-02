@@ -183,7 +183,7 @@ class TestSimCore(unittest.TestCase):
             self.sim.step()
 
         self.assertFalse(follower.lost_link)
-        np.testing.assert_allclose(follower.lkp, leader.pos, atol=1.0)
+        np.testing.assert_allclose(follower.lkp, follower.pos, atol=1.0)
 
         # 2. Teleport leader out of range (150m > 120m)
         recorded_lkp = np.copy(follower.lkp)

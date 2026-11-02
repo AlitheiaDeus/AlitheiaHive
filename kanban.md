@@ -48,11 +48,17 @@ kanban
     tkt39["Standalone OBC Socket Daemon"]@{ ticket: '[TKT-39]', priority: 'Medium' }
     tkt22["Manual RC Joystick & Gamepad"]@{ ticket: '[TKT-22]', priority: 'Medium' }
   todo["Todo (Active Pipeline)"]
-    pln02["PLN-02: Auxiliary Mission Engine Master"]@{ ticket: '[PLN-02]', priority: 'High' }
-  in_progress["In Progress (WIP = 1)"]
     tkt58["1-Click Aux Mission: Patrol to BINGO RTB"]@{ ticket: '[TKT-58]', priority: 'Medium' }
+    pln02["PLN-02: Auxiliary Mission Engine Master"]@{ ticket: '[PLN-02]', priority: 'High' }
+  in_progress["In Progress (WIP = 0)"]
 
   completed["Completed (Fresh / Review)"]
+    bug06["OBC Failsafe Consolidation: t-GCSH, Relays & Corridor ERTB"]@{ ticket: '[BUG-06]', priority: 'Very High' }
+    bug05["Downlink Telemetry Leak Beyond Bork Range"]@{ ticket: '[BUG-05]', priority: 'Medium' }
+    bug04["Wireless Star Coordinate Collapse at Range"]@{ ticket: '[BUG-04]', priority: 'High' }
+    bug03["P2P Mesh Split-Brain Target Oscillation"]@{ ticket: '[BUG-03]', priority: 'Very High' }
+    bug02["Async RF Range Calculation / C2 Uplink Disconnect"]@{ ticket: '[BUG-02]', priority: 'Very High' }
+    bug01["Fleet Telemetry Window Empty"]@{ ticket: '[BUG-01]', priority: 'High' }
     tlk01["Induced Coma OBC Airgap Resuscitation"]@{ ticket: '[TLK-01]', priority: 'Very High' }
     tkt57["Airframe Tier Registry & Authorization Gate"]@{ ticket: '[TKT-57]', priority: 'Medium' }
     tkt56["4D Waypoint Queue & Loiter Progress Engine"]@{ ticket: '[TKT-56]', priority: 'High' }
@@ -95,6 +101,12 @@ kanban
 | :--- | :--- | :--- | :--- | :--- |
 | **TLK-01** | 💬 Discussion | Codebase Sweep Findings, Test Fixes & Phase 3 | Remediate 3 test failures, unfreeze battery drain for TKT-58, promote S&R TKT-51 | [`tasks/TLK-01_codebase_sweep_remediation_and_phase3_alignment.md`](tasks/TLK-01_codebase_sweep_remediation_and_phase3_alignment.md) |
 | **TKT-58** | 🚀 Feature | 1-Click Aux Mission: Patrol to BINGO RTB | Autonomous patrol looping until BINGO battery triggers automated 2-stage RTB | [`tasks/TKT-58_aux_mission_patrol_bingo_rtb.md`](tasks/TKT-58_aux_mission_patrol_bingo_rtb.md) |
+| **BUG-01** | 🐞 Bug | Fleet Telemetry Window Empty | GCS telemetry container rendered but drone cards/rows missing | [`tasks/BUG-01_fleet_telemetry_window_empty.md`](tasks/BUG-01_fleet_telemetry_window_empty.md) |
+| **BUG-06** | 🐞 Bug | OBC Failsafe Consolidation & Corridor ERTB | t-GCSH/GCSH split, 2IC loiter hold, T2 gateway relay & corridor stack ERTB | [`tasks/BUG-06_obc_failsafe_consolidation_ertb.md`](tasks/BUG-06_obc_failsafe_consolidation_ertb.md) |
+| **BUG-02** | 🐞 Bug | Async RF Range Calculation / C2 Uplink Disconnect | Scaling/unit mismatch in RF range starving C2 uplink at range | [`tasks/BUG-02_async_rf_range_c2_uplink_disconnect.md`](tasks/BUG-02_async_rf_range_c2_uplink_disconnect.md) |
+| **BUG-03** | 🐞 Bug | P2P Mesh Split-Brain Target Oscillation | Gossip consensus thrashing; split-brain loop between clusters | [`tasks/BUG-03_p2p_mesh_split_brain_target_oscillation.md`](tasks/BUG-03_p2p_mesh_split_brain_target_oscillation.md) |
+| **BUG-04** | 🐞 Bug | Wireless Star Coordinate Collapse at Range | Formation offset collapses to singularity outside star link | [`tasks/BUG-04_wireless_star_coordinate_collapse.md`](tasks/BUG-04_wireless_star_coordinate_collapse.md) |
+| **BUG-05** | 🐞 Bug | Downlink Telemetry Leak Beyond Bork Range | C2 downlink fails to drop frames beyond 70m Bork horizon | [`tasks/BUG-05_downlink_telemetry_leak_beyond_bork.md`](tasks/BUG-05_downlink_telemetry_leak_beyond_bork.md) |
 | **TKT-57** | 🚀 Feature | Airframe Tier Registry & Authorization Gate | Tether prefix taxonomy (`T-`, `t-`), dynamic Bork/Yip RF, and C2 pre-flight capability gate | [`tasks/TKT-57_airframe_tier_registry_auth_gate.md`](tasks/TKT-57_airframe_tier_registry_auth_gate.md) |
 | **TKT-56** | 🚀 Feature | 4D Waypoint Queue & Loiter Progress Engine | Deterministic 4D waypoint execution [x, y, z, loiter] & live loiter stream | [`tasks/TKT-56_waypoint_queue_loiter_engine.md`](tasks/TKT-56_waypoint_queue_loiter_engine.md) |
 | **TKT-55** | 🚀 Feature | Tactical Formation Orientations & Perimeter In/Out Headings | Align airframe yaw with mission intent at target (sentry in/out) | [`tasks/TKT-55_tactical_formation_headings.md`](tasks/TKT-55_tactical_formation_headings.md) |

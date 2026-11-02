@@ -284,6 +284,8 @@ class SITLWorldEngine:
             tether_anchor_pos=np.copy(self.tether_anchor),
             overhead_marshal_active=bool(self.overhead_marshal_active),
             patrol_active=bool(self.patrol_active),
+            tether_heartbeat_watchdog=float(getattr(drone, "tether_heartbeat_watchdog", 0.5)),
+            corridor_target=np.copy(drone.corridor_target) if getattr(drone, "corridor_target", None) is not None else None,
         )
 
     def _build_transceiver_beacon(self, sender: Drone) -> RadioPacket:
@@ -308,6 +310,8 @@ class SITLWorldEngine:
                     "formation_mode": getattr(b, "formation_mode", self.formation_mode),
                     "formation_heading": float(getattr(b, "formation_heading", 0.0)),
                     "assigned_slots": dict(getattr(b, "assigned_slots", {})),
+                    "gcs_contact": bool(sender.uplink_active),
+                    "gateway_id": getattr(sender, "gateway_id", None),
                 },
             )
         return RadioPacket(
@@ -324,6 +328,8 @@ class SITLWorldEngine:
                 "enrolled": bool(getattr(sender, "enrolled", True)),
                 "flight_state": str(sender.flight_state),
                 "acknowledged_target": [float(v) for v in sender.acknowledged_target],
+                "gcs_contact": bool(sender.uplink_active),
+                "gateway_id": getattr(sender, "gateway_id", None),
             },
         )
 
@@ -374,6 +380,7 @@ class SITLWorldEngine:
                                     "active_seq": int(sender.brain.peer_state.active_seq),
                                     "echo_seq": int(sender.brain.peer_state.pending_seq),
                                     "echo_target": [float(v) for v in sender.brain.peer_state.pending_target],
+                                    "gcs_contact": bool(sender.uplink_active),
                                 },
                             )
                         )
@@ -393,16 +400,6 @@ class SITLWorldEngine:
                     r_limit = RANGE_P2P if pkt.msg_type in ("GOSSIP_ECHO", "PEER_BEACON") else max_tx
                     if dist <= r_limit and not self.is_packet_dropped(dist, is_hardline=False, max_range=r_limit):
                         receiver.inbox.append(pkt)
-
-        if self.active_brain_name == "GOSSIP_CONSENSUS":
-            for receiver in living:
-                if isinstance(receiver.brain, GossipConsensusBrain):
-                    in_pkts = list(receiver.inbox)
-                    receiver.inbox.clear()
-                    receiver.brain.ingest_gossip_packets(
-                        self._build_local_telemetry(receiver),
-                        in_pkts,
-                    )
 
     def _execute_obc_step(self, dt: float) -> Dict[int, np.ndarray]:
         """Execute per-drone autonomous OBC step_drone(telemetry, inbox, dt) across the fleet."""
@@ -426,6 +423,22 @@ class SITLWorldEngine:
             if intent.target_station is not None:
                 drone.target_station = np.copy(intent.target_station)
             accs[drone.id] = np.array(intent.target_acc, dtype=float)
+
+            # Advance reversible corridor ERTB stack (BUG-06)
+            if drone.flight_state == "CORRIDOR_ERTB" and hasattr(drone, "corridor_stack"):
+                next_t = drone.corridor_stack.pop_target(drone.pos, arrival_radius=4.5)
+                drone.corridor_target = next_t
+                if next_t is not None:
+                    drone.acknowledged_target = np.copy(next_t)
+                    drone.target_station = np.copy(next_t)
+                    if drone.is_leader:
+                        self.target_pos = np.copy(next_t)
+                dist_base = float(np.linalg.norm(drone.pos - np.array([0.0, 0.0, 25.0], dtype=float)))
+                if len(drone.corridor_stack) <= 1 and dist_base <= 4.5:
+                    drone.flight_state = "OVERHEAD_HOLD"
+                    drone.status = "OVERHEAD_HOLD"
+                    self.overhead_marshal_active = True
+                    self.recovery_stage = "OVERHEAD_MARSHAL"
 
             # If leader just stepped in LEADER_FOLLOWER mode, propagate its fresh heartbeat
             # across the physical RF medium to followers before followers execute their step.
@@ -461,11 +474,18 @@ class SITLWorldEngine:
                     old_slots[self.leader.id] = 0
 
             self._last_gossip_broadcast = -1.0
+
+            # BUG-03 Part 1: Unified Consensus Target on Hot-Swap
+            consensus_target = np.copy(self.target_pos)
+            if self.leader is not None and not self.leader.crashed:
+                consensus_target = np.copy(self.leader.acknowledged_target)
+
             for d in self.drones:
                 if key == "GOSSIP_CONSENSUS":
+                    d.acknowledged_target = np.copy(consensus_target)
                     d.brain = GossipConsensusBrain(
                         drone_id=d.id,
-                        initial_target=d.acknowledged_target,
+                        initial_target=consensus_target,
                         formation_mode=old_formation,
                     )
                 else:
@@ -521,12 +541,20 @@ class SITLWorldEngine:
         elif mode in ("LEADER_FOLLOWER", "WIRELESS_STAR", "STAR"):
             self.comms_mode = "LEADER_FOLLOWER"
             self.lost_link_loiter_timer = 0.0  # Clear tether severance timer in wireless mode
+            self.tether_severed = False
+            for d in self.drones:
+                d.tether_lost = False
+                d.tether_jettisoned = False
             if self.active_brain_name != "LEADER_FOLLOWER":
                 self.set_brain("LEADER_FOLLOWER")
             return True
         elif mode in ("GOSSIP_CONSENSUS", "P2P_MESH", "MESH", "GOSSIP"):
             self.comms_mode = "GOSSIP_CONSENSUS"
             self.lost_link_loiter_timer = 0.0  # Clear tether severance timer in mesh mode
+            self.tether_severed = False
+            for d in self.drones:
+                d.tether_lost = False
+                d.tether_jettisoned = False
             if self.active_brain_name != "GOSSIP_CONSENSUS":
                 self.set_brain("GOSSIP_CONSENSUS")
             return True
@@ -975,10 +1003,10 @@ class SITLWorldEngine:
         score = (Tier * 1000) - ID."""
         candidates = [
             d for d in self.drones
-            if not d.crashed and not d.is_leader and not d.tether_lost
+            if not d.crashed and not d.is_leader and not d.tether_lost and d.succession_score() >= 0
         ]
         if not candidates:
-            candidates = [d for d in self.drones if not d.crashed and not d.is_leader]
+            candidates = [d for d in self.drones if not d.crashed and not d.is_leader and d.succession_score() >= 0]
         if not candidates:
             return None
         candidates.sort(key=lambda d: d.succession_score(), reverse=True)
@@ -1110,7 +1138,7 @@ class SITLWorldEngine:
 
         # 2. Check Tether Dynamics & Severance (Tethered Relay Mode)
         if self.comms_mode == "TETHERED_RELAY":
-            self._update_tether_dynamics()
+            self._update_tether_dynamics(dt)
 
         # 3. Compute Guidance Targets from active Brain Plugin
         guidance_accs = self.brain.compute_guidance(dt)
@@ -1532,11 +1560,12 @@ class SITLWorldEngine:
                         d.lost_link = False
                         d.gcs_heartbeat_watchdog = 2.0
                         d.lkp = np.copy(d.pos)
-                        if d.status == "LOST_LINK":
+                        if d.status == "LOST_LINK" and d.flight_state not in ("LANDED", "GROUND_IDLE"):
                             d.status = "ACTIVE"
                 if self.sim_time - d.last_heartbeat_time > LINK_TIMEOUT:
                     d.lost_link = True
-                    d.status = "LOST_LINK"
+                    if d.flight_state not in ("LANDED", "GROUND_IDLE"):
+                        d.status = "LOST_LINK"
 
         elif self.comms_mode == "TETHERED_RELAY":
             # Primary leader on hardline umbilical
@@ -1573,11 +1602,12 @@ class SITLWorldEngine:
                             drone.lost_link = False
                             drone.gcs_heartbeat_watchdog = 2.0
                             drone.lkp = np.copy(drone.pos)
-                            if drone.status == "LOST_LINK":
+                            if drone.status == "LOST_LINK" and drone.flight_state not in ("LANDED", "GROUND_IDLE"):
                                 drone.status = "FLEET_LEADER"
                         if self.sim_time - drone.last_heartbeat_time > LINK_TIMEOUT:
                             drone.lost_link = True
-                            drone.status = "LOST_LINK"
+                            if drone.flight_state not in ("LANDED", "GROUND_IDLE"):
+                                drone.status = "LOST_LINK"
                 else:
                     # Escort in Tethered Relay
                     d_gcs = float(np.linalg.norm(drone.pos - self.tether_anchor))
@@ -1608,45 +1638,32 @@ class SITLWorldEngine:
                     if broadcast_tick:
                         in_range_lead = (dist_to_leader <= RANGE_BARK and not self.is_packet_dropped(dist_to_leader, is_hardline=False, max_range=RANGE_BARK))
                         if current_leader and not current_leader.lost_link and in_range_lead:
-                            drone.lkp = np.copy(current_leader.pos)
+                            drone.lkp = np.copy(drone.pos)
                             drone.last_heartbeat_time = self.sim_time
                             drone.lost_link = False
                             drone.gcs_heartbeat_watchdog = 2.0
-                            if drone.status == "LOST_LINK":
+                            if drone.status == "LOST_LINK" and drone.flight_state not in ("LANDED", "GROUND_IDLE"):
                                 drone.status = "ACTIVE"
                     if self.sim_time - drone.last_heartbeat_time > LINK_TIMEOUT:
                         drone.lost_link = True
-                        drone.status = "LOST_LINK"
+                        if drone.flight_state not in ("LANDED", "GROUND_IDLE"):
+                            drone.status = "LOST_LINK"
 
         elif self.comms_mode == "LEADER_FOLLOWER":
             # Wireless Star
+            # Pass 1: Direct link assessment for all living airframes
             for drone in living:
+                d_gcs = float(np.linalg.norm(drone.pos - self.tether_anchor))
+                dropped_up = self.is_packet_dropped(d_gcs, is_hardline=False, max_range=RANGE_HOWL)
+                drone.uplink_active = (d_gcs <= RANGE_HOWL and not dropped_up)
+
                 if drone.is_leader:
-                    d_gcs = float(np.linalg.norm(drone.pos - self.tether_anchor))
                     drone.rssi, drone.link_quality = self.calculate_rssi(d_gcs, is_hardline=False)
-                    dropped_up = self.is_packet_dropped(d_gcs, is_hardline=False, max_range=RANGE_HOWL)
                     r_down = RANGE_BORK if getattr(drone, "rf_power_mode", None) == RF_MODE_BORK else RANGE_BARK
                     dropped_down = self.is_packet_dropped(d_gcs, is_hardline=False, max_range=r_down)
-                    drone.uplink_active = (d_gcs <= RANGE_HOWL and not dropped_up)
                     drone.downlink_active = (d_gcs <= r_down and not dropped_down)
-                    drone.yip_lost = bool(drone.uplink_active and not drone.downlink_active)
                     drone.gateway_id = None
-
-                    if broadcast_tick and drone.uplink_active:
-                        drone.last_heartbeat_time = self.sim_time
-                        drone.lost_link = False
-                        drone.gcs_heartbeat_watchdog = 2.0
-                        drone.lkp = np.copy(drone.pos)
-                        if drone.status == "LOST_LINK":
-                            drone.status = "FLEET_LEADER"
-                    if self.sim_time - drone.last_heartbeat_time > LINK_TIMEOUT:
-                        drone.lost_link = True
-                        drone.status = "LOST_LINK"
                 else:
-                    d_gcs = float(np.linalg.norm(drone.pos - self.tether_anchor))
-                    dropped_up = self.is_packet_dropped(d_gcs, is_hardline=False, max_range=RANGE_HOWL)
-                    drone.uplink_active = (d_gcs <= RANGE_HOWL and not dropped_up)
-
                     dist_to_leader = float(np.linalg.norm(drone.pos - current_leader.pos)) if current_leader else 999.0
                     drone.rssi, drone.link_quality = self.calculate_rssi(min(d_gcs, dist_to_leader), is_hardline=False)
 
@@ -1661,20 +1678,50 @@ class SITLWorldEngine:
                         drone.downlink_active = False
                         drone.gateway_id = None
 
-                    drone.yip_lost = bool(drone.uplink_active and not drone.downlink_active)
+                drone.yip_lost = bool(drone.uplink_active and not drone.downlink_active)
 
+            # Pass 2: In-Range Flagship Gateway Relay: if leader has no direct GCS link, check living escorts (BUG-06)
+            if current_leader and not current_leader.uplink_active:
+                for peer in living:
+                    if peer.id != current_leader.id and peer.uplink_active:
+                        dist_to_peer = float(np.linalg.norm(current_leader.pos - peer.pos))
+                        peer_r = RANGE_BORK if getattr(peer, "rf_power_mode", None) == RF_MODE_BORK else RANGE_BARK
+                        if dist_to_peer <= peer_r and not self.is_packet_dropped(dist_to_peer, is_hardline=False, max_range=peer_r):
+                            current_leader.uplink_active = True
+                            current_leader.gateway_id = peer.id
+                            current_leader.downlink_active = True
+                            current_leader.yip_lost = False
+                            break
+
+            # Pass 3: Heartbeat updates & lost link flags
+            for drone in living:
+                if drone.is_leader:
+                    if broadcast_tick and drone.uplink_active:
+                        drone.last_heartbeat_time = self.sim_time
+                        drone.lost_link = False
+                        drone.gcs_heartbeat_watchdog = 2.0
+                        drone.lkp = np.copy(drone.pos)
+                        if drone.status == "LOST_LINK" and drone.flight_state not in ("LANDED", "GROUND_IDLE"):
+                            drone.status = "FLEET_LEADER"
+                    if self.sim_time - drone.last_heartbeat_time > LINK_TIMEOUT:
+                        drone.lost_link = True
+                        if drone.flight_state not in ("LANDED", "GROUND_IDLE"):
+                            drone.status = "LOST_LINK"
+                else:
                     if broadcast_tick:
+                        dist_to_leader = float(np.linalg.norm(drone.pos - current_leader.pos)) if current_leader else 999.0
                         in_range_lead = (dist_to_leader <= RANGE_BARK and not self.is_packet_dropped(dist_to_leader, is_hardline=False, max_range=RANGE_BARK))
                         if current_leader and not current_leader.lost_link and in_range_lead:
-                            drone.lkp = np.copy(current_leader.pos)
+                            drone.lkp = np.copy(drone.pos)
                             drone.last_heartbeat_time = self.sim_time
                             drone.lost_link = False
                             drone.gcs_heartbeat_watchdog = 2.0
-                            if drone.status == "LOST_LINK":
+                            if drone.status == "LOST_LINK" and drone.flight_state not in ("LANDED", "GROUND_IDLE"):
                                 drone.status = "ACTIVE"
                     if self.sim_time - drone.last_heartbeat_time > LINK_TIMEOUT:
                         drone.lost_link = True
-                        drone.status = "LOST_LINK"
+                        if drone.flight_state not in ("LANDED", "GROUND_IDLE"):
+                            drone.status = "LOST_LINK"
 
         # Update Howl RF Beacon tracking for GNSS-denied airframes across all modes (TKT-52)
         for d in living:
@@ -1702,15 +1749,22 @@ class SITLWorldEngine:
                     d.breadcrumb_record_timer = 0.0
                     d.record_breadcrumb(self.sim_time)
 
+            # Record sparse corridor waypoints (BUG-06)
+            if hasattr(d, "record_corridor") and d.flight_state in ("CRUISE", "EN_ROUTE", "TAKEOFF", "OVERHEAD_HOLD", "PERIMETER_HOLD") and not d.crashed:
+                d.record_corridor(d.pos)
+
             # 2. Watchdog countdown
             d.gcs_heartbeat_watchdog = max(0.0, d.gcs_heartbeat_watchdog - dt)
+
+            # Check if tether severance loiter is active (Fleet Doctrine A: 30s)
+            is_tether_loitering = (self.lost_link_loiter_timer > 0.0)
 
             # 3. Watchdog tripped -> Backtrack state machine
             if d.gcs_heartbeat_watchdog <= 0.0:
                 d.lost_link = True
                 if not getattr(d, "radio_silence_permitted", False):
-                    # Autonomous backtrack toward radio horizon
-                    if d.flight_state not in ("TAKEOFF", "DESCENDING", "BACKTRACK_HOLD", "PERIMETER_HOLD", "LANDED", "GROUND_IDLE", "CRASHED", "BREAKAWAY_JETTISON"):
+                    # Autonomous backtrack toward radio horizon (suppressed during tether loiter)
+                    if not is_tether_loitering and d.flight_state not in ("TAKEOFF", "DESCENDING", "BACKTRACK_HOLD", "PERIMETER_HOLD", "LANDED", "GROUND_IDLE", "CRASHED", "BREAKAWAY_JETTISON", "CORRIDOR_ERTB"):
                         d.flight_state = "BACKTRACK_HOLD"
                         d.status = "BACKTRACK_HOLD"
                         d.backtrack_hold = True
@@ -1725,8 +1779,8 @@ class SITLWorldEngine:
                     if d.status != "LOST_LINK" and d.flight_state not in ("LANDED", "GROUND_IDLE", "CRASHED"):
                         d.status = "LOST_LINK"
 
-            # 4. Link restoration during backtrack
-            if d.flight_state == "BACKTRACK_HOLD" and d.gcs_heartbeat_watchdog > 0.0 and d.uplink_active:
+            # 4. Link restoration during backtrack or corridor ERTB
+            if d.flight_state in ("BACKTRACK_HOLD", "CORRIDOR_ERTB") and d.gcs_heartbeat_watchdog > 0.0 and d.uplink_active:
                 d.flight_state = "PERIMETER_HOLD"
                 d.status = "PERIMETER_HOLD"
                 d.backtrack_hold = False
@@ -1811,9 +1865,9 @@ class SITLWorldEngine:
     # ==========================================================================
     # 2. Tether Avoidance & Severance Dynamics
     # ==========================================================================
-    def _update_tether_dynamics(self) -> None:
-        """Check cable length limits and physical collisions by follower airframes.
-        Physical contact <= 1.0m snaps cable and triggers autonomic succession."""
+    def _update_tether_dynamics(self, dt: float = 0.016) -> None:
+        """Check cable length limits, strain tension, t-GCSH watchdog, and physical collisions.
+        Physical contact <= 1.0m, tension > 35N, or t-GCSH timeout snaps cable and triggers autonomic succession."""
         if self.comms_mode != "TETHERED_RELAY":
             return
         current_leader = self.leader
@@ -1825,6 +1879,19 @@ class SITLWorldEngine:
         cable_len = float(np.linalg.norm(cable_vec))
         if cable_len > TETHER_MAX_LEN:
             self._snap_tether(current_leader, reason="TENSILE_SNAP_MAX_LENGTH")
+            return
+
+        # Check tether heartbeat watchdog (t-GCSH 100Hz hardline carrier, 0.5s timeout) (BUG-06)
+        if not getattr(self, "t_gcsh_active", True):
+            current_leader.tether_heartbeat_watchdog = max(0.0, current_leader.tether_heartbeat_watchdog - dt)
+        if getattr(current_leader, "tether_heartbeat_watchdog", 0.5) <= 0.0:
+            self._snap_tether(current_leader, reason="TETHER_HEARTBEAT_TIMEOUT")
+            return
+
+        # Check cable strain sensor threshold (T > 35N) (BUG-06)
+        cable_tension = getattr(current_leader, "cable_tension", 0.0)
+        if cable_tension > 35.0:
+            self._snap_tether(current_leader, reason="CABLE_STRAIN_EXCEEDED")
             return
 
         # Check collision with cable by any follower
@@ -2217,9 +2284,12 @@ class SITLWorldEngine:
         if not candidates:
             return None
 
-        # Sort by succession score descending
-        candidates.sort(key=lambda d: d.succession_score(), reverse=True)
-        new_leader = candidates[0]
+        # Sort by succession score descending, enforcing Flagship authorization (BUG-06)
+        eligible = [c for c in candidates if c.succession_score() >= 0]
+        if not eligible:
+            return None
+        eligible.sort(key=lambda d: d.succession_score(), reverse=True)
+        new_leader = eligible[0]
         old_leader: Optional[Drone] = retired_leader
 
         # Demote previous leader
@@ -2334,6 +2404,28 @@ class SITLWorldEngine:
                     drone.brain.peer_state.pending_target = np.array([0.0, 0.0, 25.0], dtype=float)
                     drone.brain.peer_state.gossip_status = "COORDINATED"
         return {"status": "OK", "recovery_stage": self.recovery_stage}
+
+    def command_corridor_ertb(self) -> Dict[str, Any]:
+        """Execute autonomous corridor emergency return-to-base (ERTB) (BUG-06).
+        Airframes traverse popped IngressCorridorStack waypoints in reverse order back to Base [0, 0, 25m],
+        ensuring safe egress through known obstacle corridors rather than straight-line beelines."""
+        self.swarm_rtb_active = True
+        self.patrol_active = False
+        for drone in self.drones:
+            if not drone.crashed and drone.flight_state not in ("LANDED", "DESCENDING", "GROUND_IDLE"):
+                drone.flight_state = "CORRIDOR_ERTB"
+                drone.status = "CORRIDOR_ERTB"
+                if hasattr(drone, "corridor_stack"):
+                    target = drone.corridor_stack.peek()
+                    if target is not None:
+                        drone.corridor_target = target
+                        drone.acknowledged_target = np.copy(target)
+                        drone.target_station = np.copy(target)
+                        if drone.is_leader:
+                            self.target_pos = np.copy(target)
+        if hasattr(self, "c2") and hasattr(self.c2, "log_event"):
+            self.c2.log_event("WARN", "[EMERGENCY RTB: Swarm executing Corridor ERTB along ingress breadcrumbs back to Base.]")
+        return {"status": "OK", "flight_state": "CORRIDOR_ERTB"}
 
     def cancel_rtb(self) -> None:
         """Cancel RTB / overhead marshaling and return living airborne drones to mission cruise."""
@@ -2917,6 +3009,8 @@ class SITLWorldEngine:
         If the physical channel is broken (severed tether or out of 120m RF range),
         the uplink packet is dropped and drone onboard buffers remain untouched."""
         target_arr = np.array(target_pos, dtype=float)
+        if hasattr(self, "c2") and self.c2 is not None:
+            self.c2._target_pos = np.copy(target_arr)
 
         # 1. TETHERED_RELAY: Hardline umbilical to Drone 0
         if self.comms_mode == "TETHERED_RELAY":
@@ -3081,10 +3175,19 @@ class SITLWorldEngine:
             d_dict["is_2ic"] = (d.id == two_ic_id and not d.is_leader and not d.crashed)
             sim_drones_list.append(dict(d_dict))
 
-            # Operator Airgap: If drone crashed while communication was down (beyond radio horizon / lost link),
-            # GCS only knows it is [LOST_LINK] at its Last Known Position (LKP).
+            # Operator Airgap:
+            # 1. If drone crashed while communication was down (beyond radio horizon / lost link),
+            #    GCS only knows it is [LOST_LINK] at its Last Known Position (LKP).
             if d.crashed and not getattr(d, "crashed_while_linked", False) and not d.downlink_active:
                 d_dict["crashed"] = False
+                d_dict["flight_state"] = "LOST_LINK"
+                d_dict["status"] = "LOST_LINK"
+                d_dict["pos"] = [round(float(v), 2) for v in d.lkp]
+                d_dict["vel"] = [0.0, 0.0, 0.0]
+                d_dict["lost_link"] = True
+            elif not d.crashed and not d.downlink_active and d.flight_state not in ("LANDED", "GROUND_IDLE"):
+                # 2. Living airborne drone has lost downlink contact (beyond Bork/Yip horizon or lost link).
+                #    GCS receives NO live telemetry updates; coordinates freeze at Last Known Position (LKP).
                 d_dict["flight_state"] = "LOST_LINK"
                 d_dict["status"] = "LOST_LINK"
                 d_dict["pos"] = [round(float(v), 2) for v in d.lkp]
@@ -3806,6 +3909,13 @@ class _GossipSimProxy(GossipConsensusBrain):
             pstate.pending_target = np.copy(target_arr)
             pstate.echo_ack_peers = {seed_drone.id}
             pstate.gossip_status = "PROPAGATING"
+            pstate.target_timestamp = float(eng.sim_time)
+            pstate.propagating_timer = 0.0
+            if len(active_drones) == 1:
+                pstate.active_seq = seq
+                pstate.active_target = np.copy(target_arr)
+                pstate.gossip_status = "COORDINATED"
+            seed_drone.acknowledged_target = np.copy(target_arr)
 
         return {
             "status": "OK",

@@ -478,6 +478,232 @@ class TestBrains(unittest.TestCase):
         self.assertEqual(sim_d3["status"], "CRASHED")
         self.assertEqual(sim_d3["pos"], [250.0, 0.0, 20.0])
 
+    def test_bug03_hot_swap_unifies_consensus_target_and_prevents_oscillation(self):
+        """[BUG-03] Hot-swapping from Wireless Star (LEADER_FOLLOWER) to P2P Mesh (GOSSIP_CONSENSUS)
+        must unify initial active/pending target across all drones to prevent split-brain oscillation."""
+        sim = SwarmSimulator(drone_count=6, enable_packet_loss=False, seed=42)
+        sim.set_comms_mode("LEADER_FOLLOWER")
+
+        target_bravo = np.array([120.0, 80.0, 30.0], dtype=float)
+        sim.leader.acknowledged_target = np.copy(target_bravo)
+        sim.target_pos = np.copy(target_bravo)
+
+        # Follower currently holds default Alpha
+        sim.drones[1].acknowledged_target = np.array([60.0, 40.0, 30.0], dtype=float)
+
+        # Hot-swap to GOSSIP_CONSENSUS
+        ok = sim.set_brain("GOSSIP_CONSENSUS")
+        self.assertTrue(ok)
+
+        # All brains should have been initialized with Target Bravo
+        for d in sim.drones:
+            self.assertIsInstance(d.brain, GossipConsensusBrain)
+            pstate = d.brain.peer_state
+            np.testing.assert_allclose(pstate.active_target, target_bravo)
+            np.testing.assert_allclose(pstate.pending_target, target_bravo)
+            self.assertEqual(pstate.active_seq, 1)
+            self.assertEqual(pstate.pending_seq, 1)
+            self.assertEqual(pstate.gossip_status, "COORDINATED")
+
+        # Step 30 frames: verify all drones steer consistently toward Bravo with zero split-brain oscillation
+        for _ in range(30):
+            sim.step()
+            for d in sim.drones:
+                self.assertFalse(np.isnan(d.pos).any())
+                np.testing.assert_allclose(d.acknowledged_target, target_bravo)
+                pstate = d.brain.peer_state
+                np.testing.assert_allclose(pstate.active_target, target_bravo)
+
+    def test_bug03_equal_seq_divergent_target_tie_breaking(self):
+        """[BUG-03] When two mesh partitions with equal sequence numbers meet with diverging targets,
+        they must tie-break deterministically (newer timestamp wins; lower drone ID breaks timestamp ties)
+        without deadlocking or oscillating."""
+        from OBC.backend.brains.base import RadioPacket
+
+        sim = SwarmSimulator(drone_count=4, enable_packet_loss=False, seed=42)
+        b0 = GossipConsensusBrain(drone_id=0, initial_target=np.array([100.0, 100.0, 30.0]))
+        b1 = GossipConsensusBrain(drone_id=1, initial_target=np.array([20.0, 20.0, 30.0]))
+
+        b0.peer_state.pending_seq = 1
+        b0.peer_state.pending_target = np.array([100.0, 100.0, 30.0])
+        b0.peer_state.target_timestamp = 10.0
+
+        b1.peer_state.pending_seq = 1
+        b1.peer_state.pending_target = np.array([20.0, 20.0, 30.0])
+        b1.peer_state.target_timestamp = 5.0
+
+        sim.sim_time = 10.0
+        tel1 = sim._build_local_telemetry(sim.drones[1])
+
+        pkt0 = RadioPacket(
+            sender_id=0,
+            msg_type="GOSSIP_ECHO",
+            timestamp=10.0,
+            payload={
+                "echo_seq": 1,
+                "echo_target": [100.0, 100.0, 30.0],
+                "echo_ack_peers": [0],
+                "target_timestamp": 10.0,
+            },
+        )
+
+        # Ingest pkt0 on Drone 1: newer timestamp (10.0 > 5.0) must win!
+        b1.ingest_gossip_packets(tel1, [pkt0])
+        np.testing.assert_allclose(b1.peer_state.pending_target, [100.0, 100.0, 30.0])
+        self.assertEqual(b1.peer_state.gossip_status, "PROPAGATING")
+
+        # Now test equal timestamp tie-break: lower sender ID (0 < 1) wins
+        b1.peer_state.target_timestamp = 10.0
+        b1.peer_state.pending_target = np.array([20.0, 20.0, 30.0])
+
+        tel0 = sim._build_local_telemetry(sim.drones[0])
+
+        pkt1 = RadioPacket(
+            sender_id=1,
+            msg_type="GOSSIP_ECHO",
+            timestamp=10.0,
+            payload={
+                "echo_seq": 1,
+                "echo_target": [20.0, 20.0, 30.0],
+                "echo_ack_peers": [1],
+                "target_timestamp": 10.0,
+            },
+        )
+
+        # Drone 0 receives Drone 1's packet: 0 is lower ID, so Drone 0 keeps its target
+        b0.ingest_gossip_packets(tel0, [pkt1])
+        np.testing.assert_allclose(b0.peer_state.pending_target, [100.0, 100.0, 30.0])
+
+        # Drone 1 receives Drone 0's packet: 0 is lower ID, so Drone 1 adopts Drone 0's target
+        b1.ingest_gossip_packets(tel1, [pkt0])
+        np.testing.assert_allclose(b1.peer_state.pending_target, [100.0, 100.0, 30.0])
+
+    def test_bug03_mesh_summary_does_not_ghost_loop(self):
+        """[BUG-03] Multi-hop mesh_summary relays must preserve original last_heard timestamp,
+        ensuring disconnected peers expire after LINK_TIMEOUT (1.0s) rather than persisting infinitely."""
+        from OBC.backend.brains.base import HeardPeer
+
+        sim = SwarmSimulator(drone_count=4, enable_packet_loss=False, seed=42)
+        b0 = GossipConsensusBrain(drone_id=0)
+        b1 = GossipConsensusBrain(drone_id=1)
+
+        # Both initially know Drone 2 at t=5.0
+        b0.heard_peers[2] = HeardPeer(
+            drone_id=2, pos=np.array([30.0, 30.0, 30.0]), vel=np.zeros(3),
+            yaw=0.0, enrolled=True, flight_state="CRUISE", last_heard_clock=5.0
+        )
+        b1.heard_peers[2] = HeardPeer(
+            drone_id=2, pos=np.array([30.0, 30.0, 30.0]), vel=np.zeros(3),
+            yaw=0.0, enrolled=True, flight_state="CRUISE", last_heard_clock=5.0
+        )
+
+        # At t=5.5s, b0 emits packet to b1 with mesh_summary
+        sim.sim_time = 5.5
+        tel0_55 = sim._build_local_telemetry(sim.drones[0])
+        pkt_b0 = b0.emit_gossip_packet(tel0_55)
+
+        # b1 receives pkt_b0 at t=5.5s
+        tel1_55 = sim._build_local_telemetry(sim.drones[1])
+        b1.ingest_gossip_packets(tel1_55, [pkt_b0])
+
+        # Drone 2's last_heard_clock on b1 must STILL be 5.0s, not 5.5s!
+        self.assertIn(2, b1.heard_peers)
+        self.assertEqual(b1.heard_peers[2].last_heard_clock, 5.0)
+
+        # Advance to t=6.2s (> 5.0 + LINK_TIMEOUT (1.0s)): b1 steps with empty inbox
+        sim.sim_time = 6.2
+        tel1_62 = sim._build_local_telemetry(sim.drones[1])
+        b1.ingest_gossip_packets(tel1_62, [])
+
+        # Drone 2 must now be PRUNED from b1's heard_peers
+        self.assertNotIn(2, b1.heard_peers)
+
+    def test_bug04_follower_and_pad_lkp_isolation_in_wireless_star(self):
+        """[BUG-04] Followers and pad drones in Wireless Star must maintain their own LKP coordinates.
+        Receiving leader heartbeats or losing link must NEVER corrupt follower/pad LKP to the leader's coordinates,
+        and pad drones must NEVER have their status flipped to LOST_LINK."""
+        sim = SwarmSimulator(drone_count=6, enable_packet_loss=False, seed=42)
+        sim.set_comms_mode("LEADER_FOLLOWER")
+
+        d0 = sim.drones[0]
+        d1 = sim.drones[1]
+        d5 = sim.drones[5]
+
+        # Leader at [30, 30, 20], Follower 1 airborne at [20, 25, 20]
+        d0.pos = np.array([30.0, 30.0, 20.0], dtype=float)
+        d1.pos = np.array([20.0, 25.0, 20.0], dtype=float)
+
+        # Drone 5 grounded cold on pad
+        pad_pos = np.array([-15.0, -15.0, 0.0], dtype=float)
+        d5.pos = np.copy(pad_pos)
+        d5.flight_state = "GROUND_IDLE"
+        d5.status = "GROUND_IDLE"
+        d5.lkp = np.copy(pad_pos)
+
+        # Step 15 frames (~0.25s): leader heartbeats received
+        for _ in range(15):
+            sim.step()
+
+        # Follower 1 LKP must record its OWN position, not leader's pos
+        self.assertFalse(d1.lost_link)
+        self.assertGreater(float(np.linalg.norm(d1.lkp - d0.pos)), 2.0)
+        np.testing.assert_allclose(d1.lkp, d1.pos, atol=2.0)
+
+        # Pad Drone 5 LKP must remain strictly on pad
+        np.testing.assert_allclose(d5.lkp, pad_pos, atol=1e-3)
+        self.assertEqual(d5.flight_state, "GROUND_IDLE")
+        self.assertEqual(d5.status, "GROUND_IDLE")
+
+        # Teleport leader far out of comms range (> 120m)
+        d0.pos = np.array([250.0, 250.0, 20.0], dtype=float)
+
+        # Step 75 frames (> 1.0s timeout)
+        for _ in range(75):
+            sim.step()
+
+        # Follower 1 enters LOST_LINK but loiters at its own LKP (near [20, 25, 20])
+        self.assertTrue(d1.lost_link)
+        self.assertEqual(d1.status, "LOST_LINK")
+        self.assertLess(float(np.linalg.norm(d1.lkp - np.array([20.0, 25.0, 20.0]))), 5.0)
+        self.assertGreater(float(np.linalg.norm(d1.lkp - d0.pos)), 100.0)
+
+        # Pad Drone 5 must remain GROUND_IDLE on pad, not corrupted to LOST_LINK or airborne coords
+        np.testing.assert_allclose(d5.lkp, pad_pos, atol=1e-3)
+        np.testing.assert_allclose(d5.pos, pad_pos, atol=1e-3)
+        self.assertEqual(d5.flight_state, "GROUND_IDLE")
+        self.assertEqual(d5.status, "GROUND_IDLE")
+
+    def test_bug04_airborne_followers_preserve_slot_separation_on_lost_link(self):
+        """[BUG-04] When multiple airborne followers in Wireless Star lose link with the leader,
+        each follower must hold station at its own LKP rather than collapsing to a single central singularity."""
+        sim = SwarmSimulator(drone_count=4, enable_packet_loss=False, seed=42)
+        sim.set_comms_mode("LEADER_FOLLOWER")
+
+        # Step 30 frames to settle followers in formation slots around leader
+        for _ in range(30):
+            sim.step()
+
+        # Teleport leader far away
+        sim.leader.pos = np.array([300.0, 300.0, 20.0], dtype=float)
+
+        # Step 75 frames to trigger LOST_LINK
+        for _ in range(75):
+            sim.step()
+
+        followers = [sim.drones[1], sim.drones[2], sim.drones[3]]
+        for f in followers:
+            self.assertTrue(f.lost_link)
+            self.assertEqual(f.status, "LOST_LINK")
+            self.assertFalse(f.crashed)
+
+        # Verify pairwise separation: no two followers collapsed to the same coordinate
+        for i in range(len(followers)):
+            for j in range(i + 1, len(followers)):
+                dist = float(np.linalg.norm(followers[i].pos - followers[j].pos))
+                self.assertGreater(dist, 1.5, f"Drones {followers[i].id} and {followers[j].id} collapsed to distance {dist:.2f}m")
+                dist_lkp = float(np.linalg.norm(followers[i].lkp - followers[j].lkp))
+                self.assertGreater(dist_lkp, 1.5, f"LKP of drones {followers[i].id} and {followers[j].id} collapsed to distance {dist_lkp:.2f}m")
+
 
 if __name__ == "__main__":
     unittest.main()
