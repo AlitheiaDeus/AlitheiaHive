@@ -15,7 +15,11 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/tactical_gcs_hero.png" alt="AlitheiaHive Tactical Ground Control Station (GCS) Viewport" width="100%">
+  <img src="docs/images/alitheia_hive_operator_gcs.jpg" alt="AlitheiaHive Tactical Ground Control Station (GCS) Viewport" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/images/alitheia_sitl_lab.jpg" alt="Alitheia SITL Simulation Lab & Fault Injection Deck" width="100%">
 </p>
 
 > [!TIP]
