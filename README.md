@@ -253,7 +253,6 @@ v3-Uprising/
 │   ├── test_waypoint_engine.py
 │   └── test_web_server.py
 ├── .gitignore
-├── AGENT_SESSION_HANDOFF.md
 ├── LICENSE
 ├── README.md
 ├── run.py
