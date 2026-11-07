@@ -1,7 +1,7 @@
 # [TLK-01] Codebase Sweep Findings, Test Remediation & Phase 3 Alignment
 
 * **Grade**: 💬 Discussion / Strategic Reform | **Type**: Architectural Alignment & Remediation (`Todo / Active Pipeline`) | **Priority**: Very High
-* **Source Landmark Reports**: [`docs/internal/sweep_report.md`](docs/internal/sweep_report.md), [`docs/internal/walkthrough.md`](docs/internal/walkthrough.md)
+* **Source Landmark Reports**: [`../../docs/internal/sweep_report.md`](../../docs/internal/sweep_report.md), [`../../docs/internal/walkthrough.md`](../../docs/internal/walkthrough.md)
 * **Target Files**: `tests/test_tri_mode_rf.py`, `tests/test_rtb_landing.py`, `tests/test_in_flight_enrollment.py`, `SIM/backend/sitl_engine.py`, `OBC/backend/brains/`, `tasks/TKT-58_aux_mission_patrol_bingo_rtb.md`, `tasks/PLN-02_auxiliary_mission_engine.md`
 * **Operational Context**:
   - A full read-only project sweep executed on 2026-11-01 surfaced 10 findings across SIM, OBC, and GCS bubbles.
