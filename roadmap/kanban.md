@@ -41,12 +41,12 @@ kanban
     pln05["PLN-05: Off-Nominal Landing Zones & E-Land"]@{ ticket: '[PLN-05]', priority: 'Low' }
     pln04["PLN-04: Payload Deposit & Solar Repeaters"]@{ ticket: '[PLN-04]', priority: 'Low' }
     pln06["PLN-06: Drone Show Pathing & Splines"]@{ ticket: '[PLN-06]', priority: 'Low' }
-    pln03["PLN-03: Gamified Tactical Mission Generator"]@{ ticket: '[PLN-03]', priority: 'Low' }
-    pln08["PLN-08: Urban Canyon Geometry & Black Zones"]@{ ticket: '[PLN-08]', priority: 'Medium' }
+    pln03["PLN-03: Gamified Tactical Operations & Studio"]@{ ticket: '[PLN-03]', priority: 'Low' }
+    pln08["PLN-08: Urban 3D Obstacles & Corridors"]@{ ticket: '[PLN-08]', priority: 'Medium' }
     pln09["PLN-09: T3 Kodiak Simulated LiDAR Stream"]@{ ticket: '[PLN-09]', priority: 'Medium' }
     pln10["PLN-10: Adversarial Targets & Emitter Triangulation"]@{ ticket: '[PLN-10]', priority: 'Medium' }
     tkt22["Manual RC Joystick & Gamepad"]@{ ticket: '[TKT-22]', priority: 'Medium' }
-    tkt36["Interactive 3D Route Planner & Geofence"]@{ ticket: '[TKT-36]', priority: 'Low' }
+    tkt36["TKT-36: 3D Corridor Canvas & Studio"]@{ ticket: '[TKT-36]', priority: 'Low' }
     tkt37["SITL Target Provider (ArduPilot/PX4)"]@{ ticket: '[TKT-37]', priority: 'Medium' }
     tkt38["Hardware Target Provider (Radio Modem Bridge)"]@{ ticket: '[TKT-38]', priority: 'Medium' }
     tkt39["Standalone OBC Socket Daemon"]@{ ticket: '[TKT-39]', priority: 'Medium' }
@@ -98,7 +98,7 @@ kanban
 | Ticket ID | Grade | Title | Operational Inspiration | Spec Document |
 | :--- | :--- | :--- | :--- | :--- |
 | **`TKT-58`** | `🚀 Feature` | 1-Click Aux Mission: Patrol to BINGO RTB | Autonomous patrol looping until BINGO battery triggers automated 2-stage RTB | [TKT-58.md](tasks/TKT-58.md) |
-| **`PLN-02`** | `🏗️ Epic` | Auxiliary Mission Concepts & Waypoint Engine (Waypoints First) | Phased mission workflows: Waypoint queues & discrete missions | [PLN-02.md](tasks/PLN-02.md) |
+| **`PLN-02`** | `🏗️ Epic` | Auxiliary Mission Concepts & Waypoint Engine (Tactical Sub-Routines) | Phased mission workflows: Waypoint queues & discrete sub-routines | [PLN-02.md](tasks/PLN-02.md) |
 | **`BUG-06`** | `🐞 Bug` | OBC Failsafe Consolidation & Corridor ERTB | t-GCSH/GCSH split, 2IC loiter hold, T2 gateway relay & corridor stack ERTB | [BUG-06.md](tasks/BUG-06.md) |
 | **`BUG-05`** | `🐞 Bug` | Downlink Telemetry Leak Beyond Bork Range | C2 downlink fails to drop frames beyond 70m Bork horizon | [BUG-05.md](tasks/BUG-05.md) |
 | **`BUG-04`** | `🐞 Bug` | Wireless Star Coordinate Collapse at Range | Formation offset collapses to singularity outside star link | [BUG-04.md](tasks/BUG-04.md) |
@@ -130,12 +130,12 @@ kanban
 | **`PLN-05`** | `🏗️ Epic` | Off-Nominal Landing Zones & Field E-Land | Dynamic field landing zones and emergency touches | [PLN-05.md](tasks/backlog/PLN-05.md) |
 | **`PLN-04`** | `🏗️ Epic` | Payload Deposit & Solar Repeaters | Precision drop zones, Cairn G1 solar repeaters | [PLN-04.md](tasks/backlog/PLN-04.md) |
 | **`PLN-06`** | `🏗️ Epic` | Choreographic Formations & Individual Pathing | Drone show spline curves, 3D waypoint spline grids | [PLN-06.md](tasks/backlog/PLN-06.md) |
-| **`PLN-03`** | `🏗️ Epic` | Gamified Tactical Mission Generator | Procedural tactical mission generator (interceptions, corridor scan) | [PLN-03.md](tasks/backlog/PLN-03.md) |
-| **`PLN-08`** | `🏗️ Epic` | Urban Canyon Geometry & Black Zones | 3D colliders and line-of-sight RF shadowing | [PLN-08.md](tasks/backlog/PLN-08.md) |
+| **`PLN-03`** | `🏗️ Epic` | Gamified Tactical Operations & Scenario Studio | Declarative scenarios, procedural generator, RTS squads, and objective debrief | [PLN-03.md](tasks/backlog/PLN-03.md) |
+| **`PLN-08`** | `🏗️ Epic` | Urban 3D Obstacles & Safe Flight Corridors | 3D AABB altitude shelves, safe corridor tubes, and LOS RF shadows | [PLN-08.md](tasks/backlog/PLN-08.md) |
 | **`PLN-09`** | `🏗️ Epic` | T3 Kodiak Simulated LiDAR Stream | 16-32 ray range returns and pointcloud HUD | [PLN-09.md](tasks/backlog/PLN-09.md) |
 | **`PLN-10`** | `🏗️ Epic` | Adversarial Targets & Emitter Triangulation | Mobile RF jammers, AoA triangulation, maze exploration | [PLN-10.md](tasks/backlog/PLN-10.md) |
 | **`TKT-22`** | `🚀 Feature` | Manual RC Joystick & Gamepad Override | Operators lacking pilot stick controls | [TKT-22.md](tasks/backlog/TKT-22.md) |
-| **`TKT-36`** | `🚀 Feature` | Interactive 3D Route Planner & Geofence | Lacking custom in-viewport route drawing tools | [TKT-36.md](tasks/backlog/TKT-36.md) |
+| **`TKT-36`** | `🚀 Feature` | Interactive 3D Corridor Canvas & Scenario Studio | Plan mode designer canvas, 3D corridor drawing, and scenario export | [TKT-36.md](tasks/backlog/TKT-36.md) |
 | **`TKT-37`** | `🛠️ Improvement` | SITL Target Provider (ArduPilot / PX4) | Need external autopilot verification without changing GCS | [TKT-37.md](tasks/backlog/TKT-37.md) |
 | **`TKT-38`** | `🛠️ Improvement` | Hardware Target Provider (Radio Modem Bridge) | Preparing core for field testing with real airframes | [TKT-38.md](tasks/backlog/TKT-38.md) |
 | **`TKT-39`** | `🛠️ Improvement` | Standalone Drone OBC Network Daemon | OBC firmware tied to top-layer process | [TKT-39.md](tasks/backlog/TKT-39.md) |
@@ -156,13 +156,13 @@ kanban
 | Epic ID | Title | Scope & Operational Vision | Grouped Tickets / Prereqs |
 | :--- | :--- | :--- | :--- |
 | **PLN-01** | **Airframe Class Registry & Hardware Plugins** | Register formal classes (`Den`, `Totem`, `Cairn`, `Mastiff`, `Threadfin`, `Alpha`, `Beta`, `Pup`, `Kodiak`, `Kourier`, `Bloodhound`) with hardware plugins and capabilities. | `[TKT-48]`, `[TKT-49]` |
-| **PLN-02** | **Auxiliary Mission Engine (Waypoints First)** | Discrete waypoint queues first, then composable auxiliary missions at the click of a button (`S&R`, `DEPOSIT`, `RECON`, `GO_AND_LAND`, `PATROL_TO_BINGO`). Registered airframes only. | `[PLN-02]`, `[TKT-56]`, `[TKT-57]`, `[TKT-58]` |
-| **PLN-03** | **Gamified Tactical Mission Generator** | Procedural tactical mission generator: Intercept hostile drone, corridor scanning, search & rescue, EW contested zones. | Post-PLN-02 |
+| **PLN-02** | **Auxiliary Mission Engine (Tactical Sub-Routines)** | Discrete waypoint queues first, then composable tactical sub-routines at the click of a button (`SEARCH_AND_RECALL`, `TOUCH_AND_GO_PROBE`, `PATROL_TO_BINGO`, `PAYLOAD_DEPOSIT`). | `[PLN-02]`, `[TKT-56]`, `[TKT-57]`, `[TKT-58]` |
+| **PLN-03** | **Gamified Tactical Operations & Scenario Studio** | Declarative scenarios (`scenarios/*.json`), procedural generator, RTS squads, and GCS objective tracker. | Post-PLN-02 |
 | **PLN-04** | **Payload Deposit & Solar Repeaters** | Precision payload drop zones, Cairn G1 solar repeater release, magnetic release hook mechanics. | `[PLN-04]` |
 | **PLN-05** | **Off-Nominal Landing Zones & Field E-Land** | Dynamic field landing zones, free-landing clearance, emergency touchdowns anywhere safe besides Base pads. | `[TKT-47]` |
 | **PLN-06** | **Choreographic Formations & Individual Pathing** | Drone show / custom formation curves, 3D waypoint spline grids, individual vehicle trajectory scripting. | `[TKT-36]` |
 | **PLN-07** | **Full MissionPlanner & QGC Compatibility** | Bidirectional MAVLink mission item upload/download, parameter sync, standard GCS parity. | `[TKT-46]`, `[TKT-45]`, `[TKT-37]` |
-| **PLN-08** | **Urban Canyon Geometry, Static Obstacles & Black Zones** | 3D AABB/prism colliders, Zone 4 structural clash, and LOS RF shadowing creating absolute RF black zones in urban channels. | `[PLN-08]`, `[TKT-54]` |
+| **PLN-08** | **Urban 3D Obstacles, Altitude Shelves & Safe Corridors** | 3D AABB altitude shelves ($Z_{\min}, Z_{\max}$), pre-cleared corridor pipes, and LOS RF shadows in urban channels. | `[PLN-08]`, `[TKT-54]` |
 | **PLN-09** | **T3 Kodiak Simulated LiDAR Stream & Point-Cloud HUD** | 16–32 ray synthetic range returns on T3 Kodiak, Polar range-bearing UDP downlink, Three.js neon point-cloud HUD overlay. | `[PLN-09]`, `[PLN-01]` |
 | **PLN-10** | **Adversarial Targets, Emitter Triangulation & Maze Exploration** | Mobile adversarial RF jammer targets, K1-EW 3-antenna AoA triangulation, autonomous maze corridor frontier exploration. | `[PLN-10]`, `[PLN-08]` |
 

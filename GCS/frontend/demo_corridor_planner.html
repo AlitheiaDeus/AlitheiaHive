@@ -1,0 +1,795 @@
+<!-- AlitheiaHive - 2D Corridor & Spline Planner Demo -->
+<!-- Standalone prototype with Centripetal Catmull-Rom & Waypoint Loiter State Machine -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AlitheiaHive - 2D Corridor & Spline Planner</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap');
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'JetBrains Mono', monospace;
+      user-select: none;
+      -webkit-user-select: none;
+      margin: 0;
+      background: #061019;
+      color: #d4f4ff;
+    }
+    #canvas-container {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      min-height: 520px;
+    }
+    #planner-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+  </style>
+</head>
+<body class="p-3 min-h-screen flex flex-col gap-3">
+
+  <header class="bg-[#0a1926] border border-[#134e6f] rounded-lg p-3 flex items-center justify-between shadow-md">
+    <div class="flex items-center gap-3">
+      <div id="status-dot" class="w-3 h-3 rounded-full bg-[#00ffaa] animate-pulse"></div>
+      <div>
+        <h1 class="text-sm font-bold text-white tracking-wider flex items-center gap-2">
+          <span>CATMULL-ROM CORRIDOR PLANNER</span>
+          <span class="text-xs px-2 py-0.5 rounded bg-[#134e6f] text-[#00f0ff]">CENTRIPETAL α=0.5 (FIXED)</span>
+        </h1>
+        <p class="text-[12px] text-[#5a7e96]">Left-click: add/drag • Right-click: delete • Smooth organic curves • True loiter hover</p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-4 text-xs">
+      <div>
+        <span class="text-[#5a7e96]">STATE:</span>
+        <span id="flight-state" class="font-bold text-[#00ffaa] font-mono">TRANSIT</span>
+      </div>
+      <div>
+        <span class="text-[#5a7e96]">WAYPOINTS:</span>
+        <span id="stat-count" class="font-bold text-[#00f0ff] font-mono">0</span>
+      </div>
+      <div>
+        <span class="text-[#5a7e96]">LENGTH:</span>
+        <span id="stat-length" class="font-bold text-[#00ffaa] font-mono">0.0m</span>
+      </div>
+      <div>
+        <span class="text-[#5a7e96]">CORRIDOR:</span>
+        <span id="stat-radius" class="font-bold text-[#ffb800] font-mono">±4.0m</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="flex-1 grid grid-cols-12 gap-3 min-h-[560px]">
+    <main id="canvas-container" class="col-span-9 bg-[#081420] border border-[#134e6f] rounded-lg relative overflow-hidden flex flex-col shadow-inner">
+      <canvas id="planner-canvas" class="cursor-crosshair"></canvas>
+      <div class="absolute bottom-3 left-3 bg-[#061019]/90 border border-[#134e6f] px-3 py-1.5 rounded text-[12px] text-[#5a7e96] flex items-center gap-4 pointer-events-none">
+        <span>🖱️ <b>Left Click</b>: Place WP</span>
+        <span>✋ <b>Drag WP</b>: Reshape</span>
+        <span>❌ <b>Right Click</b>: Delete</span>
+        <span>⏱️ <b>Ring</b>: Live Loiter Countdown</span>
+      </div>
+    </main>
+
+    <aside class="col-span-3 bg-[#0a1926] border border-[#134e6f] rounded-lg p-3.5 flex flex-col gap-3 text-xs">
+      <div>
+        <h3 class="text-xs font-bold uppercase tracking-wider text-[#00f0ff] mb-2 flex items-center justify-between">
+          <span>Flight & Loiter Engine</span>
+          <span id="sim-status" class="text-[12px] px-1.5 py-0.5 rounded bg-[#00ffaa]/20 text-[#00ffaa]">RUNNING</span>
+        </h3>
+
+        <div class="flex flex-col gap-2">
+          <div class="flex items-center justify-between text-[#5a7e96]">
+            <span>Cruise Speed:</span>
+            <span id="speed-val" class="text-white font-mono">12 m/s</span>
+          </div>
+          <input id="slider-speed" type="range" min="4" max="24" value="12" class="accent-[#00f0ff] cursor-pointer w-full">
+
+          <div class="flex items-center justify-between text-[#5a7e96] mt-1">
+            <span>WP Loiter Dwell Time:</span>
+            <span id="loiter-val" class="text-[#00ffaa] font-mono font-bold">3.0 s</span>
+          </div>
+          <input id="slider-loiter" type="range" min="0" max="8" step="0.5" value="3" class="accent-[#00ffaa] cursor-pointer w-full">
+
+          <div class="flex items-center justify-between text-[#5a7e96] mt-1">
+            <span>Corridor Radius:</span>
+            <span id="radius-val" class="text-white font-mono">4.0 m</span>
+          </div>
+          <input id="slider-radius" type="range" min="1.5" max="10" step="0.5" value="4" class="accent-[#ffb800] cursor-pointer w-full">
+
+          <div class="grid grid-cols-2 gap-2 mt-2">
+            <button id="btn-toggle-fly" class="py-1.5 bg-[#0d2235] border border-[#00f0ff] hover:bg-[#00f0ff] hover:text-[#061019] rounded font-bold transition-all">
+              PAUSE SIM
+            </button>
+            <button id="btn-loop-fly" class="py-1.5 bg-[#0d2235] border border-[#134e6f] hover:border-white rounded font-bold transition-all">
+              LOOP: ON
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <hr class="border-[#134e6f]">
+
+      <div>
+        <h3 class="text-xs font-bold uppercase tracking-wider text-[#00ffaa] mb-1.5">Preset Patterns</h3>
+        <div class="flex flex-col gap-1.5">
+          <button onclick="loadPreset('sharp_kink')" class="p-2 rounded bg-[#081420] border border-[#00f0ff]/50 hover:border-[#00f0ff] text-left text-[#00f0ff] flex items-center justify-between">
+            <span>⚡ Tight Turn (Loop-Free!)</span>
+            <span class="text-[12px] text-[#5a7e96]">Test Case</span>
+          </button>
+          <button onclick="loadPreset('canyon')" class="p-2 rounded bg-[#081420] border border-[#134e6f] hover:border-[#00ffaa] text-left text-white flex items-center justify-between">
+            <span>🌆 Urban S-Canyon</span>
+            <span class="text-[12px] text-[#5a7e96]">5 WPs</span>
+          </button>
+          <button onclick="loadPreset('rooftop')" class="p-2 rounded bg-[#081420] border border-[#134e6f] hover:border-[#00ffaa] text-left text-white flex items-center justify-between">
+            <span>🏢 Rooftop Perimeter</span>
+            <span class="text-[12px] text-[#5a7e96]">4 WPs</span>
+          </button>
+          <button onclick="loadPreset('clear')" class="p-2 rounded bg-[#081420] border border-[#ff4466]/40 hover:border-[#ff4466] text-left text-[#ff4466] flex items-center justify-between">
+            <span>🗑️ Clear Grid</span>
+            <span class="text-[12px] text-[#5a7e96]">0 WPs</span>
+          </button>
+        </div>
+      </div>
+
+      <hr class="border-[#134e6f]">
+
+      <div class="flex-1 flex flex-col min-h-[140px]">
+        <h3 class="text-xs font-bold uppercase tracking-wider text-[#ffb800] mb-1">Queue Export</h3>
+        <textarea id="json-export" readonly class="w-full flex-1 bg-[#061019] border border-[#134e6f] rounded p-2 text-[12px] text-[#5a7e96] font-mono resize-none focus:outline-none"></textarea>
+      </div>
+
+      <button onclick="copyQueue()" class="w-full py-2 bg-[#00f0ff] hover:bg-[#00c8d6] text-[#061019] font-bold rounded shadow transition-all flex items-center justify-center gap-2">
+        <span>📋 COPY MISSION QUEUE</span>
+      </button>
+    </aside>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('planner-canvas');
+    const container = document.getElementById('canvas-container');
+    const ctx = canvas.getContext('2d');
+
+    const SCALE = 10;
+    let originX = 300;
+    let originY = 300;
+
+    let waypoints = [];
+    let draggedIndex = -1;
+    let hoverIndex = -1;
+    let activePointerId = null;
+
+    let corridorRadiusM = 4.0;
+    let cruiseSpeed = 12.0;
+    let defaultLoiterSec = 3.0;
+    let simActive = true;
+    let simLoop = true;
+
+    let flightState = 'TRANSIT';
+    let currentSegmentIndex = 0;
+    let currentSegmentT = 0;
+    let loiterTimer = 0;
+    let activeLoiterWPIndex = -1;
+
+    let totalPathLengthM = 0;
+    let segmentsData = [];
+
+    function resizeCanvas() {
+      const rect = container.getBoundingClientRect();
+      const w = Math.max(rect.width, 400);
+      const h = Math.max(rect.height, 400);
+      const dpr = window.devicePixelRatio || 1;
+
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      originX = w / 2;
+      originY = h / 2;
+
+      computeSpline();
+      draw();
+    }
+
+    window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('load', resizeCanvas);
+
+    function screenToWorld(sx, sy) {
+      return {
+        x: (sx - originX) / SCALE,
+        y: (originY - sy) / SCALE
+      };
+    }
+    function worldToScreen(wx, wy) {
+      return {
+        x: originX + wx * SCALE,
+        y: originY - wy * SCALE
+      };
+    }
+
+    // Centripetal Catmull-Rom (Barry & Goldman)
+    function getCentripetalPoint(p0, p1, p2, p3, t, alpha = 0.5) {
+      function dist(a, b) {
+        return Math.hypot(b.x - a.x, b.y - a.y) || 0.0001;
+      }
+      const dt0 = Math.pow(dist(p0, p1), alpha);
+      const dt1 = Math.pow(dist(p1, p2), alpha);
+      const dt2 = Math.pow(dist(p2, p3), alpha);
+
+      const t0 = 0;
+      const t1 = t0 + dt0;
+      const t2 = t1 + dt1;
+      const t3 = t2 + dt2;
+
+      const u = t1 + t * (t2 - t1);
+
+      const a1_x = ((t1 - u) * p0.x + (u - t0) * p1.x) / (t1 - t0);
+      const a1_y = ((t1 - u) * p0.y + (u - t0) * p1.y) / (t1 - t0);
+
+      const a2_x = ((t2 - u) * p1.x + (u - t1) * p2.x) / (t2 - t1);
+      const a2_y = ((t2 - u) * p1.y + (u - t1) * p2.y) / (t2 - t1);
+
+      const a3_x = ((t3 - u) * p2.x + (u - t2) * p3.x) / (t3 - t2);
+      const a3_y = ((t3 - u) * p2.y + (u - t2) * p3.y) / (t3 - t2);
+
+      const b1_x = ((t2 - u) * a1_x + (u - t0) * a2_x) / (t2 - t0);
+      const b1_y = ((t2 - u) * a1_y + (u - t0) * a2_y) / (t2 - t0);
+
+      const b2_x = ((t3 - u) * a2_x + (u - t1) * a3_x) / (t3 - t1);
+      const b2_y = ((t3 - u) * a2_y + (u - t1) * a3_y) / (t3 - t1);
+
+      const c_x = ((t2 - u) * b1_x + (u - t1) * b2_x) / (t2 - t1);
+      const c_y = ((t2 - u) * b1_y + (u - t1) * b2_y) / (t2 - t1);
+
+      return { x: c_x, y: c_y };
+    }
+
+    function computeSpline() {
+      segmentsData = [];
+      totalPathLengthM = 0;
+
+      if (waypoints.length >= 2) {
+        const pts = [];
+        const first = waypoints[0];
+        const second = waypoints[1];
+        pts.push({ x: 2 * first.x - second.x, y: 2 * first.y - second.y });
+
+        for (const wp of waypoints) pts.push(wp);
+
+        const last = waypoints[waypoints.length - 1];
+        const prev = waypoints[waypoints.length - 2];
+        pts.push({ x: 2 * last.x - prev.x, y: 2 * last.y - prev.y });
+
+        const numSegments = waypoints.length - 1;
+        const SAMPLES = 30;
+
+        for (let i = 0; i < numSegments; i++) {
+          const p0 = pts[i];
+          const p1 = pts[i + 1];
+          const p2 = pts[i + 2];
+          const p3 = pts[i + 3];
+
+          const samples = [];
+          let segLen = 0;
+          let prevP = null;
+
+          for (let s = 0; s <= SAMPLES; s++) {
+            const t = s / SAMPLES;
+            const pt = getCentripetalPoint(p0, p1, p2, p3, t, 0.5);
+            samples.push(pt);
+
+            if (prevP) {
+              segLen += Math.hypot(pt.x - prevP.x, pt.y - prevP.y);
+            }
+            prevP = pt;
+          }
+
+          segmentsData.push({
+            fromWP: i,
+            toWP: i + 1,
+            lengthM: segLen,
+            samples: samples
+          });
+          totalPathLengthM += segLen;
+        }
+      }
+
+      document.getElementById('stat-count').innerText = waypoints.length;
+      document.getElementById('stat-length').innerText = totalPathLengthM.toFixed(1) + 'm';
+      updateJSON();
+    }
+
+    function draw() {
+      const rect = container.getBoundingClientRect();
+      const w = rect.width || 600;
+      const h = rect.height || 600;
+
+      ctx.clearRect(0, 0, w, h);
+      drawGrid(w, h);
+
+      if (segmentsData.length > 0) {
+        drawCorridorTubes();
+        drawSplineLine();
+      }
+
+      drawWaypoints();
+
+      if (segmentsData.length > 0 && simActive) {
+        drawSimulatedSwarm();
+      }
+    }
+
+    function drawGrid(w, h) {
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(0, 240, 255, 0.05)';
+      const step = 10 * SCALE;
+      const startX = originX % step;
+      const startY = originY % step;
+
+      for (let x = startX; x < w; x += step) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+      }
+      for (let y = startY; y < h; y += step) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+      }
+
+      ctx.strokeStyle = 'rgba(0, 240, 255, 0.25)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(originX, 0); ctx.lineTo(originX, h);
+      ctx.moveTo(0, originY); ctx.lineTo(w, originY);
+      ctx.stroke();
+
+      ctx.fillStyle = '#00ffaa';
+      ctx.beginPath();
+      ctx.arc(originX, originY, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.font = '10px monospace';
+      ctx.fillText('BASE (0,0)', originX + 8, originY - 6);
+    }
+
+    function getAllSplinePoints() {
+      const all = [];
+      for (let seg of segmentsData) {
+        for (let i = 0; i < seg.samples.length; i++) {
+          if (all.length > 0 && i === 0) continue;
+          all.push(seg.samples[i]);
+        }
+      }
+      return all;
+    }
+
+    function drawCorridorTubes() {
+      const pts = getAllSplinePoints();
+      if (pts.length < 2) return;
+
+      const rPx = corridorRadiusM * SCALE;
+      const leftEdge = [];
+      const rightEdge = [];
+
+      const screenPts = pts.map(p => worldToScreen(p.x, p.y));
+
+      for (let i = 0; i < screenPts.length; i++) {
+        const p = screenPts[i];
+        let tx = 0, ty = 0;
+
+        if (i < screenPts.length - 1) {
+          tx = screenPts[i + 1].x - p.x;
+          ty = screenPts[i + 1].y - p.y;
+        } else if (i > 0) {
+          tx = p.x - screenPts[i - 1].x;
+          ty = p.y - screenPts[i - 1].y;
+        }
+        const len = Math.hypot(tx, ty) || 1;
+        const nx = -ty / len;
+        const ny = tx / len;
+
+        leftEdge.push({ x: p.x + nx * rPx, y: p.y + ny * rPx });
+        rightEdge.push({ x: p.x - nx * rPx, y: p.y - ny * rPx });
+      }
+
+      ctx.fillStyle = 'rgba(0, 240, 255, 0.08)';
+      ctx.beginPath();
+      ctx.moveTo(leftEdge[0].x, leftEdge[0].y);
+      for (let i = 1; i < leftEdge.length; i++) ctx.lineTo(leftEdge[i].x, leftEdge[i].y);
+      for (let i = rightEdge.length - 1; i >= 0; i--) ctx.lineTo(rightEdge[i].x, rightEdge[i].y);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = 'rgba(0, 240, 255, 0.3)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([5, 5]);
+
+      ctx.beginPath();
+      ctx.moveTo(leftEdge[0].x, leftEdge[0].y);
+      for (let i = 1; i < leftEdge.length; i++) ctx.lineTo(leftEdge[i].x, leftEdge[i].y);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(rightEdge[0].x, rightEdge[0].y);
+      for (let i = 1; i < rightEdge.length; i++) ctx.lineTo(rightEdge[i].x, rightEdge[i].y);
+      ctx.stroke();
+
+      ctx.setLineDash([]);
+    }
+
+    function drawSplineLine() {
+      const pts = getAllSplinePoints();
+      if (pts.length < 2) return;
+
+      ctx.strokeStyle = '#00f0ff';
+      ctx.lineWidth = 2.5;
+      ctx.shadowColor = '#00f0ff';
+      ctx.shadowBlur = 8;
+
+      ctx.beginPath();
+      const p0 = worldToScreen(pts[0].x, pts[0].y);
+      ctx.moveTo(p0.x, p0.y);
+      for (let i = 1; i < pts.length; i++) {
+        const p = worldToScreen(pts[i].x, pts[i].y);
+        ctx.lineTo(p.x, p.y);
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+
+    function drawWaypoints() {
+      for (let i = 0; i < waypoints.length; i++) {
+        const wp = waypoints[i];
+        const scr = worldToScreen(wp.x, wp.y);
+        const isHover = (i === hoverIndex);
+        const isDragged = (i === draggedIndex);
+        const isLoiteringHere = (flightState === 'LOITER' && activeLoiterWPIndex === i);
+
+        ctx.beginPath();
+        ctx.arc(scr.x, scr.y, isDragged ? 16 : (isHover ? 14 : 9), 0, Math.PI * 2);
+        ctx.fillStyle = isDragged 
+          ? 'rgba(0, 255, 170, 0.45)' 
+          : (isHover ? 'rgba(0, 240, 255, 0.35)' : 'rgba(0, 240, 255, 0.15)');
+        ctx.fill();
+        ctx.strokeStyle = isDragged ? '#00ffaa' : (isHover ? '#00f0ff' : '#134e6f');
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(scr.x, scr.y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = isDragged ? '#00ffaa' : '#ffffff';
+        ctx.fill();
+
+        ctx.fillStyle = isDragged ? '#00ffaa' : '#d4f4ff';
+        ctx.font = '11px monospace';
+        const dwellTxt = (wp.loiter_sec > 0) ? ` [${wp.loiter_sec}s]` : '';
+        ctx.fillText(`WP${i+1}${dwellTxt}`, scr.x + 12, scr.y - 10);
+
+        if (isLoiteringHere) {
+          const maxDwell = wp.loiter_sec || defaultLoiterSec;
+          const progress = 1.0 - (loiterTimer / maxDwell);
+
+          ctx.beginPath();
+          ctx.arc(scr.x, scr.y, 22, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
+          ctx.strokeStyle = '#00ffaa';
+          ctx.lineWidth = 3;
+          ctx.shadowColor = '#00ffaa';
+          ctx.shadowBlur = 8;
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+
+          ctx.fillStyle = '#00ffaa';
+          ctx.font = 'bold 11px monospace';
+          ctx.fillText(`LOITER: ${loiterTimer.toFixed(1)}s`, scr.x - 30, scr.y + 34);
+        }
+      }
+    }
+
+    function drawSimulatedSwarm() {
+      if (segmentsData.length === 0) return;
+
+      const seg = segmentsData[currentSegmentIndex];
+      if (!seg) return;
+
+      const sampleIdx = Math.min(
+        Math.floor(currentSegmentT * (seg.samples.length - 1)),
+        seg.samples.length - 1
+      );
+      const pt = seg.samples[sampleIdx];
+      const nextSampleIdx = Math.min(sampleIdx + 1, seg.samples.length - 1);
+      const nextPt = seg.samples[nextSampleIdx];
+
+      let jx = 0, jy = 0;
+      if (flightState === 'LOITER') {
+        jx = (Math.random() - 0.5) * 0.15;
+        jy = (Math.random() - 0.5) * 0.15;
+      }
+
+      const angle = Math.atan2(nextPt.y - pt.y, nextPt.x - pt.x);
+      const scr = worldToScreen(pt.x + jx, pt.y + jy);
+
+      ctx.save();
+      ctx.translate(scr.x, scr.y);
+      ctx.rotate(-angle);
+
+      ctx.fillStyle = (flightState === 'LOITER') ? '#00ffaa' : '#00f0ff';
+      ctx.shadowColor = (flightState === 'LOITER') ? '#00ffaa' : '#00f0ff';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.moveTo(12, 0);
+      ctx.lineTo(-8, -7);
+      ctx.lineTo(-4, 0);
+      ctx.lineTo(-8, 7);
+      ctx.closePath();
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.restore();
+
+      ctx.fillStyle = (flightState === 'LOITER') ? '#00ffaa' : '#00f0ff';
+      ctx.font = '10px monospace';
+      ctx.fillText(flightState === 'LOITER' ? 'D0 [STATION KEEP]' : 'LEAD [D0]', scr.x + 14, scr.y + 4);
+
+      const rM = 2.5;
+      const normAngle = angle + Math.PI / 2;
+      const wingX = pt.x + jx + Math.cos(normAngle) * rM;
+      const wingY = pt.y + jy + Math.sin(normAngle) * rM;
+      const scrWing = worldToScreen(wingX, wingY);
+
+      ctx.save();
+      ctx.translate(scrWing.x, scrWing.y);
+      ctx.rotate(-angle);
+      ctx.fillStyle = '#00f0ff';
+      ctx.beginPath();
+      ctx.moveTo(8, 0);
+      ctx.lineTo(-6, -5);
+      ctx.lineTo(-6, 5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+
+      ctx.fillStyle = '#5a7e96';
+      ctx.font = '9px monospace';
+      ctx.fillText('WING [D1]', scrWing.x + 10, scrWing.y + 3);
+    }
+
+    let lastTime = performance.now();
+
+    function loop(now) {
+      const dt = (now - lastTime) / 1000;
+      lastTime = now;
+
+      if (simActive && segmentsData.length > 0) {
+        if (flightState === 'TRANSIT') {
+          const seg = segmentsData[currentSegmentIndex];
+          if (seg && seg.lengthM > 0) {
+            const stepT = (cruiseSpeed * dt) / seg.lengthM;
+            currentSegmentT += stepT;
+
+            if (currentSegmentT >= 1.0) {
+              currentSegmentT = 1.0;
+              const targetWPIndex = seg.toWP;
+              const targetWP = waypoints[targetWPIndex];
+              const dwell = (targetWP && targetWP.loiter_sec !== undefined) ? targetWP.loiter_sec : defaultLoiterSec;
+
+              if (dwell > 0.05) {
+                flightState = 'LOITER';
+                loiterTimer = dwell;
+                activeLoiterWPIndex = targetWPIndex;
+                document.getElementById('flight-state').innerText = `LOITER (${dwell}s)`;
+                document.getElementById('flight-state').className = 'font-bold text-[#ffb800] font-mono';
+                document.getElementById('status-dot').className = 'w-3 h-3 rounded-full bg-[#ffb800] animate-ping';
+              } else {
+                advanceSegment();
+              }
+            }
+          }
+        } else if (flightState === 'LOITER') {
+          loiterTimer -= dt;
+
+          if (loiterTimer <= 0) {
+            flightState = 'TRANSIT';
+            loiterTimer = 0;
+            activeLoiterWPIndex = -1;
+            document.getElementById('flight-state').innerText = 'TRANSIT';
+            document.getElementById('flight-state').className = 'font-bold text-[#00ffaa] font-mono';
+            document.getElementById('status-dot').className = 'w-3 h-3 rounded-full bg-[#00ffaa] animate-pulse';
+            advanceSegment();
+          }
+        }
+      }
+
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    function advanceSegment() {
+      currentSegmentIndex++;
+      currentSegmentT = 0;
+
+      if (currentSegmentIndex >= segmentsData.length) {
+        if (simLoop) {
+          currentSegmentIndex = 0;
+        } else {
+          currentSegmentIndex = segmentsData.length - 1;
+          currentSegmentT = 1.0;
+          simActive = false;
+        }
+      }
+    }
+
+    function getPointerWorld(e) {
+      const rect = canvas.getBoundingClientRect();
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      return { sx, sy, ...screenToWorld(sx, sy) };
+    }
+
+    function findWaypointAt(sx, sy, thresholdPx = 28) {
+      for (let i = 0; i < waypoints.length; i++) {
+        const scr = worldToScreen(waypoints[i].x, waypoints[i].y);
+        const dist = Math.hypot(scr.x - sx, scr.y - sy);
+        if (dist <= thresholdPx) return i;
+      }
+      return -1;
+    }
+
+    canvas.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      const m = getPointerWorld(e);
+      const hit = findWaypointAt(m.sx, m.sy, 28);
+
+      if (e.button === 0) {
+        if (hit !== -1) {
+          draggedIndex = hit;
+          activePointerId = e.pointerId;
+          canvas.setPointerCapture(e.pointerId);
+        } else {
+          waypoints.push({
+            x: Math.round(m.x),
+            y: Math.round(m.y),
+            z: 25.0,
+            loiter_sec: defaultLoiterSec
+          });
+          computeSpline();
+        }
+      } else if (e.button === 2) {
+        if (hit !== -1) {
+          waypoints.splice(hit, 1);
+          if (currentSegmentIndex >= waypoints.length - 1) {
+            currentSegmentIndex = 0;
+            currentSegmentT = 0;
+          }
+          computeSpline();
+        }
+      }
+    });
+
+    canvas.addEventListener('pointermove', (e) => {
+      const m = getPointerWorld(e);
+
+      if (draggedIndex !== -1) {
+        waypoints[draggedIndex].x = Math.round(m.x);
+        waypoints[draggedIndex].y = Math.round(m.y);
+        computeSpline();
+      } else {
+        const hit = findWaypointAt(m.sx, m.sy, 28);
+        if (hit !== hoverIndex) {
+          hoverIndex = hit;
+          canvas.style.cursor = (hoverIndex !== -1) ? 'grab' : 'crosshair';
+        }
+      }
+    });
+
+    canvas.addEventListener('pointerup', (e) => {
+      if (draggedIndex !== -1 && activePointerId !== null) {
+        try { canvas.releasePointerCapture(activePointerId); } catch(err) {}
+      }
+      draggedIndex = -1;
+      activePointerId = null;
+    });
+
+    canvas.addEventListener('pointercancel', () => {
+      draggedIndex = -1;
+      activePointerId = null;
+    });
+
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    document.getElementById('slider-radius').addEventListener('input', (e) => {
+      corridorRadiusM = parseFloat(e.target.value);
+      document.getElementById('radius-val').innerText = corridorRadiusM.toFixed(1) + ' m';
+      document.getElementById('stat-radius').innerText = '±' + corridorRadiusM.toFixed(1) + 'm';
+    });
+
+    document.getElementById('slider-speed').addEventListener('input', (e) => {
+      cruiseSpeed = parseFloat(e.target.value);
+      document.getElementById('speed-val').innerText = cruiseSpeed.toFixed(0) + ' m/s';
+    });
+
+    document.getElementById('slider-loiter').addEventListener('input', (e) => {
+      defaultLoiterSec = parseFloat(e.target.value);
+      document.getElementById('loiter-val').innerText = defaultLoiterSec.toFixed(1) + ' s';
+      for (let wp of waypoints) wp.loiter_sec = defaultLoiterSec;
+      updateJSON();
+    });
+
+    const btnToggle = document.getElementById('btn-toggle-fly');
+    btnToggle.addEventListener('click', () => {
+      simActive = !simActive;
+      btnToggle.innerText = simActive ? 'PAUSE SIM' : 'RESUME SIM';
+      const status = document.getElementById('sim-status');
+      status.innerText = simActive ? 'RUNNING' : 'PAUSED';
+      status.className = simActive 
+        ? 'text-[12px] px-1.5 py-0.5 rounded bg-[#00ffaa]/20 text-[#00ffaa]' 
+        : 'text-[12px] px-1.5 py-0.5 rounded bg-[#ffb800]/20 text-[#ffb800]';
+    });
+
+    const btnLoop = document.getElementById('btn-loop-fly');
+    btnLoop.addEventListener('click', () => {
+      simLoop = !simLoop;
+      btnLoop.innerText = simLoop ? 'LOOP: ON' : 'LOOP: OFF';
+    });
+
+    function updateJSON() {
+      const queue = waypoints.map((w, idx) => ({
+        index: idx,
+        pos: [w.x, w.y, w.z || 25.0],
+        loiter_sec: w.loiter_sec !== undefined ? w.loiter_sec : defaultLoiterSec,
+        corridor_radius: corridorRadiusM
+      }));
+      document.getElementById('json-export').value = JSON.stringify(queue, null, 2);
+    }
+
+    function copyQueue() {
+      const txt = document.getElementById('json-export').value;
+      navigator.clipboard.writeText(txt).then(() => {
+        alert('Mission Queue Copied to Clipboard!');
+      });
+    }
+
+    function loadPreset(name) {
+      if (name === 'sharp_kink') {
+        waypoints = [
+          { x: -30, y: 30, z: 25, loiter_sec: 2.0 },
+          { x: 10, y: -10, z: 25, loiter_sec: 3.0 },
+          { x: 16, y: -10, z: 25, loiter_sec: 3.0 },
+          { x: 45, y: 30, z: 25, loiter_sec: 2.0 }
+        ];
+      } else if (name === 'canyon') {
+        waypoints = [
+          { x: -35, y: -20, z: 25, loiter_sec: 2.5 },
+          { x: -10, y: 15, z: 25, loiter_sec: 3.0 },
+          { x: 15, y: -10, z: 25, loiter_sec: 3.0 },
+          { x: 35, y: 25, z: 25, loiter_sec: 2.0 },
+          { x: 50, y: 0, z: 25, loiter_sec: 4.0 }
+        ];
+      } else if (name === 'rooftop') {
+        waypoints = [
+          { x: 30, y: -20, z: 25, loiter_sec: 4.0 },
+          { x: 30, y: 30, z: 25, loiter_sec: 4.0 },
+          { x: -20, y: 30, z: 25, loiter_sec: 4.0 },
+          { x: -20, y: -20, z: 25, loiter_sec: 4.0 }
+        ];
+      } else if (name === 'clear') {
+        waypoints = [];
+      }
+
+      currentSegmentIndex = 0;
+      currentSegmentT = 0;
+      flightState = 'TRANSIT';
+      loiterTimer = 0;
+      activeLoiterWPIndex = -1;
+      computeSpline();
+    }
+
+    setTimeout(() => {
+      resizeCanvas();
+      loadPreset('canyon');
+      requestAnimationFrame(loop);
+    }, 50);
+  </script>
+</body>
+</html>
