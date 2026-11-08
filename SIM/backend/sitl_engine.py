@@ -412,6 +412,20 @@ class SITLWorldEngine:
         ]
         ordered = sorted(living, key=lambda d: (0 if d.is_leader else 1, d.id))
         for drone in ordered:
+            # Advance tandem escort trailing station before telemetry build (TKT-51)
+            if drone.flight_state == "ESCORT_REJOIN" and getattr(drone, "escort_leader_id", None) is not None:
+                courier = self.get_drone_by_id(drone.escort_leader_id)
+                if courier and not courier.crashed:
+                    lead_speed = float(np.linalg.norm(courier.vel[:2]))
+                    if lead_speed > 0.5:
+                        tangent = courier.vel / lead_speed
+                        trail_pos = courier.pos - tangent * 4.0
+                        trail_pos[2] = courier.pos[2]
+                    else:
+                        trail_pos = courier.pos + np.array([-4.0, 0.0, 0.0], dtype=float)
+                    drone.acknowledged_target = np.copy(trail_pos)
+                    drone.target_station = np.copy(trail_pos)
+
             telemetry = self._build_local_telemetry(drone)
             inbox = list(drone.inbox)
             drone.inbox.clear()
@@ -969,6 +983,21 @@ class SITLWorldEngine:
 
     def stop_patrol_to_bingo(self) -> Dict[str, Any]:
         return self.c2.stop_patrol_to_bingo()
+
+    # 1-Click Aux Mission: Physical Courier / Search-and-Recall Rescue Mule Delegations (TKT-51)
+    @property
+    def courier_active(self) -> bool:
+        return self.c2.courier_active
+
+    @property
+    def courier_stage(self) -> str:
+        return self.c2.courier_stage
+
+    def deploy_search_and_recall(self, target_drone_id: Optional[int] = None, courier_id: Optional[int] = None) -> Dict[str, Any]:
+        return self.c2.deploy_search_and_recall(target_drone_id=target_drone_id, courier_id=courier_id)
+
+    def stop_search_and_recall(self) -> Dict[str, Any]:
+        return self.c2.stop_search_and_recall()
 
     def get_acknowledged_target(self) -> np.ndarray:
         """Return the current onboard target acknowledged by the active swarm guidance."""
@@ -1817,7 +1846,7 @@ class SITLWorldEngine:
                 d.lost_link = True
                 if not getattr(d, "radio_silence_permitted", False):
                     # Autonomous backtrack toward radio horizon (suppressed during tether loiter)
-                    if not is_tether_loitering and d.flight_state not in ("TAKEOFF", "DESCENDING", "BACKTRACK_HOLD", "PERIMETER_HOLD", "LANDED", "GROUND_IDLE", "CRASHED", "BREAKAWAY_JETTISON", "CORRIDOR_ERTB"):
+                    if not is_tether_loitering and d.flight_state not in ("TAKEOFF", "DESCENDING", "BACKTRACK_HOLD", "PERIMETER_HOLD", "LANDED", "GROUND_IDLE", "CRASHED", "BREAKAWAY_JETTISON", "CORRIDOR_ERTB", "COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN"):
                         d.flight_state = "BACKTRACK_HOLD"
                         d.status = "BACKTRACK_HOLD"
                         d.backtrack_hold = True
@@ -1829,7 +1858,7 @@ class SITLWorldEngine:
                         if hasattr(self, "c2") and hasattr(self.c2, "log_event"):
                             self.c2.log_event("WARN", f"Drone #{d.id} heartbeat watchdog expired! Backtracking along breadcrumbs to radio horizon.")
                 else:
-                    if d.status != "LOST_LINK" and d.flight_state not in ("LANDED", "GROUND_IDLE", "CRASHED"):
+                    if d.status != "LOST_LINK" and d.flight_state not in ("LANDED", "GROUND_IDLE", "CRASHED", "COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN"):
                         d.status = "LOST_LINK"
 
             # 4. Link restoration during backtrack or corridor ERTB
@@ -3325,6 +3354,14 @@ class SITLWorldEngine:
                 "triggered": bool(self.bingo_triggered),
                 "stage": self.bingo_stage,
                 "pattern": getattr(self.c2, "bingo_pattern", "BOX_PATROL"),
+            },
+            "search_and_recall": {
+                "active": self.c2.courier_active,
+                "stage": self.c2.courier_stage,
+                "courier_id": self.c2.courier_drone_id,
+                "target_drone_id": self.c2.courier_target_drone_id,
+                "target_lkp": [round(float(v), 2) for v in self.c2.courier_target_lkp] if self.c2.courier_target_lkp is not None else None,
+                "dwell_timer": round(float(self.c2.courier_dwell_timer), 1),
             },
             "two_ic_id": two_ic_id,
             "lost_link_loiter_timer": round(max(0.0, float(self.lost_link_loiter_timer)), 1),

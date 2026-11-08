@@ -252,6 +252,18 @@ class SwarmWebServer:
             self.session_manager.add_event("CMD", "Aborted Aux Mission: PATROL -> BINGO", sim_time=self.sim.sim_time)
             return res
 
+        elif cmd in ("DEPLOY_SEARCH_AND_RECALL", "SEARCH_AND_RECALL", "DISPATCH_COURIER", "START_SEARCH_AND_RECALL"):
+            target_id = cmd_dict.get("target_drone_id", cmd_dict.get("target_id"))
+            courier_id = cmd_dict.get("courier_id")
+            res = self.sim.deploy_search_and_recall(target_drone_id=target_id, courier_id=courier_id)
+            self.session_manager.add_event("CMD", f"Deployed Aux Mission: SEARCH & RECALL (Target: {target_id}, Courier: {courier_id})", sim_time=self.sim.sim_time)
+            return res
+
+        elif cmd in ("STOP_SEARCH_AND_RECALL", "ABORT_SEARCH_AND_RECALL", "STOP_COURIER"):
+            res = self.sim.stop_search_and_recall()
+            self.session_manager.add_event("CMD", "Aborted Aux Mission: SEARCH & RECALL", sim_time=self.sim.sim_time)
+            return res
+
         elif cmd in ("START_ROUTE_PRESET", "SET_ROUTE_PRESET"):
             preset = cmd_dict.get("preset", cmd_dict.get("name", "BOX_PATROL"))
             res = self.sim.start_route_preset(preset)

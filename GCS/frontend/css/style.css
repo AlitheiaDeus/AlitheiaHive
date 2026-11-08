@@ -1108,6 +1108,44 @@ body:has(#right-panel.collapsed) #tab-restore-right,
   color: #FFD700;
 }
 
+.btn-recall {
+  margin: 0;
+  width: 100%;
+  border-color: rgba(179, 71, 255, 0.45);
+  color: #B347FF;
+  background: rgba(179, 71, 255, 0.08);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  line-height: 1.2;
+}
+
+.btn-recall:hover {
+  background: rgba(179, 71, 255, 0.22);
+  border-color: #FFFFFF;
+  color: #FFFFFF;
+  box-shadow: 0 0 12px rgba(179, 71, 255, 0.5);
+}
+
+.btn-recall.active-recall {
+  background: rgba(179, 71, 255, 0.28);
+  border-color: #B347FF;
+  color: #FFFFFF;
+  box-shadow: 0 0 14px rgba(179, 71, 255, 0.7);
+  animation: pulse-recall 1.5s infinite alternate;
+}
+
+@keyframes pulse-recall {
+  0% { box-shadow: 0 0 8px rgba(179, 71, 255, 0.4); }
+  100% { box-shadow: 0 0 16px rgba(179, 71, 255, 0.9); }
+}
+
+.badge-route-recall {
+  background: rgba(179, 71, 255, 0.22);
+  border-color: #B347FF;
+  color: #E0B0FF;
+}
+
 .route-header-row {
   display: flex;
   justify-content: space-between;

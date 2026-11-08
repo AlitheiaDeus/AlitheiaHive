@@ -104,6 +104,18 @@
             });
         });
 
+        // 1-Click Aux Mission: Physical Courier / Search-and-Recall Rescue Mule to LKP (TKT-51)
+        setupBtn('btn-search-recall', () => {
+            const recallBtn = document.getElementById('btn-search-recall');
+            if (recallBtn && recallBtn.classList.contains('active-recall')) {
+                logEvent('CMD', 'Aborting Aux Mission: Search & Recall Courier Mule');
+                window.swarmClient?.send({ cmd: 'STOP_SEARCH_AND_RECALL' });
+            } else {
+                logEvent('CMD', 'Deploying Aux Mission: Search & Recall Courier Mule to LKP');
+                window.swarmClient?.send({ cmd: 'DEPLOY_SEARCH_AND_RECALL' });
+            }
+        });
+
         // Custom Target Coordinates
         const btnDispatchCustom = document.getElementById('btn-dispatch-custom');
         if (btnDispatchCustom) {
@@ -519,6 +531,25 @@
             if (btnBingo) {
                 btnBingo.classList.remove('active-bingo');
                 btnBingo.innerHTML = '&#x26A1; PATROL &rarr; BINGO RTB';
+            }
+        }
+
+        // 4b5. Monitor 1-Click Aux Mission: Search & Recall Courier Mule (TKT-51)
+        const recallData = frame.search_and_recall;
+        const btnRecall = document.getElementById('btn-search-recall');
+        if (recallData && recallData.active) {
+            if (btnRecall) {
+                btnRecall.classList.add('active-recall');
+                btnRecall.innerHTML = `&#x1F50D; S&amp;R [${recallData.stage}]`;
+            }
+            if (routeActiveBadge && (!bingoData || !bingoData.active)) {
+                routeActiveBadge.className = 'badge-route-active badge-route-recall';
+                routeActiveBadge.textContent = `S&amp;R MULE #${recallData.courier_id ?? '?'} [${recallData.stage}]`;
+            }
+        } else {
+            if (btnRecall) {
+                btnRecall.classList.remove('active-recall');
+                btnRecall.innerHTML = '&#x1F50D; S&amp;R ESCORT (LKP)';
             }
         }
 

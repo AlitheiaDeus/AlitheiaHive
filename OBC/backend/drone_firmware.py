@@ -261,6 +261,15 @@ class Drone:
         self.tether_heartbeat_watchdog: float = 0.5
         self.cable_tension: float = 0.0
 
+        # Physical Courier & Search-and-Recall Escort (TKT-51 / PLN-02)
+        self.courier_mission_active: bool = False
+        self.courier_target_drone_id: Optional[int] = None
+        self.courier_target_lkp: Optional[np.ndarray] = None
+        self.courier_dwell_timer: float = 0.0
+        self.courier_dwell_timeout: float = 15.0
+        self.courier_escortee_id: Optional[int] = None
+        self.escort_leader_id: Optional[int] = None
+
         # Per-Drone Autonomous Brain & Packet Mailboxes (TLK-01 Pure I/O Boundary)
         self.inbox: List[RadioPacket] = []
         self.outbox: List[RadioPacket] = []
@@ -355,6 +364,13 @@ class Drone:
         self.corridor_target = None
         self.tether_heartbeat_watchdog = 0.5
         self.cable_tension = 0.0
+        self.courier_mission_active = False
+        self.courier_target_drone_id = None
+        self.courier_target_lkp = None
+        self.courier_dwell_timer = 0.0
+        self.courier_dwell_timeout = 15.0
+        self.courier_escortee_id = None
+        self.escort_leader_id = None
         self.inbox.clear()
         self.outbox.clear()
         if hasattr(self, "brain") and self.brain is not None:
@@ -439,6 +455,8 @@ class Drone:
             "gateway_id": self.gateway_id,
             "battery": round(float(self.battery), 1),
             "bingo_failsafe_triggered": bool(getattr(self, "bingo_failsafe_triggered", False)),
+            "courier_mission_active": bool(getattr(self, "courier_mission_active", False)),
+            "escort_leader_id": getattr(self, "escort_leader_id", None),
             "status": self.status,
             "rotor_rpm": round(float(self.rotor_rpm), 0),
             "jettison_timer": round(float(self.jettison_timer), 2),

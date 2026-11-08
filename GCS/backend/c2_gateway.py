@@ -34,6 +34,9 @@ MISSION_CAPABILITY_REQUIREMENTS: Dict[str, List[str]] = {
     "RECON": ["RECON", "S&R_OPTICAL"],
     "S&R": ["RECON", "S&R_OPTICAL"],
     "SEARCH_AND_RESCUE": ["RECON", "S&R_OPTICAL"],
+    "SEARCH_AND_RECALL": ["RECON", "S&R_OPTICAL"],
+    "COURIER": ["RECON", "S&R_OPTICAL"],
+    "COURIER_ESCORT": ["RECON", "S&R_OPTICAL"],
     "PAYLOAD_DROP": ["HEAVY_PAYLOAD", "DROP_SERVO"],
     "DEPOSIT": ["HEAVY_PAYLOAD", "DROP_SERVO"],
     "LIDAR_SCAN": ["LIDAR_SCAN"],
@@ -115,6 +118,15 @@ class C2Gateway:
         self.bingo_auto_land: bool = True        # Auto-initiate Stage 2 coordinated landing upon marshal arrival
         self.bingo_stage: str = "IDLE"           # "IDLE", "PATROLLING", "RTB_TRANSIT", "MARSHAL_HOLD", "LANDING", "COMPLETED"
         self.bingo_pattern: str = "BOX_PATROL"
+
+        # Physical Courier / Search-and-Recall Rescue Mule (TKT-51 / PLN-02)
+        self.courier_active: bool = False
+        self.courier_drone_id: Optional[int] = None
+        self.courier_target_drone_id: Optional[int] = None
+        self.courier_target_lkp: Optional[np.ndarray] = None
+        self.courier_stage: str = "IDLE"          # "IDLE", "TRANSIT_OUTBOUND", "RENDEZVOUS_DWELL", "ESCORT_INBOUND", "MIA_RETURN", "HANDOVER_COMPLETE"
+        self.courier_dwell_timer: float = 0.0
+        self.courier_dwell_timeout: float = 15.0
 
     @property
     def target_pos(self) -> np.ndarray:
@@ -293,6 +305,96 @@ class C2Gateway:
                     if not living_airborne:
                         self.bingo_stage = "COMPLETED"
                         self.bingo_mission_active = False
+
+        # 4. Physical Courier / Search-and-Recall Rescue Mule (TKT-51 / PLN-02)
+        if self.courier_active and self.sim is not None:
+            courier = self.sim.get_drone_by_id(self.courier_drone_id) if hasattr(self.sim, "get_drone_by_id") else None
+            target_drone = self.sim.get_drone_by_id(self.courier_target_drone_id) if hasattr(self.sim, "get_drone_by_id") else None
+            anchor = getattr(self.sim, "tether_anchor", TETHER_ANCHOR)
+
+            if courier is None or courier.crashed:
+                self.courier_stage = "COURIER_LOST"
+                self.courier_active = False
+                self.log_event("WARN", f"[COURIER FAILURE: Courier #{self.courier_drone_id} crashed or missing in action.]")
+            else:
+                if self.courier_stage == "TRANSIT_OUTBOUND":
+                    if self.courier_target_lkp is not None:
+                        dist_to_lkp = float(np.linalg.norm(courier.pos - self.courier_target_lkp))
+                        if dist_to_lkp <= 5.0:
+                            self.courier_stage = "RENDEZVOUS_DWELL"
+                            self.courier_dwell_timer = 0.0
+                            courier.flight_state = "RENDEZVOUS_DWELL"
+                            courier.status = "RENDEZVOUS_DWELL"
+                            courier.acknowledged_target = np.copy(self.courier_target_lkp)
+                            courier.target_station = np.copy(self.courier_target_lkp)
+                            self.log_event("CMD", f"[COURIER ARRIVAL: Courier #{courier.id} arrived at LKP ({dist_to_lkp:.1f}m). Stationary dwell & P2P rescue beacon engaged.]")
+
+                elif self.courier_stage == "RENDEZVOUS_DWELL":
+                    # Check P2P contact with target drone (within RANGE_P2P = 60m)
+                    contact_made = False
+                    if target_drone is not None and not target_drone.crashed:
+                        d_p2p = float(np.linalg.norm(courier.pos - target_drone.pos))
+                        if d_p2p <= RANGE_P2P:
+                            contact_made = True
+                            self.courier_stage = "ESCORT_INBOUND"
+                            courier.flight_state = "ESCORT_LEAD"
+                            courier.status = "ESCORT_LEAD"
+                            courier.courier_escortee_id = target_drone.id
+                            courier.acknowledged_target = np.array([0.0, 0.0, 25.0], dtype=float)
+                            courier.target_station = np.array([0.0, 0.0, 25.0], dtype=float)
+
+                            target_drone.flight_state = "ESCORT_REJOIN"
+                            target_drone.status = "ESCORT_REJOIN"
+                            target_drone.escort_leader_id = courier.id
+                            target_drone.backtrack_hold = False
+                            target_drone.holding_at_horizon = False
+
+                            self.log_event("CMD", f"[RESCUE HANDSHAKE: Courier #{courier.id} established P2P contact with Drone #{target_drone.id} ({d_p2p:.1f}m). Inbound tandem escort initiated.]")
+
+                    if not contact_made:
+                        self.courier_dwell_timer += dt
+                        if self.courier_dwell_timer >= self.courier_dwell_timeout:
+                            # MIA Timeout
+                            self.courier_stage = "MIA_RETURN"
+                            courier.flight_state = "CRUISE"
+                            courier.status = "COURIER_MIA_RETURN"
+                            courier.acknowledged_target = np.array([0.0, 0.0, 25.0], dtype=float)
+                            courier.target_station = np.array([0.0, 0.0, 25.0], dtype=float)
+                            self.log_event("WARN", f"[COURIER TIMEOUT: Target Drone #{self.courier_target_drone_id} MIA at LKP after 15s. Courier #{courier.id} returning to Base alone.]")
+
+                elif self.courier_stage == "ESCORT_INBOUND":
+                    # Check if target drone has entered GCS radio horizon
+                    target_dist_gcs = float(np.linalg.norm(target_drone.pos - anchor)) if target_drone else 999.0
+                    r_howl = getattr(self.sim, "radio_range", RANGE_HOWL)
+                    target_linked = (target_dist_gcs <= r_howl and getattr(target_drone, "downlink_active", True))
+
+                    if target_linked:
+                        self.courier_stage = "HANDOVER_COMPLETE"
+                        self.courier_active = False
+                        courier.flight_state = "CRUISE"
+                        courier.status = "ACTIVE"
+                        courier.courier_mission_active = False
+                        courier.courier_escortee_id = None
+
+                        if target_drone is not None:
+                            target_drone.flight_state = "CRUISE"
+                            target_drone.status = "ACTIVE"
+                            target_drone.lost_link = False
+                            target_drone.escort_leader_id = None
+                            target_drone.gcs_heartbeat_watchdog = 2.0
+                            target_drone.last_heartbeat_time = getattr(self.sim, "sim_time", 0.0)
+                            target_drone.acknowledged_target = np.copy(courier.acknowledged_target)
+                            target_drone.target_station = np.copy(courier.acknowledged_target)
+
+                        self.log_event("STATUS", f"[RESCUE SUCCESS: Drone #{target_drone.id} penetrated GCS radio horizon ({target_dist_gcs:.1f}m). Downlink restored, fleet re-enrolled.]")
+
+                elif self.courier_stage == "MIA_RETURN":
+                    dist_base = float(np.linalg.norm(courier.pos[:2] - anchor[:2]))
+                    if dist_base <= 15.0:
+                        self.courier_stage = "MIA_COMPLETE"
+                        self.courier_active = False
+                        courier.flight_state = "CRUISE"
+                        courier.courier_mission_active = False
 
     def is_link_active(self) -> bool:
         """Check whether the bidirectional communications link between GCS and fleet is healthy.
@@ -929,3 +1031,123 @@ class C2Gateway:
         self.stop_mission_route()
         self.log_event("CMD", "[AUX MISSION: Patrol to BINGO ABORTED by operator]")
         return {"status": "OK", "action": "PATROL_TO_BINGO_STOPPED"}
+
+    def deploy_search_and_recall(
+        self,
+        target_drone_id: Optional[int] = None,
+        courier_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Deploy 1-Click Aux Mission: Physical Courier / Search-and-Recall Rescue Mule to LKP (TKT-51 / PLN-02).
+        Verifies RECON and S&R_OPTICAL pre-flight capabilities for the courier.
+        Navigates autonomously to target LKP, dwells with 60m P2P rescue ping, and escorts lost wingman back."""
+        if self.sim is None:
+            return {"status": "ERROR", "reason": "No simulation engine attached"}
+
+        drones = getattr(self.sim, "drones", [])
+        if not drones:
+            return {"status": "ERROR", "reason": "NO_DRONES"}
+
+        # 1. Identify target lost drone
+        target = None
+        if target_drone_id is not None:
+            target = self.sim.get_drone_by_id(target_drone_id) if hasattr(self.sim, "get_drone_by_id") else next((d for d in drones if d.id == target_drone_id), None)
+            if target is None:
+                return {"status": "ERROR", "reason": f"Target drone #{target_drone_id} not found"}
+        else:
+            # Find first living drone that is in LOST_LINK or lost downlink
+            for d in drones:
+                if not d.crashed and (getattr(d, "lost_link", False) or not getattr(d, "downlink_active", True) or d.flight_state in ("LOST_LINK", "BACKTRACK_HOLD")):
+                    target = d
+                    break
+            if target is None:
+                return {"status": "ERROR", "reason": "NO_LOST_DRONES_DETECTED", "error": "No dark or lost-link airframes currently detected."}
+
+        # 2. Identify and allocate courier drone
+        courier = None
+        if courier_id is not None:
+            courier = self.sim.get_drone_by_id(courier_id) if hasattr(self.sim, "get_drone_by_id") else next((d for d in drones if d.id == courier_id), None)
+            if courier is None or courier.crashed:
+                return {"status": "ERROR", "reason": f"Courier drone #{courier_id} unavailable"}
+        else:
+            # Find eligible airborne or available drone (not target, not crashed) with S&R capabilities
+            candidates = [
+                d for d in drones
+                if d.id != target.id and not d.crashed and d.flight_state not in ("CRASHED",) and getattr(d, "uplink_active", True)
+            ]
+            for c in candidates:
+                caps = set(getattr(c, "capabilities", []))
+                if "RECON" in caps or "S&R_OPTICAL" in caps:
+                    courier = c
+                    break
+            if courier is None and candidates:
+                courier = candidates[0]
+            if courier is None:
+                return {"status": "ERROR", "reason": "NO_ELIGIBLE_COURIER", "error": "No available airframes to dispatch as courier."}
+
+        # Pre-Flight Capability Check on courier
+        auth_check = self.check_mission_authorization("SEARCH_AND_RECALL", target_drone_id=courier.id)
+        if not auth_check.get("authorized", True):
+            return {
+                "status": "ERROR",
+                "code": "TIER_AUTHORIZATION_FAILED",
+                "reason": auth_check.get("reason", "TIER_AUTHORIZATION_FAILED"),
+                "missing_capabilities": auth_check.get("missing_capabilities", []),
+                "courier_id": courier.id,
+            }
+
+        # Setup Courier flight intent
+        lkp = np.copy(target.lkp)
+        courier.courier_mission_active = True
+        courier.courier_target_drone_id = target.id
+        courier.courier_target_lkp = np.copy(lkp)
+        courier.courier_dwell_timer = 0.0
+        courier.courier_dwell_timeout = 15.0
+        courier.courier_escortee_id = None
+        courier.flight_state = "COURIER_TRANSIT"
+        courier.status = "COURIER_TRANSIT"
+        courier.radio_silence_permitted = True
+        courier.acknowledged_target = np.copy(lkp)
+        courier.target_station = np.copy(lkp)
+
+        self.courier_active = True
+        self.courier_drone_id = courier.id
+        self.courier_target_drone_id = target.id
+        self.courier_target_lkp = np.copy(lkp)
+        self.courier_stage = "TRANSIT_OUTBOUND"
+        self.courier_dwell_timer = 0.0
+
+        self.log_event(
+            "CMD",
+            f"[AUX MISSION: S&R Courier #{courier.id} dispatched to LKP ({lkp[0]:.1f}, {lkp[1]:.1f}, {lkp[2]:.1f}) for dark Drone #{target.id}. Radio silence once past horizon.]"
+        )
+
+        return {
+            "status": "OK",
+            "action": "SEARCH_AND_RECALL_DEPLOYED",
+            "courier_id": courier.id,
+            "target_drone_id": target.id,
+            "target_lkp": [round(float(v), 2) for v in lkp],
+            "stage": self.courier_stage,
+        }
+
+    def stop_search_and_recall(self) -> Dict[str, Any]:
+        """Abort active Search and Recall courier mission (TKT-51)."""
+        if not self.courier_active:
+            return {"status": "ERROR", "reason": "No active Search and Recall mission"}
+
+        if self.sim:
+            courier = self.sim.get_drone_by_id(self.courier_drone_id) if hasattr(self.sim, "get_drone_by_id") else None
+            if courier:
+                courier.courier_mission_active = False
+                courier.courier_escortee_id = None
+                courier.flight_state = "CRUISE"
+                courier.status = "ACTIVE"
+                courier.radio_silence_permitted = False
+            target_drone = self.sim.get_drone_by_id(self.courier_target_drone_id) if hasattr(self.sim, "get_drone_by_id") else None
+            if target_drone and target_drone.flight_state == "ESCORT_REJOIN":
+                target_drone.escort_leader_id = None
+
+        self.courier_active = False
+        self.courier_stage = "IDLE"
+        self.log_event("CMD", "[AUX MISSION: Search and Recall ABORTED by operator]")
+        return {"status": "OK", "action": "SEARCH_AND_RECALL_STOPPED"}

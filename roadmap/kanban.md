@@ -52,7 +52,6 @@ kanban
     tkt39["Standalone OBC Socket Daemon"]@{ ticket: '[TKT-39]', priority: 'Medium' }
     tkt45["Cryptographic Comms Guard (HMAC Signing)"]@{ ticket: '[TKT-45]', priority: 'Medium' }
     tkt47["Declarative Field Deployment Scenarios"]@{ ticket: '[TKT-47]', priority: 'Medium' }
-    tkt51["Physical Courier / Search-and-Recall Mule"]@{ ticket: '[TKT-51]', priority: 'Medium' }
   todo["Todo (Active Pipeline)"]
     pln02["PLN-02: Auxiliary Mission Engine Master"]@{ ticket: '[PLN-02]', priority: 'High' }
   in_progress["In Progress (WIP = 1)"]
@@ -84,6 +83,7 @@ kanban
     tkt23["Natural Reynolds 3D Flocking"]@{ ticket: '[TKT-23]', priority: 'High' }
     fix05["Comms Horizon Telemetry Gate"]@{ ticket: '[FIX-05]', priority: 'Very High' }
     tkt58["1-Click Aux Mission: Patrol to BINGO RTB"]@{ ticket: '[TKT-58]', priority: 'Medium' }
+    tkt51["Physical Courier / Search-and-Recall Mule"]@{ ticket: '[TKT-51]', priority: 'Medium' }
 ```
 
 ---
@@ -141,7 +141,7 @@ kanban
 | **`TKT-39`** | `🛠️ Improvement` | Standalone Drone OBC Network Daemon | OBC firmware tied to top-layer process | [TKT-39.md](tasks/backlog/TKT-39.md) |
 | **`TKT-45`** | `🚀 Feature` | Cryptographic Comms Guard (HMAC Signing) | Unauthenticated packets allowing rogue SDR injection | [TKT-45.md](tasks/backlog/TKT-45.md) |
 | **`TKT-47`** | `🛠️ Improvement` | Declarative Field Deployment Scenarios | Ground components clumped at identical (0,0,0) | [TKT-47.md](tasks/backlog/TKT-47.md) |
-| **`TKT-51`** | `🚀 Feature` | Physical Courier / Search-and-Recall Mule | Fragile daisy chains dropping on single node loss | [TKT-51.md](tasks/backlog/TKT-51.md) |
+| **`TKT-51`** | `🚀 Feature` | Physical Courier / Search-and-Recall Mule | Fragile daisy chains dropping on single node loss | [TKT-51.md](tasks/TKT-51.md) |
 | **`TKT-20`** | `🎭 Gimmick` | Airframe Inertia & Actuator Dynamics | Point-mass kinematics yielding instant vector jumps | [TKT-20.md](tasks/backlog/TKT-20.md) |
 | **`TKT-21`** | `🎭 Gimmick` | Dynamic Power Envelope (LiPo Curves) | Static 100% telemetry display without power curves | [TKT-21.md](tasks/backlog/TKT-21.md) |
 | **`TKT-24`** | `🎭 Gimmick` | Dynamic Wind Gust Vector Field | Airframe operating in ideal dead-calm air | [TKT-24.md](tasks/backlog/TKT-24.md) |

@@ -159,6 +159,20 @@ class LeaderFollowerBrain(BaseBrain):
                 state_updates=updates,
             ), outbox
 
+        # Courier S&R Escort States (TKT-51)
+        if telemetry.flight_state in ("COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN"):
+            ack_t = np.copy(updates.get("acknowledged_target", telemetry.acknowledged_target))
+            spd = 0.0 if telemetry.flight_state == "RENDEZVOUS_DWELL" else 10.0
+            acc = self._steer_toward(telemetry.pos, telemetry.vel, ack_t, max_speed=spd)
+            yaw = self._velocity_yaw(telemetry.vel)
+            self._emit_periodic_packets(telemetry, updates, outbox, dt)
+            return FlightIntent(
+                target_acc=acc,
+                target_yaw=yaw,
+                target_station=ack_t,
+                state_updates=updates,
+            ), outbox
+
         if telemetry.lost_link and not telemetry.is_leader:
             lkp_t = np.copy(updates.get("lkp", telemetry.lkp))
             acc = self._steer_toward(telemetry.pos, telemetry.vel, lkp_t, max_speed=V_LKP)
