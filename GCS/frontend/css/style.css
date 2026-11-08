@@ -1146,6 +1146,44 @@ body:has(#right-panel.collapsed) #tab-restore-right,
   color: #E0B0FF;
 }
 
+.btn-payload {
+  margin: 0;
+  width: 100%;
+  border-color: rgba(0, 255, 170, 0.45);
+  color: #00FFAA;
+  background: rgba(0, 255, 170, 0.08);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  line-height: 1.2;
+}
+
+.btn-payload:hover {
+  background: rgba(0, 255, 170, 0.22);
+  border-color: #FFFFFF;
+  color: #FFFFFF;
+  box-shadow: 0 0 12px rgba(0, 255, 170, 0.5);
+}
+
+.btn-payload.active-payload {
+  background: rgba(0, 255, 170, 0.28);
+  border-color: #00FFAA;
+  color: #FFFFFF;
+  box-shadow: 0 0 14px rgba(0, 255, 170, 0.7);
+  animation: pulse-payload 1.5s infinite alternate;
+}
+
+@keyframes pulse-payload {
+  0% { box-shadow: 0 0 8px rgba(0, 255, 170, 0.4); }
+  100% { box-shadow: 0 0 16px rgba(0, 255, 170, 0.9); }
+}
+
+.badge-route-payload {
+  background: rgba(0, 255, 170, 0.22);
+  border-color: #00FFAA;
+  color: #70FFD0;
+}
+
 .route-header-row {
   display: flex;
   justify-content: space-between;

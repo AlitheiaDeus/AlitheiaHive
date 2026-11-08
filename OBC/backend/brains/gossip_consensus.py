@@ -385,7 +385,7 @@ class GossipConsensusBrain(BaseBrain):
                 updates["status"] = "PERIMETER_HOLD"
         else:
             self.gcs_lost_timer += dt
-            if self.gcs_lost_timer >= 2.0 and telemetry.flight_state not in ("CORRIDOR_ERTB", "BACKTRACK_HOLD", "PERIMETER_HOLD", "LANDED", "GROUND_IDLE", "CRASHED", "DESCENDING", "COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN"):
+            if self.gcs_lost_timer >= 2.0 and telemetry.flight_state not in ("CORRIDOR_ERTB", "BACKTRACK_HOLD", "PERIMETER_HOLD", "LANDED", "GROUND_IDLE", "CRASHED", "DESCENDING", "COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN", "PAYLOAD_TRANSIT", "PRECISION_DESCENT", "CARRIER_EGRESS"):
                 updates["flight_state"] = "CORRIDOR_ERTB"
                 updates["status"] = "CORRIDOR_ERTB"
 
@@ -425,10 +425,10 @@ class GossipConsensusBrain(BaseBrain):
                 state_updates=updates,
             ), outbox
 
-        # Courier S&R Escort States (TKT-51)
-        if telemetry.flight_state in ("COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN"):
+        # Courier S&R Escort & Payload Drop States (TKT-51 / TKT-59)
+        if telemetry.flight_state in ("COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN", "PAYLOAD_TRANSIT", "PRECISION_DESCENT", "CARRIER_EGRESS"):
             ack_t = np.copy(updates.get("acknowledged_target", telemetry.acknowledged_target))
-            spd = 0.0 if telemetry.flight_state == "RENDEZVOUS_DWELL" else 10.0
+            spd = 0.0 if telemetry.flight_state == "RENDEZVOUS_DWELL" else (2.0 if telemetry.flight_state == "PRECISION_DESCENT" else 10.0)
             acc = self._steer_toward(telemetry.pos, telemetry.vel, ack_t, max_speed=spd)
             speed_xy = math.hypot(telemetry.vel[0], telemetry.vel[1])
             yaw = math.atan2(telemetry.vel[1], telemetry.vel[0]) if speed_xy > 0.5 else None

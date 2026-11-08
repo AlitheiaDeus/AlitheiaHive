@@ -38,6 +38,8 @@ MISSION_CAPABILITY_REQUIREMENTS: Dict[str, List[str]] = {
     "COURIER": ["RECON", "S&R_OPTICAL"],
     "COURIER_ESCORT": ["RECON", "S&R_OPTICAL"],
     "PAYLOAD_DROP": ["HEAVY_PAYLOAD", "DROP_SERVO"],
+    "CAIRN_G1_DROP": ["HEAVY_PAYLOAD", "DROP_SERVO"],
+    "DROP_REPEATER": ["HEAVY_PAYLOAD", "DROP_SERVO"],
     "DEPOSIT": ["HEAVY_PAYLOAD", "DROP_SERVO"],
     "LIDAR_SCAN": ["LIDAR_SCAN"],
     "POINTCLOUD_MAPPING": ["LIDAR_SCAN"],
@@ -127,6 +129,13 @@ class C2Gateway:
         self.courier_stage: str = "IDLE"          # "IDLE", "TRANSIT_OUTBOUND", "RENDEZVOUS_DWELL", "ESCORT_INBOUND", "MIA_RETURN", "HANDOVER_COMPLETE"
         self.courier_dwell_timer: float = 0.0
         self.courier_dwell_timeout: float = 15.0
+
+        # Cairn G1 Solar Repeater Payload Drop (TKT-59 / PLN-04)
+        self.payload_drop_active: bool = False
+        self.payload_drop_carrier_id: Optional[int] = None
+        self.payload_drop_target_pos: Optional[np.ndarray] = None
+        self.payload_drop_stage: str = "IDLE"     # "IDLE", "TRANSIT_TO_DROP", "PRECISION_DESCENT", "RELEASE_HOVER", "PAYLOAD_FALLING", "CARRIER_EGRESS", "MISSION_COMPLETE"
+        self.payload_drop_timer: float = 0.0
 
     @property
     def target_pos(self) -> np.ndarray:
@@ -395,6 +404,82 @@ class C2Gateway:
                         self.courier_active = False
                         courier.flight_state = "CRUISE"
                         courier.courier_mission_active = False
+
+        # 5. Cairn G1 Solar Repeater Payload Drop (TKT-59 / PLN-04)
+        if self.payload_drop_active and self.sim is not None:
+            carrier = self.sim.get_drone_by_id(self.payload_drop_carrier_id) if hasattr(self.sim, "get_drone_by_id") else None
+            anchor = getattr(self.sim, "tether_anchor", TETHER_ANCHOR)
+
+            if carrier is None or carrier.crashed:
+                self.payload_drop_stage = "CARRIER_LOST"
+                self.payload_drop_active = False
+                self.log_event("WARN", f"[PAYLOAD DROP FAILURE: Carrier #{self.payload_drop_carrier_id} crashed or lost.]")
+            else:
+                if self.payload_drop_stage == "TRANSIT_TO_DROP":
+                    if self.payload_drop_target_pos is not None:
+                        dist_xy = float(np.linalg.norm(carrier.pos[:2] - self.payload_drop_target_pos[:2]))
+                        if dist_xy <= 4.0:
+                            self.payload_drop_stage = "PRECISION_DESCENT"
+                            carrier.flight_state = "PRECISION_DESCENT"
+                            carrier.status = "PRECISION_DESCENT"
+                            hover_target = np.array([self.payload_drop_target_pos[0], self.payload_drop_target_pos[1], 3.0], dtype=float)
+                            carrier.acknowledged_target = np.copy(hover_target)
+                            carrier.target_station = np.copy(hover_target)
+                            self.log_event("CMD", f"[PAYLOAD DROP: Carrier #{carrier.id} arrived overhead drop zone. Descending to 3.0m precision hover.]")
+
+                elif self.payload_drop_stage == "PRECISION_DESCENT":
+                    z = float(carrier.pos[2])
+                    spd = float(np.linalg.norm(carrier.vel))
+                    if z <= 3.5 and spd <= 1.0:
+                        self.payload_drop_stage = "RELEASE_HOVER"
+                        self.payload_drop_timer = 0.0
+                        self.log_event("CMD", f"[PAYLOAD DROP: Carrier #{carrier.id} stabilized in precision hover at Z={z:.1f}m. Releasing magnetic latch.]")
+
+                elif self.payload_drop_stage == "RELEASE_HOVER":
+                    self.payload_drop_timer += dt
+                    if self.payload_drop_timer >= 0.2:
+                        carrier.payload_attached = False
+                        if hasattr(self.sim, "falling_payloads"):
+                            self.sim.falling_payloads.append({
+                                "carrier_id": carrier.id,
+                                "pos": np.copy(carrier.pos),
+                                "vel": np.array([0.0, 0.0, -1.0], dtype=float),
+                            })
+                        self.payload_drop_stage = "PAYLOAD_FALLING"
+                        self.payload_drop_timer = 0.0
+                        self.log_event("STATUS", f"[PAYLOAD DROP: Cairn G1 Repeater pod released! Falling to terrain.]")
+
+                elif self.payload_drop_stage == "PAYLOAD_FALLING":
+                    egress_target = np.array([carrier.pos[0], carrier.pos[1], 25.0], dtype=float)
+                    carrier.flight_state = "CARRIER_EGRESS"
+                    carrier.status = "CARRIER_EGRESS"
+                    carrier.acknowledged_target = np.copy(egress_target)
+                    carrier.target_station = np.copy(egress_target)
+                    self.payload_drop_timer += dt
+
+                    # Check if repeater landed on ground in sim
+                    has_landed = False
+                    if hasattr(self.sim, "ground_repeaters") and self.sim.ground_repeaters:
+                        for rep in self.sim.ground_repeaters:
+                            if rep.carrier_id == carrier.id:
+                                has_landed = True
+                                break
+                    if has_landed or self.payload_drop_timer >= 1.5:
+                        self.payload_drop_stage = "CARRIER_EGRESS"
+
+                elif self.payload_drop_stage == "CARRIER_EGRESS":
+                    if carrier.pos[2] >= 20.0:
+                        rtb_target = np.array([0.0, 0.0, 25.0], dtype=float)
+                        carrier.acknowledged_target = np.copy(rtb_target)
+                        carrier.target_station = np.copy(rtb_target)
+                        dist_base = float(np.linalg.norm(carrier.pos[:2] - anchor[:2]))
+                        if dist_base <= 15.0:
+                            self.payload_drop_stage = "MISSION_COMPLETE"
+                            self.payload_drop_active = False
+                            carrier.payload_drop_active = False
+                            carrier.flight_state = "CRUISE"
+                            carrier.status = "ACTIVE"
+                            self.log_event("STATUS", f"[PAYLOAD DROP: Carrier #{carrier.id} returned to Base overhead hold. Mission complete.]")
 
     def is_link_active(self) -> bool:
         """Check whether the bidirectional communications link between GCS and fleet is healthy.
@@ -1151,3 +1236,132 @@ class C2Gateway:
         self.courier_stage = "IDLE"
         self.log_event("CMD", "[AUX MISSION: Search and Recall ABORTED by operator]")
         return {"status": "OK", "action": "SEARCH_AND_RECALL_STOPPED"}
+
+    def get_payload_drop_state(self) -> Dict[str, Any]:
+        """Return live telemetry snapshot dictionary for payload drop mission."""
+        carrier = None
+        if self.sim and self.payload_drop_carrier_id is not None:
+            carrier = self.sim.get_drone_by_id(self.payload_drop_carrier_id) if hasattr(self.sim, "get_drone_by_id") else None
+        return {
+            "active": self.payload_drop_active,
+            "stage": self.payload_drop_stage,
+            "carrier_id": self.payload_drop_carrier_id,
+            "target_pos": [round(float(v), 2) for v in self.payload_drop_target_pos] if self.payload_drop_target_pos is not None else None,
+            "payload_attached": bool(getattr(carrier, "payload_attached", True)) if carrier else False,
+            "repeaters_count": len(getattr(self.sim, "ground_repeaters", [])) if self.sim else 0,
+        }
+
+    def deploy_payload_drop(
+        self,
+        target_pos: Optional[Union[List[float], np.ndarray]] = None,
+        carrier_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Deploy 1-Click Aux Mission: Cairn G1 Solar Repeater Payload Drop (TKT-59 / PLN-04).
+        Verifies HEAVY_PAYLOAD and DROP_SERVO pre-flight capabilities.
+        Carrier navigates overhead drop coordinates, hovers at Z=3.0m, and drops solar repeater."""
+        if self.sim is None:
+            return {"status": "ERROR", "reason": "No simulation engine attached"}
+
+        drones = getattr(self.sim, "drones", [])
+        if not drones:
+            return {"status": "ERROR", "reason": "NO_DRONES"}
+
+        # 1. Identify carrier drone
+        carrier = None
+        if carrier_id is not None:
+            carrier = self.sim.get_drone_by_id(carrier_id) if hasattr(self.sim, "get_drone_by_id") else next((d for d in drones if d.id == carrier_id), None)
+            if carrier is None or carrier.crashed:
+                return {"status": "ERROR", "reason": f"Carrier drone #{carrier_id} unavailable"}
+        else:
+            # Pick eligible living, airborne follower with payload attached
+            candidates = [
+                d for d in drones
+                if not d.crashed and d.flight_state not in ("LANDED", "GROUND_IDLE", "CRASHED", "DESCENDING")
+                and getattr(d, "uplink_active", True)
+                and getattr(d, "payload_attached", True)
+            ]
+            for c in candidates:
+                caps = set(getattr(c, "capabilities", []))
+                if "HEAVY_PAYLOAD" in caps and "DROP_SERVO" in caps:
+                    carrier = c
+                    break
+            if carrier is None and candidates:
+                carrier = candidates[0]
+            if carrier is None:
+                return {"status": "ERROR", "reason": "NO_ELIGIBLE_CARRIER", "error": "No available airframes with attached payload to dispatch."}
+
+        # 2. Check if payload already released
+        if not getattr(carrier, "payload_attached", True):
+            return {
+                "status": "ERROR",
+                "code": "NO_PAYLOAD_ATTACHED",
+                "reason": f"Drone #{carrier.id} has already deployed its payload.",
+                "carrier_id": carrier.id,
+            }
+
+        # 3. Pre-Flight Capability Check on carrier
+        auth_check = self.check_mission_authorization("PAYLOAD_DROP", target_drone_id=carrier.id)
+        if not auth_check.get("authorized", True):
+            return {
+                "status": "ERROR",
+                "code": "TIER_AUTHORIZATION_FAILED",
+                "reason": auth_check.get("reason", "TIER_AUTHORIZATION_FAILED"),
+                "missing_capabilities": auth_check.get("missing_capabilities", []),
+                "carrier_id": carrier.id,
+            }
+
+        # Determine target drop coordinate
+        if target_pos is not None:
+            t_pos = np.array([float(target_pos[0]), float(target_pos[1]), 0.0], dtype=float)
+        else:
+            # Default forward 40m along formation/carrier heading
+            yaw = getattr(carrier, "yaw", 0.0)
+            dx = math.cos(yaw) * 40.0
+            dy = math.sin(yaw) * 40.0
+            t_pos = np.array([carrier.pos[0] + dx, carrier.pos[1] + dy, 0.0], dtype=float)
+
+        transit_target = np.array([t_pos[0], t_pos[1], 25.0], dtype=float)
+
+        carrier.payload_drop_active = True
+        carrier.flight_state = "PAYLOAD_TRANSIT"
+        carrier.status = "PAYLOAD_TRANSIT"
+        carrier.acknowledged_target = np.copy(transit_target)
+        carrier.target_station = np.copy(transit_target)
+
+        self.payload_drop_active = True
+        self.payload_drop_carrier_id = carrier.id
+        self.payload_drop_target_pos = np.copy(t_pos)
+        self.payload_drop_stage = "TRANSIT_TO_DROP"
+        self.payload_drop_timer = 0.0
+
+        self.log_event(
+            "CMD",
+            f"[AUX MISSION: Carrier #{carrier.id} dispatched to drop Cairn G1 Repeater at ({t_pos[0]:.1f}, {t_pos[1]:.1f})]"
+        )
+
+        return {
+            "status": "OK",
+            "action": "PAYLOAD_DROP_DEPLOYED",
+            "carrier_id": carrier.id,
+            "target_pos": [round(float(v), 2) for v in t_pos],
+            "stage": self.payload_drop_stage,
+        }
+
+    def stop_payload_drop(self) -> Dict[str, Any]:
+        """Abort active Cairn G1 payload drop mission (TKT-59)."""
+        if not self.payload_drop_active:
+            return {"status": "ERROR", "reason": "No active payload drop mission"}
+
+        if self.sim and self.payload_drop_carrier_id is not None:
+            carrier = self.sim.get_drone_by_id(self.payload_drop_carrier_id) if hasattr(self.sim, "get_drone_by_id") else None
+            if carrier and not carrier.crashed:
+                carrier.payload_drop_active = False
+                carrier.flight_state = "CRUISE"
+                carrier.status = "ACTIVE"
+                carrier.acknowledged_target = np.array([0.0, 0.0, 25.0], dtype=float)
+                carrier.target_station = np.array([0.0, 0.0, 25.0], dtype=float)
+
+        self.payload_drop_active = False
+        self.payload_drop_stage = "IDLE"
+        self.log_event("CMD", "[AUX MISSION: Payload Drop ABORTED by operator]")
+        return {"status": "OK", "action": "PAYLOAD_DROP_STOPPED"}

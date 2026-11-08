@@ -264,6 +264,18 @@ class SwarmWebServer:
             self.session_manager.add_event("CMD", "Aborted Aux Mission: SEARCH & RECALL", sim_time=self.sim.sim_time)
             return res
 
+        elif cmd in ("DEPLOY_PAYLOAD_DROP", "PAYLOAD_DROP", "DEPLOY_CAIRN_G1", "DROP_REPEATER"):
+            target_pos = cmd_dict.get("target_pos", cmd_dict.get("pos"))
+            carrier_id = cmd_dict.get("carrier_id")
+            res = self.sim.deploy_payload_drop(target_pos=target_pos, carrier_id=carrier_id)
+            self.session_manager.add_event("CMD", f"Deployed Aux Mission: Cairn G1 Repeater Payload Drop (Carrier: {carrier_id})", sim_time=self.sim.sim_time)
+            return res
+
+        elif cmd in ("STOP_PAYLOAD_DROP", "ABORT_PAYLOAD_DROP", "ABORT_DROP"):
+            res = self.sim.stop_payload_drop()
+            self.session_manager.add_event("CMD", "Aborted Aux Mission: Payload Drop", sim_time=self.sim.sim_time)
+            return res
+
         elif cmd in ("START_ROUTE_PRESET", "SET_ROUTE_PRESET"):
             preset = cmd_dict.get("preset", cmd_dict.get("name", "BOX_PATROL"))
             res = self.sim.start_route_preset(preset)

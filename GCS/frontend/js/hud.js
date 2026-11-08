@@ -116,6 +116,18 @@
             }
         });
 
+        // 1-Click Aux Mission: Cairn G1 Solar Repeater Payload Drop (TKT-59 / PLN-04)
+        setupBtn('btn-payload-drop', () => {
+            const dropBtn = document.getElementById('btn-payload-drop');
+            if (dropBtn && dropBtn.classList.contains('active-payload')) {
+                logEvent('CMD', 'Aborting Aux Mission: Cairn G1 Payload Drop');
+                window.swarmClient?.send({ cmd: 'STOP_PAYLOAD_DROP' });
+            } else {
+                logEvent('CMD', 'Deploying Aux Mission: Cairn G1 Repeater Payload Drop');
+                window.swarmClient?.send({ cmd: 'DEPLOY_PAYLOAD_DROP' });
+            }
+        });
+
         // Custom Target Coordinates
         const btnDispatchCustom = document.getElementById('btn-dispatch-custom');
         if (btnDispatchCustom) {
@@ -550,6 +562,26 @@
             if (btnRecall) {
                 btnRecall.classList.remove('active-recall');
                 btnRecall.innerHTML = '&#x1F50D; S&amp;R ESCORT (LKP)';
+            }
+        }
+
+        // 4b6. Monitor 1-Click Aux Mission: Cairn G1 Repeater Payload Drop (TKT-59)
+        const payloadData = frame.payload_deposit;
+        const btnPayload = document.getElementById('btn-payload-drop');
+        if (payloadData && payloadData.active) {
+            if (btnPayload) {
+                btnPayload.classList.add('active-payload');
+                btnPayload.innerHTML = `&#x1F4E6; DROP [${payloadData.stage}]`;
+            }
+            if (routeActiveBadge && (!bingoData || !bingoData.active) && (!recallData || !recallData.active)) {
+                routeActiveBadge.className = 'badge-route-active badge-route-payload';
+                routeActiveBadge.textContent = `CAIRN G1 [${payloadData.stage}]`;
+            }
+        } else {
+            if (btnPayload) {
+                btnPayload.classList.remove('active-payload');
+                const count = payloadData?.repeaters_count ?? 0;
+                btnPayload.innerHTML = count > 0 ? `&#x1F4E6; CAIRN G1 DROP (${count} ACTIVE)` : '&#x1F4E6; CAIRN G1 REPEATER DROP';
             }
         }
 

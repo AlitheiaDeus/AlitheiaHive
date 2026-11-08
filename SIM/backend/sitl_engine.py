@@ -39,7 +39,7 @@ if sys.platform == "win32":
 import numpy as np
 
 from OBC.backend.drone_firmware import (
-    Drone, TIER_LEADER, TIER_ESCORT, TIER_SCOUT,
+    Drone, GroundRepeater, TIER_LEADER, TIER_ESCORT, TIER_SCOUT,
     BASE_TIER_T0, BASE_TIER_T1_5, BASE_TIER_T3,
     TETHER_NONE, TETHER_DATA_ONLY, TETHER_POWER_DATA,
     RF_MODE_YIP, RF_MODE_BORK, RF_MODE_HOWL,
@@ -204,6 +204,10 @@ class SITLWorldEngine:
 
         # Tactical GNSS Denial & Dead-Reckoning RTB (TKT-52)
         self.gnss_denied_all: bool = False
+
+        # Stationary Ground Repeaters & Dropped Payloads (TKT-59 / PLN-04)
+        self.ground_repeaters: List[GroundRepeater] = []
+        self.falling_payloads: List[Dict[str, Any]] = []
 
         # Build Drone Fleet
         self.drones: List[Drone] = []
@@ -665,6 +669,8 @@ class SITLWorldEngine:
         self.scramble_active = False
         self.scramble_timer = 0.0
         self.gnss_denied_all = False
+        self.ground_repeaters.clear()
+        self.falling_payloads.clear()
         self._highest_drone_id = count - 1
 
         # Fleet Hardware Identity Registry (TKT-48)
@@ -999,6 +1005,21 @@ class SITLWorldEngine:
     def stop_search_and_recall(self) -> Dict[str, Any]:
         return self.c2.stop_search_and_recall()
 
+    # 1-Click Aux Mission: Cairn G1 Solar Repeater Payload Drop (TKT-59 / PLN-04)
+    @property
+    def payload_drop_active(self) -> bool:
+        return self.c2.payload_drop_active
+
+    @property
+    def payload_drop_stage(self) -> str:
+        return self.c2.payload_drop_stage
+
+    def deploy_payload_drop(self, target_pos: Optional[Union[List[float], np.ndarray]] = None, carrier_id: Optional[int] = None) -> Dict[str, Any]:
+        return self.c2.deploy_payload_drop(target_pos=target_pos, carrier_id=carrier_id)
+
+    def stop_payload_drop(self) -> Dict[str, Any]:
+        return self.c2.stop_payload_drop()
+
     def get_acknowledged_target(self) -> np.ndarray:
         """Return the current onboard target acknowledged by the active swarm guidance."""
         if self.comms_mode in ("TETHERED_RELAY", "LEADER_FOLLOWER"):
@@ -1177,6 +1198,42 @@ class SITLWorldEngine:
                         self.clear_pads()
             else:
                 self.turnaround_timer = 0.0
+
+        # 0f. Advance Falling Payloads (TKT-59 / PLN-04)
+        surviving_payloads = []
+        for p in self.falling_payloads:
+            p["vel"][2] -= 9.81 * dt
+            p["pos"] += p["vel"] * dt
+            if p["pos"][2] <= 0.05:
+                # Touchdown on terrain!
+                p["pos"][2] = 0.05
+                rep_id = len(self.ground_repeaters) + 1
+                repeater = GroundRepeater(
+                    id=rep_id,
+                    pos=np.array([p["pos"][0], p["pos"][1], 0.05], dtype=float),
+                    active=True,
+                    solar_powered=True,
+                    radio_range=60.0,
+                    deployed_at=float(self.sim_time),
+                    carrier_id=p.get("carrier_id"),
+                )
+                self.ground_repeaters.append(repeater)
+                if hasattr(self, "c2") and hasattr(self.c2, "log_event"):
+                    self.c2.log_event("STATUS", f"[TOUCHDOWN: Cairn G1 Repeater #{rep_id} anchored at ({repeater.pos[0]:.1f}, {repeater.pos[1]:.1f}). Solar transceiver ACTIVE.]")
+            else:
+                surviving_payloads.append(p)
+        self.falling_payloads = surviving_payloads
+
+        # Reset GNSS dead-reckoning drift for drones passing near active ground repeaters (TKT-59)
+        if self.ground_repeaters:
+            for d in self.drones:
+                if not d.crashed and getattr(d, "gnss_denied", False):
+                    for rep in self.ground_repeaters:
+                        if rep.active:
+                            dist_rep = float(np.linalg.norm(d.pos - rep.pos))
+                            if dist_rep <= 30.0:
+                                d.gnss_denied_timer = 0.0
+                                break
 
         # 1. Update Physical RF Channel, Asymmetric Link Budget & Mesh Gateway (TKT-49)
         self._update_radio_comms()
@@ -1541,6 +1598,16 @@ class SITLWorldEngine:
                 drone.gnss_settled = True
                 drone.status = "EMERGENCY_SETTLE"
 
+            # Reset GNSS dead-reckoning drift if near active ground repeater (TKT-59)
+            if self.ground_repeaters and getattr(drone, "gnss_denied", False):
+                for rep in self.ground_repeaters:
+                    if rep.active:
+                        dist_rep = float(np.linalg.norm(drone.pos - rep.pos))
+                        if dist_rep <= 30.0:
+                            drone.gnss_denied_timer = 0.0
+                            drone.drift_radius = 0.0
+                            break
+
     # ==========================================================================
     # 1. Radio Comms (10 Hz Baud), Asymmetric Link Budget & Mesh Gateway (TKT-49)
     # ==========================================================================
@@ -1604,6 +1671,28 @@ class SITLWorldEngine:
             queue = [(gw_id, gw_id) for gw_id in direct_gateways]
             visited = set(direct_gateways)
 
+            # Direct link assessment for stationary ground repeaters (TKT-59 / PLN-04)
+            linked_repeaters = []
+            for rep in self.ground_repeaters:
+                if not rep.active:
+                    rep.uplink_active = False
+                    rep.downlink_active = False
+                    continue
+                d_rep_gcs = float(np.linalg.norm(rep.pos - self.tether_anchor))
+                rep.uplink_active = (d_rep_gcs <= RANGE_HOWL and not self.is_packet_dropped(d_rep_gcs, is_hardline=False, max_range=RANGE_HOWL))
+                rep_direct = (d_rep_gcs <= 50.0)
+                if not rep_direct:
+                    for gw_id in direct_gateways:
+                        gw_d = next((d for d in living if d.id == gw_id), None)
+                        if gw_d:
+                            d_rg = float(np.linalg.norm(rep.pos - gw_d.pos))
+                            if d_rg <= RANGE_P2P and not self.is_packet_dropped(d_rg, is_hardline=False, max_range=RANGE_P2P):
+                                rep_direct = True
+                                break
+                rep.downlink_active = rep_direct
+                if rep.downlink_active:
+                    linked_repeaters.append(rep)
+
             while queue:
                 curr_id, root_gw = queue.pop(0)
                 curr_drone = next((d for d in living if d.id == curr_id), None)
@@ -1619,6 +1708,17 @@ class SITLWorldEngine:
                             peer.gateway_id = root_gw
                             visited.add(peer.id)
                             queue.append((peer.id, root_gw))
+
+            # Extend mesh to living drones within RANGE_P2P of any linked ground repeater (TKT-59)
+            for rep in self.ground_repeaters:
+                if rep.active and rep.downlink_active:
+                    for peer in living:
+                        if peer.id not in visited:
+                            d_peer = float(np.linalg.norm(peer.pos - rep.pos))
+                            if d_peer <= RANGE_P2P and not self.is_packet_dropped(d_peer, is_hardline=False, max_range=RANGE_P2P):
+                                peer.downlink_active = True
+                                peer.gateway_id = rep.carrier_id if rep.carrier_id is not None else 0
+                                visited.add(peer.id)
 
             # 3. Yip-Lost State & Heartbeat / RSSI
             for d in living:
@@ -1759,6 +1859,14 @@ class SITLWorldEngine:
                     else:
                         drone.downlink_active = False
                         drone.gateway_id = None
+                        if self.ground_repeaters:
+                            for rep in self.ground_repeaters:
+                                if rep.active and rep.downlink_active:
+                                    d_rep = float(np.linalg.norm(drone.pos - rep.pos))
+                                    if d_rep <= RANGE_P2P and not self.is_packet_dropped(d_rep, is_hardline=False, max_range=RANGE_P2P):
+                                        drone.downlink_active = True
+                                        drone.gateway_id = rep.carrier_id if rep.carrier_id is not None else 0
+                                        break
 
                 drone.yip_lost = bool(drone.uplink_active and not drone.downlink_active)
 
@@ -1846,7 +1954,7 @@ class SITLWorldEngine:
                 d.lost_link = True
                 if not getattr(d, "radio_silence_permitted", False):
                     # Autonomous backtrack toward radio horizon (suppressed during tether loiter)
-                    if not is_tether_loitering and d.flight_state not in ("TAKEOFF", "DESCENDING", "BACKTRACK_HOLD", "PERIMETER_HOLD", "LANDED", "GROUND_IDLE", "CRASHED", "BREAKAWAY_JETTISON", "CORRIDOR_ERTB", "COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN"):
+                    if not is_tether_loitering and d.flight_state not in ("TAKEOFF", "DESCENDING", "BACKTRACK_HOLD", "PERIMETER_HOLD", "LANDED", "GROUND_IDLE", "CRASHED", "BREAKAWAY_JETTISON", "CORRIDOR_ERTB", "COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN", "PAYLOAD_TRANSIT", "PRECISION_DESCENT", "CARRIER_EGRESS"):
                         d.flight_state = "BACKTRACK_HOLD"
                         d.status = "BACKTRACK_HOLD"
                         d.backtrack_hold = True
@@ -1858,7 +1966,7 @@ class SITLWorldEngine:
                         if hasattr(self, "c2") and hasattr(self.c2, "log_event"):
                             self.c2.log_event("WARN", f"Drone #{d.id} heartbeat watchdog expired! Backtracking along breadcrumbs to radio horizon.")
                 else:
-                    if d.status != "LOST_LINK" and d.flight_state not in ("LANDED", "GROUND_IDLE", "CRASHED", "COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN"):
+                    if d.status != "LOST_LINK" and d.flight_state not in ("LANDED", "GROUND_IDLE", "CRASHED", "COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN", "PAYLOAD_TRANSIT", "PRECISION_DESCENT", "CARRIER_EGRESS"):
                         d.status = "LOST_LINK"
 
             # 4. Link restoration during backtrack or corridor ERTB
@@ -3363,6 +3471,8 @@ class SITLWorldEngine:
                 "target_lkp": [round(float(v), 2) for v in self.c2.courier_target_lkp] if self.c2.courier_target_lkp is not None else None,
                 "dwell_timer": round(float(self.c2.courier_dwell_timer), 1),
             },
+            "payload_deposit": self.c2.get_payload_drop_state(),
+            "ground_repeaters": [r.to_dict() for r in self.ground_repeaters],
             "two_ic_id": two_ic_id,
             "lost_link_loiter_timer": round(max(0.0, float(self.lost_link_loiter_timer)), 1),
             "swarm_rtb_active": self.swarm_rtb_active,

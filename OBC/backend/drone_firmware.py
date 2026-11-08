@@ -6,6 +6,7 @@ discrete waypoint queue, altitude-gated breakaway dive, and local failsafes.
 """
 
 from __future__ import annotations
+from dataclasses import dataclass
 import math
 import os
 import sys
@@ -43,6 +44,8 @@ DEFAULT_CAPABILITIES_T1_5: List[str] = [
     "RECON",
     "S&R_OPTICAL",
     "BORK_AMPLIFY",
+    "HEAVY_PAYLOAD",
+    "DROP_SERVO",
 ]
 
 DEFAULT_CAPABILITIES_T3: List[str] = [
@@ -114,6 +117,33 @@ class IngressCorridorStack:
 
     def to_list(self) -> List[List[float]]:
         return [[round(v, 2) for v in wp] for wp in self._stack]
+
+
+@dataclass
+class GroundRepeater:
+    """Represents a deployed stationary Cairn G1 solar-powered mesh repeater node on the ground (TKT-59 / PLN-04)."""
+    id: int
+    pos: np.ndarray                             # [x, y, 0.05] (anchored on terrain)
+    active: bool = True
+    solar_powered: bool = True
+    radio_range: float = 60.0                   # RANGE_P2P = 60.0m
+    downlink_active: bool = False
+    uplink_active: bool = False
+    deployed_at: float = 0.0
+    carrier_id: Optional[int] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "pos": [round(float(v), 2) for v in self.pos],
+            "active": self.active,
+            "solar_powered": self.solar_powered,
+            "radio_range": round(float(self.radio_range), 1),
+            "downlink_active": self.downlink_active,
+            "uplink_active": self.uplink_active,
+            "deployed_at": round(float(self.deployed_at), 2),
+            "carrier_id": self.carrier_id,
+        }
 
 
 class Drone:
@@ -270,6 +300,10 @@ class Drone:
         self.courier_escortee_id: Optional[int] = None
         self.escort_leader_id: Optional[int] = None
 
+        # Payload Carrier & Drop Mechanism (TKT-59 / PLN-04)
+        self.payload_attached: bool = True
+        self.payload_drop_active: bool = False
+
         # Per-Drone Autonomous Brain & Packet Mailboxes (TLK-01 Pure I/O Boundary)
         self.inbox: List[RadioPacket] = []
         self.outbox: List[RadioPacket] = []
@@ -371,6 +405,8 @@ class Drone:
         self.courier_dwell_timeout = 15.0
         self.courier_escortee_id = None
         self.escort_leader_id = None
+        self.payload_attached = True
+        self.payload_drop_active = False
         self.inbox.clear()
         self.outbox.clear()
         if hasattr(self, "brain") and self.brain is not None:
@@ -508,4 +544,6 @@ class Drone:
             "wp_loitering": self.wp_loitering,
             "wp_loiter_timer": round(float(self.wp_loiter_timer), 1),
             "wp_total_loiter": round(float(self.wp_total_loiter), 1),
+            "payload_attached": self.payload_attached,
+            "payload_drop_active": self.payload_drop_active,
         }

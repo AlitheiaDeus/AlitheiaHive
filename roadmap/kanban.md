@@ -84,6 +84,7 @@ kanban
     fix05["Comms Horizon Telemetry Gate"]@{ ticket: '[FIX-05]', priority: 'Very High' }
     tkt58["1-Click Aux Mission: Patrol to BINGO RTB"]@{ ticket: '[TKT-58]', priority: 'Medium' }
     tkt51["Physical Courier / Search-and-Recall Mule"]@{ ticket: '[TKT-51]', priority: 'Medium' }
+    tkt59["TKT-59: Cairn G1 Repeater Payload Drop"]@{ ticket: '[TKT-59]', priority: 'High' }
 ```
 
 ---
@@ -97,6 +98,8 @@ kanban
 
 | Ticket ID | Grade | Title | Operational Inspiration | Spec Document |
 | :--- | :--- | :--- | :--- | :--- |
+| **`TKT-59`** | `🚀 Feature` | 1-Click Aux Mission: Cairn G1 Solar Repeater Payload Drop | Precision payload release at Z=3m, ground solar repeater joins gossip mesh | [TKT-59.md](tasks/TKT-59.md) |
+| **`TKT-51`** | `🚀 Feature` | Physical Courier / Search-and-Recall Mule to LKP | Targeted LKP dwell, P2P rescue handshake, and reverse tandem escort | [TKT-51.md](tasks/TKT-51.md) |
 | **`TKT-58`** | `🚀 Feature` | 1-Click Aux Mission: Patrol to BINGO RTB | Autonomous patrol looping until BINGO battery triggers automated 2-stage RTB | [TKT-58.md](tasks/TKT-58.md) |
 | **`PLN-02`** | `🏗️ Epic` | Auxiliary Mission Concepts & Waypoint Engine (Tactical Sub-Routines) | Phased mission workflows: Waypoint queues & discrete sub-routines | [PLN-02.md](tasks/PLN-02.md) |
 | **`BUG-06`** | `🐞 Bug` | OBC Failsafe Consolidation & Corridor ERTB | t-GCSH/GCSH split, 2IC loiter hold, T2 gateway relay & corridor stack ERTB | [BUG-06.md](tasks/BUG-06.md) |

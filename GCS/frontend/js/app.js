@@ -487,6 +487,67 @@
     }
 
     // =========================================================================
+    // 2d. Stationary Ground Repeaters & Cairn G1 Beacons (TKT-59 / PLN-04)
+    // =========================================================================
+    const groundRepeaterMeshes = new Map();
+
+    function updateGroundRepeaters(repeaters) {
+        if (!scene) return;
+        const activeIds = new Set();
+        if (Array.isArray(repeaters)) {
+            repeaters.forEach(rep => {
+                activeIds.add(rep.id);
+                let entry = groundRepeaterMeshes.get(rep.id);
+                if (!entry) {
+                    const group = new THREE.Group();
+                    group.position.set(rep.pos[0], rep.pos[1], rep.pos[2] || 0.05);
+
+                    // Central Solar Pod Box
+                    const podGeo = new THREE.CylinderGeometry(0.8, 0.9, 0.4, 6);
+                    const podMat = new THREE.MeshStandardMaterial({
+                        color: 0x00FFAA,
+                        emissive: 0x00FFAA,
+                        emissiveIntensity: 0.6,
+                        roughness: 0.2,
+                        metalness: 0.8,
+                    });
+                    const podMesh = new THREE.Mesh(podGeo, podMat);
+                    podMesh.rotation.x = Math.PI / 2;
+                    group.add(podMesh);
+
+                    // Pulsing P2P Mesh Beacon Ring (60m radius)
+                    const ringGeo = new THREE.RingGeometry(59.5, 60.5, 64);
+                    const ringMat = new THREE.MeshBasicMaterial({
+                        color: 0x00FFAA,
+                        side: THREE.DoubleSide,
+                        transparent: true,
+                        opacity: 0.25,
+                    });
+                    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+                    group.add(ringMesh);
+
+                    scene.add(group);
+                    entry = { group, podMesh, ringMesh };
+                    groundRepeaterMeshes.set(rep.id, entry);
+                }
+
+                // Update position & pulse ring
+                entry.group.position.set(rep.pos[0], rep.pos[1], rep.pos[2] || 0.05);
+                const pulse = 0.15 + 0.15 * Math.sin(performance.now() * 0.005);
+                entry.ringMesh.material.opacity = pulse;
+            });
+        }
+
+        // Remove any repeaters no longer active
+        for (const [id, entry] of groundRepeaterMeshes.entries()) {
+            if (!activeIds.has(id)) {
+                scene.remove(entry.group);
+                groundRepeaterMeshes.delete(id);
+            }
+        }
+    }
+
+    // =========================================================================
     // 2c. Discrete Waypoint Mission Route Visuals (TKT-28)
     // =========================================================================
     let missionRouteGroup = null;
@@ -1120,6 +1181,9 @@
 
         // Update Discrete Mission Route Visuals (TKT-28)
         updateMissionRouteVisuals(frame.mission_route);
+
+        // Update Stationary Ground Repeaters (TKT-59 / PLN-04)
+        updateGroundRepeaters(frame.ground_repeaters);
     }
 
     let tetherSeveredPrev = false;

@@ -159,10 +159,10 @@ class LeaderFollowerBrain(BaseBrain):
                 state_updates=updates,
             ), outbox
 
-        # Courier S&R Escort States (TKT-51)
-        if telemetry.flight_state in ("COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN"):
+        # Courier S&R Escort & Payload Drop States (TKT-51 / TKT-59)
+        if telemetry.flight_state in ("COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN", "PAYLOAD_TRANSIT", "PRECISION_DESCENT", "CARRIER_EGRESS"):
             ack_t = np.copy(updates.get("acknowledged_target", telemetry.acknowledged_target))
-            spd = 0.0 if telemetry.flight_state == "RENDEZVOUS_DWELL" else 10.0
+            spd = 0.0 if telemetry.flight_state == "RENDEZVOUS_DWELL" else (2.0 if telemetry.flight_state == "PRECISION_DESCENT" else 10.0)
             acc = self._steer_toward(telemetry.pos, telemetry.vel, ack_t, max_speed=spd)
             yaw = self._velocity_yaw(telemetry.vel)
             self._emit_periodic_packets(telemetry, updates, outbox, dt)
@@ -406,7 +406,11 @@ class LeaderFollowerBrain(BaseBrain):
                     self.heading_initialized = True
                 if "assigned_slots" in p and isinstance(p["assigned_slots"], dict) and p["assigned_slots"]:
                     self.assigned_slots = {int(k): int(v) for k, v in p["assigned_slots"].items()}
-                if "acknowledged_target" in p and telemetry.enrolled:
+                is_aux_mission = telemetry.flight_state in (
+                    "COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN",
+                    "PAYLOAD_TRANSIT", "PRECISION_DESCENT", "CARRIER_EGRESS",
+                )
+                if "acknowledged_target" in p and telemetry.enrolled and not is_aux_mission:
                     ack_arr = np.array(p["acknowledged_target"], dtype=float)
                     updates["acknowledged_target"] = ack_arr
                 if "pos" in p and p["pos"] is not None:
