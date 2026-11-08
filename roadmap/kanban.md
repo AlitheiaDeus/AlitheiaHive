@@ -54,9 +54,8 @@ kanban
     tkt47["Declarative Field Deployment Scenarios"]@{ ticket: '[TKT-47]', priority: 'Medium' }
     tkt51["Physical Courier / Search-and-Recall Mule"]@{ ticket: '[TKT-51]', priority: 'Medium' }
   todo["Todo (Active Pipeline)"]
-    tkt58["1-Click Aux Mission: Patrol to BINGO RTB"]@{ ticket: '[TKT-58]', priority: 'Medium' }
     pln02["PLN-02: Auxiliary Mission Engine Master"]@{ ticket: '[PLN-02]', priority: 'High' }
-  in_progress["In Progress (WIP = 0)"]
+  in_progress["In Progress (WIP = 1)"]
   completed["Completed (Fresh / Review)"]
     bug06["OBC Failsafe Consolidation: t-GCSH, Relays & Corridor ERTB"]@{ ticket: '[BUG-06]', priority: 'Very High' }
     bug05["Downlink Telemetry Leak Beyond Bork Range"]@{ ticket: '[BUG-05]', priority: 'Medium' }
@@ -84,6 +83,7 @@ kanban
     fix06["MAVLink Multi-Vehicle Responders"]@{ ticket: '[FIX-06]', priority: 'Very High' }
     tkt23["Natural Reynolds 3D Flocking"]@{ ticket: '[TKT-23]', priority: 'High' }
     fix05["Comms Horizon Telemetry Gate"]@{ ticket: '[FIX-05]', priority: 'Very High' }
+    tkt58["1-Click Aux Mission: Patrol to BINGO RTB"]@{ ticket: '[TKT-58]', priority: 'Medium' }
 ```
 
 ---

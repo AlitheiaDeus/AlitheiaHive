@@ -185,6 +185,8 @@ class Drone:
 
         # Status & Battery
         self.battery: float = 100.0
+        self.bingo_threshold: float = 20.0
+        self.bingo_failsafe_triggered: bool = False
         self.status: str = "ACTIVE" if not is_leader else "FLEET_LEADER"
         self.tether_lost: bool = False
 
@@ -297,6 +299,8 @@ class Drone:
         self.yip_lost = False
         self.gateway_id = None
         self.battery = 100.0
+        self.bingo_threshold = 20.0
+        self.bingo_failsafe_triggered = False
         self.is_leader = is_leader
         self.status = "FLEET_LEADER" if is_leader else "ACTIVE"
         self.tether_lost = False
@@ -434,6 +438,7 @@ class Drone:
             "yip_lost": self.yip_lost,
             "gateway_id": self.gateway_id,
             "battery": round(float(self.battery), 1),
+            "bingo_failsafe_triggered": bool(getattr(self, "bingo_failsafe_triggered", False)),
             "status": self.status,
             "rotor_rpm": round(float(self.rotor_rpm), 0),
             "jettison_timer": round(float(self.jettison_timer), 2),

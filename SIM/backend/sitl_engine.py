@@ -182,6 +182,8 @@ class SITLWorldEngine:
 
         # Bubble 1: Tactical C2 Gateway (GCS Intent & Mission Layer)
         self.c2: C2Gateway = C2Gateway(self)
+        self.battery_drain_multiplier: float = 1.0  # Tactical power drain multiplier (TKT-21 / TKT-58)
+        self.tactical_power_drain: bool = True
 
         # Fleet Doctrine A (Lost-Link Failsafe Loiter & Automated RTB) (TKT-16)
         self.lost_link_loiter_timer: float = 0.0
@@ -945,6 +947,29 @@ class SITLWorldEngine:
     def is_link_active(self) -> bool:
         return self.c2.is_link_active()
 
+    # 1-Click Aux Mission: Patrol to BINGO RTB Delegations (TKT-58)
+    @property
+    def bingo_mission_active(self) -> bool:
+        return self.c2.bingo_mission_active
+
+    @property
+    def bingo_threshold(self) -> float:
+        return self.c2.bingo_threshold
+
+    @property
+    def bingo_triggered(self) -> bool:
+        return self.c2.bingo_triggered
+
+    @property
+    def bingo_stage(self) -> str:
+        return self.c2.bingo_stage
+
+    def deploy_patrol_to_bingo(self, bingo_threshold: float = 25.0, pattern: str = "BOX_PATROL") -> Dict[str, Any]:
+        return self.c2.deploy_patrol_to_bingo(bingo_threshold=bingo_threshold, pattern=pattern)
+
+    def stop_patrol_to_bingo(self) -> Dict[str, Any]:
+        return self.c2.stop_patrol_to_bingo()
+
     def get_acknowledged_target(self) -> np.ndarray:
         """Return the current onboard target acknowledged by the active swarm guidance."""
         if self.comms_mode in ("TETHERED_RELAY", "LEADER_FOLLOWER"):
@@ -1456,8 +1481,36 @@ class SITLWorldEngine:
             drone.pitch = float(np.clip(-drone.acc[0] * 0.04, -0.4, 0.4))
             drone.roll = float(np.clip(-drone.acc[1] * 0.04, -0.4, 0.4))
 
-            # Battery drain
-            drone.battery = max(0.0, drone.battery - 0.005 * dt)
+            # Battery drain (TKT-21 / TKT-58 Tactical Power Drain)
+            if drone.tether_type == TETHER_POWER_DATA and not self.tether_severed:
+                drone.battery = 100.0
+            else:
+                if drone.flight_state in ("LANDED", "GROUND_IDLE"):
+                    base_rate = 0.001
+                else:
+                    speed = math.hypot(drone.vel[0], drone.vel[1])
+                    base_rate = 0.25 if speed > 8.0 else 0.15
+                drain = base_rate * getattr(self, "battery_drain_multiplier", 1.0) * dt
+                drone.battery = max(0.0, drone.battery - drain)
+
+            # Autonomous OBC BINGO Failsafe (Brain Airgap)
+            if drone.battery <= getattr(drone, "bingo_threshold", 20.0) and not drone.crashed and drone.flight_state not in ("LANDED", "GROUND_IDLE", "RETRIEVED"):
+                if getattr(drone, "lost_link", False) and not getattr(drone, "bingo_failsafe_triggered", False):
+                    drone.bingo_failsafe_triggered = True
+                    drone.flight_state = "CORRIDOR_ERTB"
+                    drone.status = "CORRIDOR_ERTB"
+                    if hasattr(drone, "corridor_stack"):
+                        target = drone.corridor_stack.peek()
+                        if target is not None:
+                            drone.acknowledged_target = np.copy(target)
+                            drone.target_station = np.copy(target)
+                    if hasattr(self, "c2") and hasattr(self.c2, "log_event"):
+                        self.c2.log_event("WARN", f"[OBC BINGO FAILSAFE: Drone #{drone.id} in LOST_LINK hit BINGO battery ({drone.battery:.1f}%). Autonomically returning along corridor.]")
+
+            # Emergency Low Battery Soft Settle Protection
+            if drone.battery <= 3.0 and not drone.crashed and drone.flight_state not in ("LANDED", "GROUND_IDLE", "RETRIEVED"):
+                drone.gnss_settled = True
+                drone.status = "EMERGENCY_SETTLE"
 
     # ==========================================================================
     # 1. Radio Comms (10 Hz Baud), Asymmetric Link Budget & Mesh Gateway (TKT-49)
@@ -3265,6 +3318,13 @@ class SITLWorldEngine:
                 "station_count": int(self.rng_station_count),
                 "status": self.rng_status,
                 "paused": self.rng_paused,
+            },
+            "patrol_to_bingo": {
+                "active": self.bingo_mission_active,
+                "threshold": float(self.bingo_threshold),
+                "triggered": bool(self.bingo_triggered),
+                "stage": self.bingo_stage,
+                "pattern": getattr(self.c2, "bingo_pattern", "BOX_PATROL"),
             },
             "two_ic_id": two_ic_id,
             "lost_link_loiter_timer": round(max(0.0, float(self.lost_link_loiter_timer)), 1),

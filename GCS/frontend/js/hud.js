@@ -94,6 +94,16 @@
             window.swarmClient?.send({ cmd: 'TOGGLE_RNG_RECON' });
         });
 
+        // 1-Click Aux Mission: Patrol to BINGO RTB (TKT-58)
+        setupBtn('btn-patrol-bingo', () => {
+            logEvent('CMD', 'Deploying Aux Mission: Patrol to BINGO RTB (Threshold: 25.0%, Pattern: BOX_PATROL)');
+            window.swarmClient?.send({
+                cmd: 'DEPLOY_PATROL_TO_BINGO',
+                threshold: 25.0,
+                pattern: 'BOX_PATROL'
+            });
+        });
+
         // Custom Target Coordinates
         const btnDispatchCustom = document.getElementById('btn-dispatch-custom');
         if (btnDispatchCustom) {
@@ -482,6 +492,33 @@
             if (btnRng) {
                 btnRng.classList.remove('active-rng', 'btn-rng-offline');
                 btnRng.innerHTML = '&#x1F3B2; RNG RECON';
+            }
+        }
+
+        // 4b4. Monitor 1-Click Aux Mission: Patrol to BINGO RTB (TKT-58)
+        const bingoData = frame.patrol_to_bingo;
+        const btnBingo = document.getElementById('btn-patrol-bingo');
+        if (bingoData && bingoData.active) {
+            if (btnBingo) {
+                btnBingo.classList.add('active-bingo');
+                if (bingoData.triggered) {
+                    btnBingo.innerHTML = `&#x26A1; BINGO RTB [${bingoData.stage}]`;
+                } else {
+                    btnBingo.innerHTML = `&#x26A1; PATROL &rarr; BINGO [${bingoData.threshold}%]`;
+                }
+            }
+            if (routeActiveBadge) {
+                routeActiveBadge.className = 'badge-route-active badge-route-bingo';
+                if (bingoData.triggered) {
+                    routeActiveBadge.textContent = `BINGO RTB [${bingoData.stage}]`;
+                } else {
+                    routeActiveBadge.textContent = `PATROL [BINGO ${bingoData.threshold}%]`;
+                }
+            }
+        } else {
+            if (btnBingo) {
+                btnBingo.classList.remove('active-bingo');
+                btnBingo.innerHTML = '&#x26A1; PATROL &rarr; BINGO RTB';
             }
         }
 

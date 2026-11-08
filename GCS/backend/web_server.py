@@ -240,6 +240,18 @@ class SwarmWebServer:
             self.session_manager.add_event("CMD", "Tactical RNG Reconnaissance STOPPED", sim_time=self.sim.sim_time)
             return res
 
+        elif cmd in ("DEPLOY_PATROL_TO_BINGO", "PATROL_TO_BINGO", "START_PATROL_BINGO", "PATROL_BINGO"):
+            threshold = float(cmd_dict.get("threshold", cmd_dict.get("bingo_threshold", 25.0)))
+            pattern = str(cmd_dict.get("pattern", "BOX_PATROL"))
+            res = self.sim.deploy_patrol_to_bingo(bingo_threshold=threshold, pattern=pattern)
+            self.session_manager.add_event("CMD", f"Deployed Aux Mission: PATROL -> BINGO (Pattern: {pattern}, Threshold: {threshold}%)", sim_time=self.sim.sim_time)
+            return res
+
+        elif cmd in ("STOP_PATROL_TO_BINGO", "ABORT_PATROL_BINGO", "STOP_PATROL_BINGO"):
+            res = self.sim.stop_patrol_to_bingo()
+            self.session_manager.add_event("CMD", "Aborted Aux Mission: PATROL -> BINGO", sim_time=self.sim.sim_time)
+            return res
+
         elif cmd in ("START_ROUTE_PRESET", "SET_ROUTE_PRESET"):
             preset = cmd_dict.get("preset", cmd_dict.get("name", "BOX_PATROL"))
             res = self.sim.start_route_preset(preset)

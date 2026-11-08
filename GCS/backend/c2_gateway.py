@@ -108,6 +108,14 @@ class C2Gateway:
         self.rng_status: str = "IDLE"            # "IDLE", "TRACKING", "DWELLING", "UPLINK_OFFLINE"
         self.rng_paused: bool = False            # True when uplink fails or link is lost
 
+        # 1-Click Aux Mission: Patrol to BINGO RTB (TKT-58 / PLN-02)
+        self.bingo_mission_active: bool = False
+        self.bingo_threshold: float = 25.0       # Critical battery percentage triggering automated RTB
+        self.bingo_triggered: bool = False       # True once battery drops below threshold and RTB commences
+        self.bingo_auto_land: bool = True        # Auto-initiate Stage 2 coordinated landing upon marshal arrival
+        self.bingo_stage: str = "IDLE"           # "IDLE", "PATROLLING", "RTB_TRANSIT", "MARSHAL_HOLD", "LANDING", "COMPLETED"
+        self.bingo_pattern: str = "BOX_PATROL"
+
     @property
     def target_pos(self) -> np.ndarray:
         return self._target_pos
@@ -220,6 +228,71 @@ class C2Gateway:
             else:
                 self.rng_dwelling = False
                 self.rng_status = "TRACKING"
+
+        # 3. Patrol to BINGO Watchdog & 2-Stage RTB Coordinator (TKT-58)
+        if self.bingo_mission_active:
+            if not self.bingo_triggered:
+                # Comms gate: GCS evaluates battery strictly from downlinked telemetry (Operator Airgap)
+                if self.is_link_active():
+                    drones = getattr(self.sim, "drones", [])
+                    living_airborne = [
+                        d for d in drones
+                        if not d.crashed and d.flight_state not in ("LANDED", "GROUND_IDLE") and getattr(d, "downlink_active", True)
+                    ]
+                    if living_airborne:
+                        min_battery = min(float(d.battery) for d in living_airborne)
+                        if min_battery <= self.bingo_threshold:
+                            self.bingo_triggered = True
+                            self.bingo_stage = "RTB_TRANSIT"
+                            # Stop active route / patrol pattern
+                            self.route_active = False
+                            self.route_paused = False
+                            if self.sim:
+                                for d in getattr(self.sim, "drones", []):
+                                    d.mission_active = False
+                                    d.mission_paused = False
+                                    d.wp_loitering = False
+                            self.patrol_active = False
+                            # Initiate Stage 1: Overhead Marshal RTB Hold
+                            if hasattr(self.sim, "command_rtb_hold"):
+                                self.sim.command_rtb_hold()
+                            self.log_event(
+                                "WARN",
+                                f"[BINGO TRIGGERED: Fleet battery ({min_battery:.1f}%) reached threshold ({self.bingo_threshold:.1f}%). Commencing 2-Stage RTB.]"
+                            )
+            else:
+                # BINGO RTB already triggered: monitor progress through Stage 1 -> Stage 2
+                if self.bingo_stage == "RTB_TRANSIT":
+                    leader = getattr(self.sim, "leader", None)
+                    drones = getattr(self.sim, "drones", [])
+                    living_airborne = [
+                        d for d in drones
+                        if not d.crashed and d.flight_state not in ("LANDED", "GROUND_IDLE", "RETRIEVED")
+                    ]
+                    anchor = getattr(self.sim, "tether_anchor", TETHER_ANCHOR)
+                    leader_dist = float(np.linalg.norm(leader.pos[:2] - anchor[:2])) if leader else 0.0
+                    all_near_base = all(float(np.linalg.norm(d.pos[:2] - anchor[:2])) <= 25.0 for d in living_airborne) if living_airborne else True
+                    is_marshaling = getattr(self.sim, "overhead_marshal_active", False) or getattr(self.sim, "recovery_stage", "") == "OVERHEAD_MARSHAL"
+
+                    if (leader and leader_dist <= 18.0 and all_near_base) or (is_marshaling and leader and leader_dist <= 18.0):
+                        self.bingo_stage = "MARSHAL_HOLD"
+                        if self.bingo_auto_land:
+                            self.bingo_stage = "LANDING"
+                            if hasattr(self.sim, "command_land_swarm"):
+                                self.sim.command_land_swarm()
+                            self.log_event(
+                                "CMD",
+                                "[BINGO STAGE 2: Fleet established in overhead marshal. Auto-initiating ATC pad landing.]"
+                            )
+                elif self.bingo_stage == "LANDING":
+                    drones = getattr(self.sim, "drones", [])
+                    living_airborne = [
+                        d for d in drones
+                        if not d.crashed and d.flight_state not in ("LANDED", "GROUND_IDLE", "RETRIEVED")
+                    ]
+                    if not living_airborne:
+                        self.bingo_stage = "COMPLETED"
+                        self.bingo_mission_active = False
 
     def is_link_active(self) -> bool:
         """Check whether the bidirectional communications link between GCS and fleet is healthy.
@@ -370,6 +443,10 @@ class C2Gateway:
             self.rng_dwelling = False
             self.rng_status = "IDLE"
             self.rng_paused = False
+        if self.bingo_mission_active and not np.allclose(self._target_pos, [0.0, 0.0, 25.0], atol=1.0):
+            self.bingo_mission_active = False
+            self.bingo_triggered = False
+            self.bingo_stage = "IDLE"
 
         uplink_res = self.dispatch_target_uplink(self._target_pos)
 
@@ -402,6 +479,10 @@ class C2Gateway:
                 self.rng_dwelling = False
                 self.rng_status = "IDLE"
                 self.rng_paused = False
+            if self.bingo_mission_active:
+                self.bingo_mission_active = False
+                self.bingo_triggered = False
+                self.bingo_stage = "IDLE"
         return self.patrol_active
 
     def start_route_preset(self, preset_name: str) -> Dict[str, Any]:
@@ -687,6 +768,10 @@ class C2Gateway:
         """Stop active mission route and hold current position (TKT-28 & TKT-56)."""
         self.route_active = False
         self.route_paused = False
+        if self.bingo_mission_active and not np.allclose(self._target_pos, [0.0, 0.0, 25.0], atol=1.0):
+            self.bingo_mission_active = False
+            self.bingo_triggered = False
+            self.bingo_stage = "IDLE"
         if self.sim:
             for d in getattr(self.sim, "drones", []):
                 d.mission_active = False
@@ -759,3 +844,88 @@ class C2Gateway:
         if self.sim and hasattr(self.sim, "clear_pads"):
             return self.sim.clear_pads(turnaround_rearm=turnaround_rearm)
         return {"status": "ERROR", "reason": "No simulation engine attached"}
+
+    def log_event(self, level: str, message: str) -> None:
+        """Log event to attached session manager or console."""
+        if self.sim and hasattr(self.sim, "session_manager") and self.sim.session_manager:
+            self.sim.session_manager.add_event(level, message, sim_time=getattr(self.sim, "sim_time", 0.0))
+
+    def deploy_patrol_to_bingo(
+        self,
+        bingo_threshold: float = 25.0,
+        pattern: str = "BOX_PATROL",
+    ) -> Dict[str, Any]:
+        """Deploy 1-Click Aux Mission: Continuous Patrol to BINGO Battery RTB (TKT-58 / PLN-02).
+        Verifies FORMATION_FLIGHT and PATROL pre-flight capabilities before uploading pattern route.
+        Monitors fleet battery; automatically executes 2-stage recovery upon BINGO trigger."""
+        pat = pattern.upper().replace("-", "_").replace(" ", "_")
+        if pat not in ROUTE_PRESETS:
+            pat = "BOX_PATROL"
+
+        # Pre-Flight Capability Authorization Check (TKT-57)
+        auth_check = self.check_mission_authorization("PATROL_TO_BINGO")
+        if not auth_check.get("authorized", True) or auth_check.get("status") == "REJECTED":
+            return {
+                "status": "ERROR",
+                "code": "TIER_AUTHORIZATION_FAILED",
+                "reason": auth_check.get("reason", "TIER_AUTHORIZATION_FAILED"),
+                "missing_capabilities": auth_check.get("missing_capabilities", []),
+                "mission_type": "PATROL_TO_BINGO",
+            }
+
+        # Pre-Flight Battery Level Check: Reject if battery is already at or below threshold
+        drones = getattr(self.sim, "drones", []) if self.sim else []
+        living = [
+            d for d in drones
+            if not d.crashed and d.flight_state not in ("LANDED", "GROUND_IDLE")
+        ]
+        if living:
+            min_battery = min(float(d.battery) for d in living)
+            if min_battery <= float(bingo_threshold):
+                return {
+                    "status": "ERROR",
+                    "code": "INSUFFICIENT_BATTERY",
+                    "reason": f"Fleet battery ({min_battery:.1f}%) is already at or below BINGO threshold ({float(bingo_threshold):.1f}%)",
+                    "min_battery": min_battery,
+                    "bingo_threshold": float(bingo_threshold),
+                }
+
+        # Deploy waypoint route preset with loop=True
+        wps = ROUTE_PRESETS[pat]
+        route_res = self.deploy_mission_route(
+            wps,
+            loop=True,
+            name=f"PATROL_TO_BINGO_{pat}",
+            mission_type="PATROL_TO_BINGO",
+        )
+        if route_res.get("status") != "OK":
+            return route_res
+
+        self.bingo_mission_active = True
+        self.bingo_threshold = float(bingo_threshold)
+        self.bingo_triggered = False
+        self.bingo_auto_land = True
+        self.bingo_stage = "PATROLLING"
+        self.bingo_pattern = pat
+
+        self.log_event("CMD", f"[AUX MISSION: Patrol to BINGO armed. Pattern: {pat}, BINGO Threshold: {self.bingo_threshold:.1f}%]")
+
+        return {
+            "status": "OK",
+            "action": "PATROL_TO_BINGO_DEPLOYED",
+            "pattern": pat,
+            "bingo_threshold": self.bingo_threshold,
+            "waypoints_count": len(wps),
+            "route_name": self.route_name,
+        }
+
+    def stop_patrol_to_bingo(self) -> Dict[str, Any]:
+        """Abort active Patrol to BINGO aux mission (TKT-58)."""
+        if not self.bingo_mission_active:
+            return {"status": "ERROR", "reason": "No active Patrol to BINGO mission"}
+        self.bingo_mission_active = False
+        self.bingo_triggered = False
+        self.bingo_stage = "IDLE"
+        self.stop_mission_route()
+        self.log_event("CMD", "[AUX MISSION: Patrol to BINGO ABORTED by operator]")
+        return {"status": "OK", "action": "PATROL_TO_BINGO_STOPPED"}
