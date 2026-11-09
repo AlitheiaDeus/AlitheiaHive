@@ -12,12 +12,16 @@ Validates [TKT-52] Electronic Warfare Defense:
 
 from __future__ import annotations
 import math
+import socket
 import unittest
 import numpy as np
 
 from SIM.backend.sitl_engine import SITLWorldEngine, ZONE4_CLASH
 from SIM.backend.mavlink_bridge import MavlinkBridge, HAVE_PYMAVLINK
 from GCS.backend.web_server import SwarmWebServer
+
+if HAVE_PYMAVLINK:
+    from pymavlink.dialects.v20 import common as mavlink2
 
 
 class TestTacticalGNSSDenial(unittest.TestCase):
@@ -66,52 +70,98 @@ class TestTacticalGNSSDenial(unittest.TestCase):
 
     def test_mavlink_gps_glitch_injection_and_statustext(self):
         """MAVLink bridge encodes fix_type=0, satellites=0, eph=9999 when GNSS is denied."""
-        bridge = MavlinkBridge(sim=self.sim, host="127.0.0.1", mavlink_port=14550)
-        d1 = self.sim.get_drone_by_id(1)
-        self.assertIsNotNone(d1)
+        if not HAVE_PYMAVLINK:
+            self.skipTest("pymavlink not installed")
 
-        # Nominal GPS
-        d1.gnss_denied = False
-        if HAVE_PYMAVLINK and bridge.mav is not None:
-            # Check nominal fix
-            msg_nom = bridge.mav.gps_raw_int_encode(
-                time_usec=1000,
-                fix_type=3,
-                lat=int(35.0 * 1e7),
-                lon=int(139.0 * 1e7),
-                alt=25000,
-                eph=100,
-                epv=100,
-                vel=800,
-                cog=0,
-                satellites_visible=16,
-            )
-            self.assertEqual(msg_nom.fix_type, 3)
-            self.assertEqual(msg_nom.satellites_visible, 16)
+        test_port = 24552
+        bridge = MavlinkBridge(sim=self.sim, host="127.0.0.1", mavlink_port=test_port)
 
-        # Inject GNSS denial
-        self.sim.toggle_gnss_denial(drone_id=1, denied=True)
-        self.assertTrue(d1.gnss_denied)
+        listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", test_port))
+        listener.settimeout(0.5)
 
-        if HAVE_PYMAVLINK and bridge.mav is not None:
-            is_denied = d1.gnss_denied
-            msg_denied = bridge.mav.gps_raw_int_encode(
-                time_usec=2000,
-                fix_type=0 if is_denied else 3,
-                lat=0 if is_denied else int(35.0 * 1e7),
-                lon=0 if is_denied else int(139.0 * 1e7),
-                alt=25000,
-                eph=9999 if is_denied else 100,
-                epv=9999 if is_denied else 100,
-                vel=800,
-                cog=0,
-                satellites_visible=0 if is_denied else 16,
-            )
-            self.assertEqual(msg_denied.fix_type, 0)
-            self.assertEqual(msg_denied.satellites_visible, 0)
-            self.assertEqual(msg_denied.eph, 9999)
-            self.assertEqual(msg_denied.epv, 9999)
-        bridge.close()
+        def drain_socket():
+            listener.setblocking(False)
+            while True:
+                try:
+                    listener.recvfrom(4096)
+                except (BlockingIOError, socket.error):
+                    break
+            listener.settimeout(0.5)
+
+        try:
+            d1 = self.sim.get_drone_by_id(1)
+            self.assertIsNotNone(d1)
+            d1.gnss_denied = False
+
+            # 1. Nominal GPS emission
+            bridge.last_mavlink_pos = -1.0
+            bridge.emit_mavlink_loopback()
+
+            client_mav = mavlink2.MAVLink(None)
+            gps_nom = None
+            while True:
+                try:
+                    data, _ = listener.recvfrom(2048)
+                    msg = client_mav.decode(bytearray(data))
+                    if msg.get_srcSystem() == 2 and msg.get_msgId() == getattr(mavlink2, "MAVLINK_MSG_ID_GPS_RAW_INT", 24):
+                        gps_nom = msg
+                except (socket.timeout, BlockingIOError):
+                    break
+
+            self.assertIsNotNone(gps_nom, "Nominal GPS_RAW_INT packet not received for drone 1 (sysid 2)")
+            self.assertEqual(gps_nom.fix_type, 3)
+            self.assertEqual(gps_nom.satellites_visible, 16)
+            self.assertEqual(gps_nom.eph, 100)
+
+            # 2. Inject GNSS denial on Drone 1
+            drain_socket()
+            self.sim.toggle_gnss_denial(drone_id=1, denied=True)
+            self.assertTrue(d1.gnss_denied)
+
+            bridge.last_mavlink_pos = -1.0
+            bridge.emit_mavlink_loopback()
+
+            gps_denied = None
+            while True:
+                try:
+                    data, _ = listener.recvfrom(2048)
+                    msg = client_mav.decode(bytearray(data))
+                    if msg.get_srcSystem() == 2 and msg.get_msgId() == getattr(mavlink2, "MAVLINK_MSG_ID_GPS_RAW_INT", 24):
+                        gps_denied = msg
+                except (socket.timeout, BlockingIOError):
+                    break
+
+            self.assertIsNotNone(gps_denied, "Denied GPS_RAW_INT packet not received for drone 1 (sysid 2)")
+            self.assertEqual(gps_denied.fix_type, 0, "Denied drone must have fix_type=0 (No GPS Fix)")
+            self.assertEqual(gps_denied.satellites_visible, 0, "Denied drone must have 0 satellites visible")
+            self.assertEqual(gps_denied.eph, 9999, "Denied drone must report max eph error 9999")
+            self.assertEqual(gps_denied.epv, 9999, "Denied drone must report max epv error 9999")
+            self.assertEqual(gps_denied.lat, 0, "Denied drone latitude must be masked to 0")
+            self.assertEqual(gps_denied.lon, 0, "Denied drone longitude must be masked to 0")
+
+            # 3. Verify unaffected Drone 0 retains nominal 3D fix
+            drain_socket()
+            bridge.last_mavlink_pos = -1.0
+            bridge.emit_mavlink_loopback()
+
+            gps_drone0 = None
+            while True:
+                try:
+                    data, _ = listener.recvfrom(2048)
+                    msg = client_mav.decode(bytearray(data))
+                    if msg.get_srcSystem() == 1 and msg.get_msgId() == getattr(mavlink2, "MAVLINK_MSG_ID_GPS_RAW_INT", 24):
+                        gps_drone0 = msg
+                except (socket.timeout, BlockingIOError):
+                    break
+
+            self.assertIsNotNone(gps_drone0, "GPS_RAW_INT packet not received for drone 0 (sysid 1)")
+            self.assertEqual(gps_drone0.fix_type, 3, "Unaffected drone must retain fix_type=3 (3D Fix)")
+            self.assertEqual(gps_drone0.satellites_visible, 16)
+        finally:
+            bridge.close()
+            listener.close()
 
     def test_vertical_altitude_staircase_prevents_prop_clash(self):
         """Simultaneous full-swarm GNSS denial steps airframes into vertical shelves.
