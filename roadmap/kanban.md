@@ -53,7 +53,6 @@ kanban
     tkt45["Cryptographic Comms Guard (HMAC Signing)"]@{ ticket: '[TKT-45]', priority: 'Medium' }
     tkt47["Declarative Field Deployment Scenarios"]@{ ticket: '[TKT-47]', priority: 'Medium' }
   todo["Todo (Active Pipeline)"]
-    pln02["PLN-02: Auxiliary Mission Engine Master"]@{ ticket: '[PLN-02]', priority: 'High' }
   in_progress["In Progress (WIP = 1)"]
   completed["Completed (Fresh / Review)"]
     bug06["OBC Failsafe Consolidation: t-GCSH, Relays & Corridor ERTB"]@{ ticket: '[BUG-06]', priority: 'Very High' }
@@ -85,6 +84,8 @@ kanban
     tkt58["1-Click Aux Mission: Patrol to BINGO RTB"]@{ ticket: '[TKT-58]', priority: 'Medium' }
     tkt51["Physical Courier / Search-and-Recall Mule"]@{ ticket: '[TKT-51]', priority: 'Medium' }
     tkt59["TKT-59: Cairn G1 Repeater Payload Drop"]@{ ticket: '[TKT-59]', priority: 'High' }
+    pln02["PLN-02: Auxiliary Mission Engine Master"]@{ ticket: '[PLN-02]', priority: 'High' }
+    tkt60["Urban 3D Obstacle Shelves & RF LOS"]@{ ticket: '[TKT-60]', priority: 'High' }
 ```
 
 ---
@@ -149,6 +150,7 @@ kanban
 | **`TKT-21`** | `🎭 Gimmick` | Dynamic Power Envelope (LiPo Curves) | Static 100% telemetry display without power curves | [TKT-21.md](tasks/backlog/TKT-21.md) |
 | **`TKT-24`** | `🎭 Gimmick` | Dynamic Wind Gust Vector Field | Airframe operating in ideal dead-calm air | [TKT-24.md](tasks/backlog/TKT-24.md) |
 | **`TKT-44`** | `🎭 Gimmick` | High-Scale Multi-Tier Swarm Formations | Formations stretching beyond radio range at large counts | [TKT-44.md](tasks/backlog/TKT-44.md) |
+| **`TKT-60`** | `🚀 Feature` | Urban 3D Obstacle Shelves & RF LOS | 3D AABB altitude shelves, structural clash, and ray-cast RF LOS shadowing | [TKT-60.md](tasks/TKT-60.md) |
 
 ---
 

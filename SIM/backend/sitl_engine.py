@@ -57,6 +57,13 @@ from OBC.backend.brains import (
 from OBC.backend.brains.gossip_consensus import DronePeerState
 from GCS.backend.c2_gateway import C2Gateway, ROUTE_PRESETS
 from SIM.backend.fleet_registry import FleetRegistry
+from SIM.backend.urban_geometry import (
+    UrbanObstacle,
+    point_to_aabb_distance,
+    point_to_aabb_repulsion,
+    ray_intersects_aabb,
+    get_default_urban_obstacles,
+)
 
 
 # ==============================================================================
@@ -144,6 +151,7 @@ class SITLWorldEngine:
         count: Optional[int] = None,
         is_tethered: Optional[bool] = None,
         comms_mode: Optional[str] = None,
+        urban_scenario: Optional[str] = None,
     ):
         if count is not None:
             drone_count = count
@@ -208,6 +216,11 @@ class SITLWorldEngine:
         # Stationary Ground Repeaters & Dropped Payloads (TKT-59 / PLN-04)
         self.ground_repeaters: List[GroundRepeater] = []
         self.falling_payloads: List[Dict[str, Any]] = []
+
+        # Urban 3D Geometry & Static Obstacles (PLN-08 / TKT-60)
+        self.urban_obstacles: List[UrbanObstacle] = []
+        if urban_scenario:
+            self.load_urban_scenario(urban_scenario)
 
         # Build Drone Fleet
         self.drones: List[Drone] = []
@@ -645,12 +658,30 @@ class SITLWorldEngine:
         rssi, lq = self.calculate_rssi(d)
         drop_p = self.calculate_packet_drop_prob(d)
         return drop_p, rssi, lq
-        loss = 20.0 * math.log10(d)
-        jamming_penalty = 40.0 * self.rf_jamming_rate
-        rssi = -40.0 - loss - jamming_penalty
-        rssi = float(np.clip(rssi, -115.0, -35.0))
-        lq = max(0.0, min(1.0, (rssi - (-100.0)) / 60.0)) * (1.0 - self.rf_jamming_rate)
-        return round(rssi, 1), round(float(lq), 2)
+
+    def load_urban_scenario(self, scenario_name: str = "default_canyon") -> List[UrbanObstacle]:
+        """Load an urban obstacle scenario preset (PLN-03 / PLN-08 / TKT-60)."""
+        name = scenario_name.lower().replace("-", "_").replace(" ", "_")
+        if name in ("default_canyon", "canyon", "urban", "skybridge"):
+            self.urban_obstacles = get_default_urban_obstacles()
+        elif name in ("empty", "clear", "none", "flat"):
+            self.urban_obstacles = []
+        return self.urban_obstacles
+
+    def set_urban_obstacles(self, obstacles: List[UrbanObstacle]) -> None:
+        """Set or update the active urban obstacles list."""
+        self.urban_obstacles = list(obstacles)
+
+    def is_rf_occluded(self, origin: np.ndarray, target: np.ndarray) -> bool:
+        """Check if direct line-of-sight ray between origin and target intersects any RF-blocking obstacle (PLN-08 / TKT-60)."""
+        obstacles = getattr(self, "urban_obstacles", None)
+        if not obstacles:
+            return False
+        for obs in obstacles:
+            if getattr(obs, "blocks_rf", True):
+                if ray_intersects_aabb(origin, target, obs.bounds):
+                    return True
+        return False
 
     def _init_fleet(self, count: int, cold_start: Optional[bool] = None) -> None:
         """Initialize leader and followers in safe starting formation or cold pads."""
@@ -1640,10 +1671,12 @@ class SITLWorldEngine:
 
             for d in living:
                 d_gcs = float(np.linalg.norm(d.pos - self.tether_anchor))
+                occluded_gcs = self.is_rf_occluded(self.tether_anchor, d.pos)
 
                 # Base Horizon High-Gain RF Dome (TKT-42):
                 # Within 50m radius of base anchor, high-gain base station radio guarantees 100% link quality
-                if d_gcs <= 50.0:
+                # UNLESS occluded by a physical obstacle (PLN-08 / TKT-60)
+                if d_gcs <= 50.0 and not occluded_gcs:
                     d.uplink_active = True
                     d.downlink_active = True
                     d.yip_lost = False
@@ -1651,11 +1684,11 @@ class SITLWorldEngine:
                     direct_gateways.add(d.id)
                     continue
 
-                dropped_up = self.is_packet_dropped(d_gcs, is_hardline=False, max_range=RANGE_HOWL)
+                dropped_up = occluded_gcs or self.is_packet_dropped(d_gcs, is_hardline=False, max_range=RANGE_HOWL)
                 d.uplink_active = (d_gcs <= RANGE_HOWL and not dropped_up)
 
                 r_down = RANGE_BORK if getattr(d, "rf_power_mode", None) == RF_MODE_BORK else (RANGE_BARK if (d.tier == TIER_LEADER or d.is_leader) else RANGE_YIP)
-                dropped_down = self.is_packet_dropped(d_gcs, is_hardline=False, max_range=r_down)
+                dropped_down = occluded_gcs or self.is_packet_dropped(d_gcs, is_hardline=False, max_range=r_down)
                 has_direct = (d_gcs <= r_down and not dropped_down)
 
                 if has_direct:
@@ -1679,14 +1712,16 @@ class SITLWorldEngine:
                     rep.downlink_active = False
                     continue
                 d_rep_gcs = float(np.linalg.norm(rep.pos - self.tether_anchor))
-                rep.uplink_active = (d_rep_gcs <= RANGE_HOWL and not self.is_packet_dropped(d_rep_gcs, is_hardline=False, max_range=RANGE_HOWL))
-                rep_direct = (d_rep_gcs <= 50.0)
+                occluded_rep_gcs = self.is_rf_occluded(self.tether_anchor, rep.pos)
+                rep.uplink_active = (d_rep_gcs <= RANGE_HOWL and not occluded_rep_gcs and not self.is_packet_dropped(d_rep_gcs, is_hardline=False, max_range=RANGE_HOWL))
+                rep_direct = (d_rep_gcs <= 50.0 and not occluded_rep_gcs)
                 if not rep_direct:
                     for gw_id in direct_gateways:
                         gw_d = next((d for d in living if d.id == gw_id), None)
                         if gw_d:
                             d_rg = float(np.linalg.norm(rep.pos - gw_d.pos))
-                            if d_rg <= RANGE_P2P and not self.is_packet_dropped(d_rg, is_hardline=False, max_range=RANGE_P2P):
+                            occluded_rg = self.is_rf_occluded(rep.pos, gw_d.pos)
+                            if d_rg <= RANGE_P2P and not occluded_rg and not self.is_packet_dropped(d_rg, is_hardline=False, max_range=RANGE_P2P):
                                 rep_direct = True
                                 break
                 rep.downlink_active = rep_direct
@@ -1702,7 +1737,8 @@ class SITLWorldEngine:
                 for peer in living:
                     if peer.id not in visited:
                         d_peer = float(np.linalg.norm(peer.pos - curr_drone.pos))
-                        dropped_peer = self.is_packet_dropped(d_peer, is_hardline=False, max_range=RANGE_P2P)
+                        occluded_peer = self.is_rf_occluded(curr_drone.pos, peer.pos)
+                        dropped_peer = occluded_peer or self.is_packet_dropped(d_peer, is_hardline=False, max_range=RANGE_P2P)
                         if d_peer <= RANGE_P2P and not dropped_peer:
                             peer.downlink_active = True
                             peer.gateway_id = root_gw
@@ -1715,7 +1751,9 @@ class SITLWorldEngine:
                     for peer in living:
                         if peer.id not in visited:
                             d_peer = float(np.linalg.norm(peer.pos - rep.pos))
-                            if d_peer <= RANGE_P2P and not self.is_packet_dropped(d_peer, is_hardline=False, max_range=RANGE_P2P):
+                            occluded_rep_peer = self.is_rf_occluded(rep.pos, peer.pos)
+                            dropped_peer = occluded_rep_peer or self.is_packet_dropped(d_peer, is_hardline=False, max_range=RANGE_P2P)
+                            if d_peer <= RANGE_P2P and not dropped_peer:
                                 peer.downlink_active = True
                                 peer.gateway_id = rep.carrier_id if rep.carrier_id is not None else 0
                                 visited.add(peer.id)
@@ -1836,21 +1874,23 @@ class SITLWorldEngine:
             # Pass 1: Direct link assessment for all living airframes
             for drone in living:
                 d_gcs = float(np.linalg.norm(drone.pos - self.tether_anchor))
-                dropped_up = self.is_packet_dropped(d_gcs, is_hardline=False, max_range=RANGE_HOWL)
+                occluded_gcs = self.is_rf_occluded(self.tether_anchor, drone.pos)
+                dropped_up = occluded_gcs or self.is_packet_dropped(d_gcs, is_hardline=False, max_range=RANGE_HOWL)
                 drone.uplink_active = (d_gcs <= RANGE_HOWL and not dropped_up)
 
                 if drone.is_leader:
                     drone.rssi, drone.link_quality = self.calculate_rssi(d_gcs, is_hardline=False)
                     r_down = RANGE_BORK if getattr(drone, "rf_power_mode", None) == RF_MODE_BORK else RANGE_BARK
-                    dropped_down = self.is_packet_dropped(d_gcs, is_hardline=False, max_range=r_down)
+                    dropped_down = occluded_gcs or self.is_packet_dropped(d_gcs, is_hardline=False, max_range=r_down)
                     drone.downlink_active = (d_gcs <= r_down and not dropped_down)
                     drone.gateway_id = None
                 else:
                     dist_to_leader = float(np.linalg.norm(drone.pos - current_leader.pos)) if current_leader else 999.0
+                    occluded_lead = self.is_rf_occluded(current_leader.pos, drone.pos) if current_leader else True
                     drone.rssi, drone.link_quality = self.calculate_rssi(min(d_gcs, dist_to_leader), is_hardline=False)
 
-                    dropped_lead = self.is_packet_dropped(dist_to_leader, is_hardline=False, max_range=RANGE_YIP)
-                    if d_gcs <= RANGE_YIP and not self.is_packet_dropped(d_gcs, is_hardline=False, max_range=RANGE_YIP):
+                    dropped_lead = occluded_lead or self.is_packet_dropped(dist_to_leader, is_hardline=False, max_range=RANGE_YIP)
+                    if d_gcs <= RANGE_YIP and not occluded_gcs and not self.is_packet_dropped(d_gcs, is_hardline=False, max_range=RANGE_YIP):
                         drone.downlink_active = True
                         drone.gateway_id = None
                     elif current_leader and current_leader.downlink_active and dist_to_leader <= RANGE_YIP and not dropped_lead:
@@ -1863,7 +1903,8 @@ class SITLWorldEngine:
                             for rep in self.ground_repeaters:
                                 if rep.active and rep.downlink_active:
                                     d_rep = float(np.linalg.norm(drone.pos - rep.pos))
-                                    if d_rep <= RANGE_P2P and not self.is_packet_dropped(d_rep, is_hardline=False, max_range=RANGE_P2P):
+                                    occluded_rep = self.is_rf_occluded(rep.pos, drone.pos)
+                                    if d_rep <= RANGE_P2P and not occluded_rep and not self.is_packet_dropped(d_rep, is_hardline=False, max_range=RANGE_P2P):
                                         drone.downlink_active = True
                                         drone.gateway_id = rep.carrier_id if rep.carrier_id is not None else 0
                                         break
@@ -1876,7 +1917,8 @@ class SITLWorldEngine:
                     if peer.id != current_leader.id and peer.uplink_active:
                         dist_to_peer = float(np.linalg.norm(current_leader.pos - peer.pos))
                         peer_r = RANGE_BORK if getattr(peer, "rf_power_mode", None) == RF_MODE_BORK else RANGE_BARK
-                        if dist_to_peer <= peer_r and not self.is_packet_dropped(dist_to_peer, is_hardline=False, max_range=peer_r):
+                        occluded_peer = self.is_rf_occluded(peer.pos, current_leader.pos)
+                        if dist_to_peer <= peer_r and not occluded_peer and not self.is_packet_dropped(dist_to_peer, is_hardline=False, max_range=peer_r):
                             current_leader.uplink_active = True
                             current_leader.gateway_id = peer.id
                             current_leader.downlink_active = True
@@ -1900,7 +1942,12 @@ class SITLWorldEngine:
                 else:
                     if broadcast_tick:
                         dist_to_leader = float(np.linalg.norm(drone.pos - current_leader.pos)) if current_leader else 999.0
-                        in_range_lead = (dist_to_leader <= RANGE_BARK and not self.is_packet_dropped(dist_to_leader, is_hardline=False, max_range=RANGE_BARK))
+                        occluded_lead = self.is_rf_occluded(current_leader.pos, drone.pos) if current_leader else True
+                        in_range_lead = (
+                            dist_to_leader <= RANGE_BARK
+                            and not occluded_lead
+                            and not self.is_packet_dropped(dist_to_leader, is_hardline=False, max_range=RANGE_BARK)
+                        )
                         if current_leader and not current_leader.lost_link and in_range_lead:
                             drone.lkp = np.copy(drone.pos)
                             drone.last_heartbeat_time = self.sim_time
@@ -2399,6 +2446,29 @@ class SITLWorldEngine:
                     sep_mag = 5.0 * ((ZONE2_OUTER - dist) / (ZONE2_OUTER - ZONE3_OUTER))
                     accs[drone_i.id] += sep_mag * n_ij
                     accs[drone_j.id] -= sep_mag * n_ij
+
+        # Check static urban obstacle collision and Zone 3 evasion (PLN-08 / TKT-60)
+        if getattr(self, "urban_obstacles", None):
+            for drone in self.drones:
+                if drone.crashed or drone.flight_state in ("LANDED", "GROUND_IDLE"):
+                    continue
+                min_obs_dist = 999.0
+                min_obs_id = None
+                for obs in self.urban_obstacles:
+                    dist, a_evade = point_to_aabb_repulsion(
+                        drone.pos, drone.vel, obs.bounds, zone3_outer=ZONE3_OUTER, zone4_clash=ZONE4_CLASH
+                    )
+                    if dist < min_obs_dist:
+                        min_obs_dist = dist
+                        min_obs_id = obs.id
+                    if dist <= ZONE4_CLASH:
+                        drone.collision_inferred = True
+                        self._trigger_crash(drone, reason=f"STRUCTURAL_CLASH_{obs.id}")
+                        break
+                    elif dist <= ZONE3_OUTER:
+                        accs[drone.id] += a_evade
+                drone.nearest_obstacle_dist = min_obs_dist
+                drone.nearest_obstacle_id = min_obs_id
 
         return accs
 
@@ -3473,6 +3543,7 @@ class SITLWorldEngine:
             },
             "payload_deposit": self.c2.get_payload_drop_state(),
             "ground_repeaters": [r.to_dict() for r in self.ground_repeaters],
+            "urban_obstacles": [o.to_dict() for o in self.urban_obstacles] if getattr(self, "urban_obstacles", None) else [],
             "two_ic_id": two_ic_id,
             "lost_link_loiter_timer": round(max(0.0, float(self.lost_link_loiter_timer)), 1),
             "swarm_rtb_active": self.swarm_rtb_active,

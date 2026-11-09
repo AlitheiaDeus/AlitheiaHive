@@ -548,6 +548,76 @@
     }
 
     // =========================================================================
+    // 2e. Urban 3D Obstacle Shelves & Altitude Colliders (PLN-08 / TKT-60)
+    // =========================================================================
+    const urbanObstacleMeshes = new Map();
+
+    function updateUrbanObstacles(obstacles) {
+        if (!scene) return;
+        const activeIds = new Set();
+        if (Array.isArray(obstacles)) {
+            obstacles.forEach(obs => {
+                activeIds.add(obs.id);
+                let entry = urbanObstacleMeshes.get(obs.id);
+                if (!entry) {
+                    const group = new THREE.Group();
+                    const bounds = obs.bounds; // [x_min, x_max, y_min, y_max, z_floor, z_ceiling]
+                    const width = bounds[1] - bounds[0];   // dx (X axis)
+                    const depth = bounds[3] - bounds[2];   // dy (Y axis)
+                    const height = bounds[5] - bounds[4];  // dz (Z axis)
+
+                    const cx = (bounds[0] + bounds[1]) / 2;
+                    const cy = (bounds[2] + bounds[3]) / 2;
+                    const cz = (bounds[4] + bounds[5]) / 2;
+
+                    const hexColor = parseInt((obs.color || "#00F0FF").replace("#", "0x"), 16);
+
+                    // 1. Translucent Shaded Box Body
+                    const boxGeo = new THREE.BoxGeometry(width, depth, height);
+                    const boxMat = new THREE.MeshStandardMaterial({
+                        color: hexColor,
+                        emissive: hexColor,
+                        emissiveIntensity: 0.12,
+                        roughness: 0.3,
+                        metalness: 0.7,
+                        transparent: true,
+                        opacity: obs.obstacle_type === "SKYBRIDGE" ? 0.45 : 0.22,
+                        side: THREE.DoubleSide,
+                    });
+                    const boxMesh = new THREE.Mesh(boxGeo, boxMat);
+                    group.add(boxMesh);
+
+                    // 2. High-Tech Holographic Wireframe Edges
+                    const edgesGeo = new THREE.EdgesGeometry(boxGeo);
+                    const edgesMat = new THREE.LineBasicMaterial({
+                        color: hexColor,
+                        linewidth: 2,
+                        transparent: true,
+                        opacity: 0.85,
+                    });
+                    const edgesLine = new THREE.LineSegments(edgesGeo, edgesMat);
+                    group.add(edgesLine);
+
+                    // Position group at center of AABB
+                    group.position.set(cx, cy, cz);
+                    scene.add(group);
+
+                    entry = { group, boxMesh, edgesLine, obs };
+                    urbanObstacleMeshes.set(obs.id, entry);
+                }
+            });
+        }
+
+        // Clean up removed obstacles
+        for (const [id, entry] of urbanObstacleMeshes.entries()) {
+            if (!activeIds.has(id)) {
+                scene.remove(entry.group);
+                urbanObstacleMeshes.delete(id);
+            }
+        }
+    }
+
+    // =========================================================================
     // 2c. Discrete Waypoint Mission Route Visuals (TKT-28)
     // =========================================================================
     let missionRouteGroup = null;
@@ -1184,6 +1254,9 @@
 
         // Update Stationary Ground Repeaters (TKT-59 / PLN-04)
         updateGroundRepeaters(frame.ground_repeaters);
+
+        // Update Urban 3D Obstacles & Altitude Shelves (PLN-08 / TKT-60)
+        updateUrbanObstacles(frame.urban_obstacles);
     }
 
     let tetherSeveredPrev = false;

@@ -262,6 +262,10 @@ class Drone:
         self.enrollment_timer: float = 0.0
         self.rejoin_target: Optional[np.ndarray] = None
 
+        # Proximity Bumper & Static 3D Obstacle Closeness (PLN-08 / TKT-60)
+        self.nearest_obstacle_dist: float = 999.0
+        self.nearest_obstacle_id: Optional[str] = None
+
         # Tactical GNSS Denial & Dead-Reckoning RTB (TKT-52)
         self.gnss_denied: bool = False
         self.gnss_denied_timer: float = 0.0
@@ -362,6 +366,8 @@ class Drone:
         self.gated_by_drone_id = None
         self.acknowledged_target = np.array(pos, dtype=float)
         self.target_station = None
+        self.nearest_obstacle_dist = 999.0
+        self.nearest_obstacle_id = None
         self.mission_waypoints = []
         self.current_wp_idx = 0
         self.mission_active = False
@@ -523,6 +529,7 @@ class Drone:
             "drift_radius": round(float(self.drift_radius), 2),
             "gnss_settled": self.gnss_settled,
             "crashed_while_linked": self.crashed_while_linked,
+            "nearest_obstacle_dist": round(float(self.nearest_obstacle_dist), 2) if getattr(self, "nearest_obstacle_dist", None) is not None else 999.0,
             "retrieved": self.retrieved,
             "declared_destroyed": self.declared_destroyed,
             "mayday_beacon": self.mayday_beacon,

@@ -42,6 +42,7 @@ from aiohttp import web, WSMsgType
 
 from SIM.backend.sitl_engine import SwarmSimulator, DT
 from SIM.backend.mavlink_bridge import MavlinkBridge
+from SIM.backend.urban_geometry import get_default_urban_obstacles
 from GCS.backend.session_manager import SessionManager
 
 logger = logging.getLogger("SwarmWebServer")
@@ -86,6 +87,10 @@ class SwarmWebServer:
         # SITL God-View Simulation Lab Frontend (SIM/frontend/) (TKT-35)
         repo_root = Path(__file__).resolve().parent.parent.parent
         self.sim_frontend_dir = repo_root / "SIM" / "frontend"
+
+        # Hydrate default urban canyon for tactical 3D viewport (PLN-08 / TKT-60)
+        if not getattr(self.sim, "urban_obstacles", None):
+            self.sim.load_urban_scenario("default_canyon")
 
         @web.middleware
         async def no_cache_middleware(request: web.Request, handler) -> web.StreamResponse:
@@ -275,6 +280,19 @@ class SwarmWebServer:
             res = self.sim.stop_payload_drop()
             self.session_manager.add_event("CMD", "Aborted Aux Mission: Payload Drop", sim_time=self.sim.sim_time)
             return res
+
+        elif cmd in ("TOGGLE_URBAN_OBSTACLES", "SET_URBAN_OBSTACLES"):
+            enabled = cmd_dict.get("enabled", True)
+            if enabled:
+                self.sim.set_urban_obstacles(get_default_urban_obstacles())
+            else:
+                self.sim.set_urban_obstacles([])
+            self.session_manager.add_event(
+                "MAP",
+                f"Urban 3D Obstacle Geometry {'ENABLED (DEFAULT CANYON)' if enabled else 'CLEARED'}",
+                sim_time=self.sim.sim_time,
+            )
+            return {"status": "OK", "cmd": cmd, "urban_obstacles_count": len(self.sim.urban_obstacles)}
 
         elif cmd in ("START_ROUTE_PRESET", "SET_ROUTE_PRESET"):
             preset = cmd_dict.get("preset", cmd_dict.get("name", "BOX_PATROL"))
