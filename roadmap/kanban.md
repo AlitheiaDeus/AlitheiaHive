@@ -63,6 +63,7 @@ kanban
     tkt60["Urban 3D Obstacle Shelves & RF LOS"]@{ ticket: '[TKT-60]', priority: 'High' }
     tkt61["TKT-61: SITL Engine Modular Decomposition"]@{ ticket: '[TKT-61]', priority: 'High' }
     tkt63["Core Hygiene: StrEnum, Geodetics & Packaging"]@{ ticket: '[TKT-63]', priority: 'High' }
+    tkt64["Designated Field Landing Zones & Autonomous E-Landing"]@{ ticket: '[TKT-64]', priority: 'High' }
 ```
 
 ---
@@ -104,7 +105,8 @@ kanban
 | **`TKT-24`** | `🎭 Gimmick` | Dynamic Wind Gust Vector Field | Airframe operating in ideal dead-calm air | [TKT-24.md](tasks/backlog/TKT-24.md) |
 | **`TKT-44`** | `🎭 Gimmick` | High-Scale Multi-Tier Swarm Formations | Formations stretching beyond radio range at large counts | [TKT-44.md](tasks/backlog/TKT-44.md) |
 | **`TKT-60`** | `🚀 Feature` | Urban 3D Obstacle Shelves & RF LOS | 3D AABB altitude shelves, structural clash, and ray-cast RF LOS shadowing | [TKT-60.md](tasks/TKT-60.md) |
-| **`TKT-63`** | `TKT` | Core Hygiene: StrEnum, Geodetics & Packaging | StrEnum flight states, PyMAVLink geodetics, and UV packaging | [TKT-63.md](tasks/TKT-63.md) |
+| **`TKT-63`** | `🛠️ Refactor` | Core Hygiene: StrEnum, Geodetics & Packaging | StrEnum flight states, PyMAVLink geodetics, and UV packaging | [TKT-63.md](tasks/TKT-63.md) |
+| **`TKT-64`** | `🚀 Feature` | Designated Field Landing Zones (FLZ) & Autonomous E-Landing | PLN-05 Off-Nominal Landing Zones & Field E-Land (50/50 Architecture across 4 Airgaps) | [TKT-64.md](tasks/TKT-64.md) |
 
 ---
 

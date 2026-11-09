@@ -436,6 +436,67 @@
         scene.add(padsGroup);
     }
 
+    // 2c. Tactical Field Landing Zone (FLZ) Rendering (TKT-63 / PLN-05)
+    let fieldLZGroup = null;
+    function updateFieldLZ(frame) {
+        if (!frame || !frame.field_lz || !frame.field_lz.active) {
+            if (fieldLZGroup) fieldLZGroup.visible = false;
+            return;
+        }
+
+        const flz = frame.field_lz;
+        const coords = flz.coords || [40, 20, 0.05];
+
+        if (!fieldLZGroup) {
+            fieldLZGroup = new THREE.Group();
+            fieldLZGroup.name = 'field_landing_zone';
+
+            // 1. Tactical Outer Ring
+            const ringGeo = new THREE.RingGeometry(11.8, 12.0, 48);
+            const ringMat = new THREE.MeshBasicMaterial({
+                color: 0xE6B800,
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0.85,
+            });
+            const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+            ringMesh.rotation.x = -Math.PI / 2;
+            ringMesh.position.y = 0.04;
+            fieldLZGroup.add(ringMesh);
+
+            // 2. Tactical Inner Radial Crosshairs
+            const crossGeo = new THREE.RingGeometry(0.2, 0.5, 16);
+            const crossMat = new THREE.MeshBasicMaterial({ color: 0xFFD700, side: THREE.DoubleSide });
+            const crossMesh = new THREE.Mesh(crossGeo, crossMat);
+            crossMesh.rotation.x = -Math.PI / 2;
+            crossMesh.position.y = 0.05;
+            fieldLZGroup.add(crossMesh);
+
+            // 3. Canvas Sprite Label
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#FFD700';
+            ctx.font = 'bold 22px Courier New, monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(`FIELD LZ [${flz.name || 'FLZ-1'}]`, 128, 32);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true });
+            const sprite = new THREE.Sprite(spriteMat);
+            sprite.scale.set(6.0, 1.5, 1.0);
+            sprite.position.set(0, 2.5, 0);
+            fieldLZGroup.add(sprite);
+
+            scene.add(fieldLZGroup);
+        }
+
+        fieldLZGroup.position.set(coords[0], coords[1], coords[2] || 0.05);
+        fieldLZGroup.visible = true;
+    }
+
     function updateLandingPads(frame) {
         if (!landingPads.length) return;
 
@@ -929,6 +990,35 @@
             labelText = `#${d.id}`;
             subText = 'CRASHED';
             dotColor = '#FF3366';
+        } else if (d.flight_state === 'FIELD_LANDED') {
+            borderColor = '#00FFAA';
+            bgColor = 'rgba(4, 30, 20, 0.94)';
+            textColor = '#00FFAA';
+            labelText = `#${d.id}`;
+            const slotStr = d.field_lz_slot !== undefined && d.field_lz_slot !== null ? `S${d.field_lz_slot}` : 'FLZ';
+            subText = `F-LAND [${slotStr}]`;
+            dotColor = '#00FFAA';
+        } else if (d.flight_state === 'FIELD_DESCENDING') {
+            borderColor = '#FFD700';
+            bgColor = 'rgba(42, 35, 4, 0.94)';
+            textColor = '#FFD700';
+            labelText = `#${d.id}`;
+            subText = 'F-LANDING';
+            dotColor = '#FFD700';
+        } else if (d.flight_state === 'E_LANDED') {
+            borderColor = '#FF9900';
+            bgColor = 'rgba(50, 25, 5, 0.94)';
+            textColor = '#FFB800';
+            labelText = `#${d.id}`;
+            subText = 'E-LANDED';
+            dotColor = '#FF9900';
+        } else if (d.flight_state === 'EMERGENCY_LANDING') {
+            borderColor = '#FF3300';
+            bgColor = 'rgba(55, 15, 15, 0.94)';
+            textColor = '#FF4444';
+            labelText = `#${d.id}`;
+            subText = '⚠ E-LANDING';
+            dotColor = '#FF3300';
         } else if (d.flight_state === 'LANDED') {
             borderColor = '#00FFAA';
             bgColor = 'rgba(4, 30, 20, 0.94)';
@@ -1248,6 +1338,8 @@
 
         // Update Tactical Landing Pads (TKT-19)
         updateLandingPads(frame);
+        // Update Tactical Field Landing Zone (TKT-63 / PLN-05)
+        updateFieldLZ(frame);
 
         // Update Discrete Mission Route Visuals (TKT-28)
         updateMissionRouteVisuals(frame.mission_route);

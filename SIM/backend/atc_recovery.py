@@ -10,7 +10,20 @@ import math
 from typing import Dict, List, Optional, Tuple, Any, Union, Callable
 import numpy as np
 
+from dataclasses import dataclass, field
 from OBC.backend.drone_firmware import FlightState
+
+
+@dataclass
+class FieldLandingZone:
+    """Designated Field Landing Zone (FLZ) for remote or off-base recovery (TKT-64 / PLN-05)."""
+    id: str
+    name: str
+    coords: np.ndarray  # Center coordinates [x, y, z] (z typically ground level ~0.05m)
+    radius: float = 15.0  # Field perimeter radius in meters
+    active: bool = True
+    capacity: int = 16  # Max simultaneous field landing slots
+    slot_spacing: float = 4.0  # Separation between adjacent airframes in field
 
 # ATC Pad Layout Constants
 ATC_DEFAULT_CAPACITY: int = 8
@@ -45,6 +58,11 @@ class ATCRecoveryManager:
         self.swarm_rtb_active: bool = False
         self.overhead_marshal_active: bool = False
 
+        # Designated Field Landing Zone & Emergency Landings (TKT-64 / PLN-05)
+        self.active_field_lz: Optional[FieldLandingZone] = None
+        self.field_lz_slots: Dict[int, int] = {}  # slot_idx -> drone_id
+        self.pad_denied_override: bool = False
+
     def is_in_comms_range(self, drones: List[Any], tether_anchor: np.ndarray, radio_range: float = 140.0) -> bool:
         """Check whether at least one living drone is within the GCS radio horizon."""
         living = [d for d in drones if not d.crashed]
@@ -53,6 +71,78 @@ class ATCRecoveryManager:
         min_dist = min(float(np.linalg.norm(d.pos - tether_anchor)) for d in living)
         return min_dist <= radio_range
 
+    def set_field_lz(
+        self,
+        coords: Union[List[float], np.ndarray],
+        name: str = "FLZ-1",
+        radius: float = 15.0,
+        capacity: int = 16,
+        slot_spacing: float = 4.0,
+    ) -> Dict[str, Any]:
+        """Designate a Field Landing Zone for mission recovery or pad denial diversion."""
+        c = np.array(coords, dtype=float)
+        if len(c) == 2:
+            c = np.array([c[0], c[1], 0.05], dtype=float)
+        self.active_field_lz = FieldLandingZone(
+            id=f"FLZ_{name.upper()}",
+            name=name,
+            coords=c,
+            radius=float(radius),
+            active=True,
+            capacity=capacity,
+            slot_spacing=slot_spacing,
+        )
+        self.field_lz_slots.clear()
+        return {
+            "status": "OK",
+            "field_lz": {
+                "id": self.active_field_lz.id,
+                "name": self.active_field_lz.name,
+                "coords": [round(float(v), 2) for v in self.active_field_lz.coords],
+                "radius": self.active_field_lz.radius,
+                "capacity": self.active_field_lz.capacity,
+            }
+        }
+
+    def clear_field_lz(self) -> Dict[str, Any]:
+        """Deactivate and clear the current Field Landing Zone."""
+        self.active_field_lz = None
+        self.field_lz_slots.clear()
+        return {"status": "OK", "field_lz": None}
+
+    def get_field_slot_position(self, slot_idx: int, flz: Optional[FieldLandingZone] = None) -> np.ndarray:
+        """Calculate coordinates for a field landing slot in an open radial sentry circle.
+        Centered at flz.coords with radius = 8.0m and wide spacing (>= 4.0m) at ground Z=0.05m."""
+        active_flz = flz or self.active_field_lz
+        if active_flz is None:
+            return get_pad_position(0)
+
+        center = active_flz.coords
+        cap = max(1, active_flz.capacity)
+        ring_r = max(6.0, (cap * active_flz.slot_spacing) / (2.0 * math.pi))
+        ring_r = min(ring_r, active_flz.radius - 2.0)
+        angle = (2.0 * math.pi * slot_idx) / cap
+        sx = center[0] + ring_r * math.cos(angle)
+        sy = center[1] + ring_r * math.sin(angle)
+        sz = center[2] if center[2] > 0.0 else 0.05
+        return np.array([sx, sy, sz], dtype=float)
+
+    def check_pad_denial(self, obstacles: Optional[List[Any]] = None, pads: Optional[List[np.ndarray]] = None) -> bool:
+        """Check whether Base pads are obstructed or denied by urban obstacles or manual flag."""
+        if self.pad_denied_override:
+            return True
+        if not obstacles:
+            return False
+        from SIM.backend.urban_geometry import point_to_aabb_distance
+        check_pads = pads or [get_pad_position(i) for i in range(self.capacity)]
+        for pad in check_pads:
+            for obs in obstacles:
+                if hasattr(obs, "bounds"):
+                    d = point_to_aabb_distance(pad, obs.bounds)
+                    if d < 2.0:
+                        return True
+        return False
+
     def command_rtb_hold(
         self,
         drones: List[Any],
@@ -60,6 +150,8 @@ class ATCRecoveryManager:
         radio_range: float = 140.0,
         force_autonomous: bool = False,
         set_target_fn: Optional[Callable[[List[float]], Any]] = None,
+        destination: str = "BASE",
+        obstacles: Optional[List[Any]] = None,
     ) -> Dict[str, Any]:
         """Stage 1 Recovery: Commanded RTB (Hold).
         Fleet transits to Base (0, 0, 25m) at cruise speed and settles into
@@ -71,25 +163,41 @@ class ATCRecoveryManager:
                 "error": f"Fleet is beyond GCS radio horizon ({radio_range}m). RTB command dropped.",
             }
 
+        # Check if Base is denied or FLZ was explicitly requested
+        target_dest = (destination or "BASE").upper()
+        if target_dest == "BASE":
+            if self.check_pad_denial(obstacles or []):
+                if self.active_field_lz is not None:
+                    target_dest = "FIELD_LZ"
+
         self.overhead_marshal_active = True
         self.swarm_rtb_active = True
         self.recovery_stage = "OVERHEAD_MARSHAL"
 
-        base_target = [0.0, 0.0, 25.0]
+        if target_dest == "FIELD_LZ" and self.active_field_lz is not None:
+            flz_center = self.active_field_lz.coords
+            target_hold = [float(flz_center[0]), float(flz_center[1]), 25.0]
+            hold_state = FlightState.FIELD_HOLD
+            status_text = "FIELD_MARSHAL_HOLD"
+        else:
+            target_hold = [0.0, 0.0, 25.0]
+            hold_state = FlightState.OVERHEAD_HOLD
+            status_text = "OVERHEAD_HOLD"
+
         if set_target_fn is not None:
-            set_target_fn(base_target)
+            set_target_fn(target_hold)
 
         for drone in drones:
-            if not drone.crashed and drone.flight_state not in ("LANDED", "DESCENDING"):
-                drone.flight_state = FlightState.OVERHEAD_HOLD
-                drone.status = "OVERHEAD_HOLD"
-                drone.acknowledged_target = np.array(base_target, dtype=float)
-                drone.lkp = np.array(base_target, dtype=float)
+            if not drone.crashed and drone.flight_state not in ("LANDED", "GROUND_IDLE", "FIELD_LANDED", "E_LANDED", "DESCENDING", "FIELD_DESCENDING", "EMERGENCY_LANDING"):
+                drone.flight_state = hold_state
+                drone.status = status_text
+                drone.acknowledged_target = np.array(target_hold, dtype=float)
+                drone.lkp = np.array(target_hold, dtype=float)
                 if hasattr(drone, "brain") and hasattr(drone.brain, "peer_state"):
-                    drone.brain.peer_state.active_target = np.array(base_target, dtype=float)
-                    drone.brain.peer_state.pending_target = np.array(base_target, dtype=float)
+                    drone.brain.peer_state.active_target = np.array(target_hold, dtype=float)
+                    drone.brain.peer_state.pending_target = np.array(target_hold, dtype=float)
                     drone.brain.peer_state.gossip_status = "COORDINATED"
-        return {"status": "OK", "recovery_stage": self.recovery_stage}
+        return {"status": "OK", "recovery_stage": self.recovery_stage, "destination": target_dest}
 
     def command_corridor_ertb(
         self,
@@ -141,6 +249,8 @@ class ATCRecoveryManager:
         tether_anchor: np.ndarray,
         radio_range: float = 140.0,
         succession_fn: Optional[Callable[..., Any]] = None,
+        destination: str = "BASE",
+        obstacles: Optional[List[Any]] = None,
     ) -> Union[List[int], Dict[str, Any]]:
         """Stage 2 Recovery: Operator-authorized coordinated landing.
         Engages ATC pad reservation, sequential staggered descent
@@ -162,31 +272,67 @@ class ATCRecoveryManager:
         airborne_drones.sort(key=lambda d: d.id)
         self.recovery_stage = "LANDING"
 
-        available_pads = [p for p in range(self.capacity) if p not in self.landing_pads]
-        batch_drones = airborne_drones[:len(available_pads)]
-        marshal_drones = airborne_drones[len(available_pads):]
+        target_dest = (destination or "BASE").upper()
+        if target_dest == "BASE" and self.check_pad_denial(obstacles or []):
+            if self.active_field_lz is not None:
+                target_dest = "FIELD_LZ"
 
         queued_ids = []
-        for i, drone in enumerate(batch_drones):
-            pad_idx = available_pads[i]
-            self.landing_pads[pad_idx] = drone.id
-            drone.landing_pad_idx = pad_idx
-            drone.landing_pad = get_pad_position(pad_idx)
-            drone.landing_wait_timer = i * 2.0  # 2.0s minimum clearance interval
-            drone.flight_state = "DESCENDING"
-            drone.status = "LANDING"
-            drone.touchdown_confirmed = False
-            if i == 0:
-                drone.landing_stage = "APPROACH"
-                drone.gated_by_drone_id = None
-            else:
-                drone.landing_stage = "WAITING_CLEARANCE"
-                drone.gated_by_drone_id = batch_drones[i - 1].id
-            queued_ids.append(drone.id)
+        if target_dest == "FIELD_LZ" and self.active_field_lz is not None:
+            # Field Landing Zone Allocation (Open Radial Sentry Ring)
+            flz_cap = self.active_field_lz.capacity
+            avail_slots = [s for s in range(flz_cap) if s not in self.field_lz_slots]
+            batch_drones = airborne_drones[:len(avail_slots)]
+            marshal_drones = airborne_drones[len(avail_slots):]
 
-            if drone.is_leader and succession_fn is not None:
-                drone.is_leader = False
-                succession_fn(demote_old_leader=True, retired_leader=drone)
+            for i, drone in enumerate(batch_drones):
+                slot_idx = avail_slots[i]
+                self.field_lz_slots[slot_idx] = drone.id
+                drone.field_lz_slot = slot_idx
+                drone.landing_pad_idx = None
+                drone.landing_pad = self.get_field_slot_position(slot_idx)
+                drone.landing_wait_timer = i * 1.5  # 1.5s field clearance stagger
+                drone.flight_state = FlightState.FIELD_DESCENDING
+                drone.status = "FIELD_LANDING"
+                drone.touchdown_confirmed = False
+                if i == 0:
+                    drone.landing_stage = "APPROACH"
+                    drone.gated_by_drone_id = None
+                else:
+                    drone.landing_stage = "WAITING_CLEARANCE"
+                    drone.gated_by_drone_id = batch_drones[i - 1].id
+                queued_ids.append(drone.id)
+
+                if drone.is_leader and succession_fn is not None:
+                    drone.is_leader = False
+                    succession_fn(demote_old_leader=True, retired_leader=drone)
+        else:
+            # Nominal Base Pad Allocation
+            available_pads = [p for p in range(self.capacity) if p not in self.landing_pads]
+            batch_drones = airborne_drones[:len(available_pads)]
+            marshal_drones = airborne_drones[len(available_pads):]
+
+            for i, drone in enumerate(batch_drones):
+                pad_idx = available_pads[i]
+                self.landing_pads[pad_idx] = drone.id
+                drone.landing_pad_idx = pad_idx
+                drone.field_lz_slot = None
+                drone.landing_pad = get_pad_position(pad_idx)
+                drone.landing_wait_timer = i * 2.0  # 2.0s minimum clearance interval
+                drone.flight_state = "DESCENDING"
+                drone.status = "LANDING"
+                drone.touchdown_confirmed = False
+                if i == 0:
+                    drone.landing_stage = "APPROACH"
+                    drone.gated_by_drone_id = None
+                else:
+                    drone.landing_stage = "WAITING_CLEARANCE"
+                    drone.gated_by_drone_id = batch_drones[i - 1].id
+                queued_ids.append(drone.id)
+
+                if drone.is_leader and succession_fn is not None:
+                    drone.is_leader = False
+                    succession_fn(demote_old_leader=True, retired_leader=drone)
 
         if marshal_drones:
             self.overhead_marshal_active = True
@@ -410,3 +556,97 @@ class ATCRecoveryManager:
             "stagger_s": self.scramble_stagger,
             "sequence": stagger_order,
         }
+
+    # ==========================================================================
+    # Autonomous Emergency Landing (E-Land) Engine (TKT-64 / PLN-05)
+    # ==========================================================================
+    def find_safe_flat_space(
+        self,
+        drone_pos: np.ndarray,
+        obstacles: List[Any],
+        drones: List[Any],
+        search_radius: float = 20.0,
+        ground_z: float = 0.05,
+    ) -> np.ndarray:
+        """Find the nearest clear, flat ground position for an emergency landing.
+        Searches outward in concentric rings from current position, ensuring
+        >= 3.0m clearance from any UrbanObstacle AABB and other grounded drones."""
+        from SIM.backend.urban_geometry import point_to_aabb_distance
+
+        cur_x, cur_y = float(drone_pos[0]), float(drone_pos[1])
+
+        def is_spot_safe(cx: float, cy: float) -> bool:
+            spot = np.array([cx, cy, ground_z], dtype=float)
+            for obs in obstacles:
+                if hasattr(obs, "bounds"):
+                    d = point_to_aabb_distance(spot, obs.bounds)
+                    if d < 3.0:
+                        return False
+            for other in drones:
+                if getattr(other, "crashed", False) or getattr(other, "retrieved", False):
+                    continue
+                d_other = float(np.linalg.norm(other.pos[:2] - spot[:2]))
+                if d_other < 3.0 and other.pos[2] <= 2.0:
+                    return False
+            return True
+
+        # 1. Test directly underneath current position
+        if is_spot_safe(cur_x, cur_y):
+            return np.array([cur_x, cur_y, ground_z], dtype=float)
+
+        # 2. Concentric radial scan outward
+        for r in np.arange(2.0, search_radius + 0.1, 2.0):
+            num_samples = max(8, int(r * 2))
+            for k in range(num_samples):
+                theta = (2.0 * math.pi * k) / num_samples
+                cand_x = cur_x + r * math.cos(theta)
+                cand_y = cur_y + r * math.sin(theta)
+                if is_spot_safe(cand_x, cand_y):
+                    return np.array([cand_x, cand_y, ground_z], dtype=float)
+
+        # 3. Fallback: outward nudge
+        norm_xy = math.hypot(cur_x, cur_y)
+        offset_dir = np.array([cur_x, cur_y], dtype=float) / max(0.1, norm_xy)
+        return np.array([cur_x + offset_dir[0] * 5.0, cur_y + offset_dir[1] * 5.0, ground_z], dtype=float)
+
+    def command_e_land(
+        self,
+        drone_id: int,
+        drones: List[Any],
+        obstacles: List[Any],
+        reason: str = "MANUAL_OPERATOR",
+        succession_fn: Optional[Callable[..., Any]] = None,
+    ) -> bool:
+        """Command an emergency landing for an individual compromised or beyond-BINGO drone."""
+        for drone in drones:
+            if drone.id == drone_id and not drone.crashed and drone.flight_state not in ("LANDED", "GROUND_IDLE", "FIELD_LANDED", "E_LANDED"):
+                spot = self.find_safe_flat_space(drone.pos, obstacles, drones)
+                drone.e_landing_spot = spot
+                drone.e_landing_reason = reason
+                drone.flight_state = FlightState.EMERGENCY_LANDING
+                drone.status = "E_LANDING"
+                drone.landing_stage = "FINAL_DESCENT"
+                drone.touchdown_confirmed = False
+                drone.acknowledged_target = np.copy(spot)
+                drone.target_station = np.copy(spot)
+
+                if drone.is_leader and succession_fn is not None:
+                    drone.is_leader = False
+                    succession_fn(demote_old_leader=True, retired_leader=drone)
+                return True
+        return False
+
+    def command_e_land_swarm(
+        self,
+        drones: List[Any],
+        obstacles: List[Any],
+        reason: str = "SWARM_EMERGENCY",
+        succession_fn: Optional[Callable[..., Any]] = None,
+    ) -> List[int]:
+        """Emergency-land all living airborne drones to nearest safe flat coordinates."""
+        initiated = []
+        for drone in drones:
+            if not drone.crashed and drone.flight_state not in ("LANDED", "GROUND_IDLE", "FIELD_LANDED", "E_LANDED"):
+                if self.command_e_land(drone.id, drones, obstacles, reason, succession_fn):
+                    initiated.append(drone.id)
+        return initiated

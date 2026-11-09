@@ -1252,7 +1252,7 @@ class SITLWorldEngine:
 
         # 0d. Advance Drone Landing Stagger Clearance & Downwash Anti-Vortex Gate (TKT-42)
         for drone in self.drones:
-            if not drone.crashed and drone.flight_state == "DESCENDING":
+            if not drone.crashed and drone.flight_state in ("DESCENDING", "FIELD_DESCENDING"):
                 if drone.landing_wait_timer > 0.0:
                     drone.landing_wait_timer = max(0.0, drone.landing_wait_timer - dt)
 
@@ -1441,7 +1441,7 @@ class SITLWorldEngine:
                 drone.acc = np.zeros(3, dtype=float)
                 drone.rotor_rpm = 0.0
 
-            elif drone.flight_state == "DESCENDING":
+            elif drone.flight_state in ("DESCENDING", "FIELD_DESCENDING"):
                 pad_pos = (
                     drone.landing_pad
                     if drone.landing_pad is not None
@@ -1505,30 +1505,36 @@ class SITLWorldEngine:
                         avoidance_accs[drone.id][0] *= 0.1
                         avoidance_accs[drone.id][1] *= 0.1
 
-                    # Touchdown Check: Z <= 0.52m and dist_xy <= 0.35m
-                    if current_z <= 0.52 and dist_xy <= 0.35:
-                        # Ground Truth Pad Occupancy Check (Operator Incompetence Failsafe):
-                        # Physical reality in WE: If another airframe is sitting on this pad, Zone 4 clash!
-                        occupant = None
-                        for other in self.drones:
-                            if other.id == drone.id or getattr(other, "retrieved", False):
-                                continue
-                            d_other_xy = float(np.linalg.norm(other.pos[:2] - pad_pos[:2]))
-                            if d_other_xy <= 1.5 and other.pos[2] <= 1.0:
-                                occupant = other
-                                break
+                    # Touchdown Check: Ground contact check
+                    target_ground_z = pad_pos[2] if pad_pos is not None else (0.05 if drone.flight_state == "FIELD_DESCENDING" else 0.5)
+                    touchdown_z_thresh = target_ground_z + 0.08
+                    if current_z <= touchdown_z_thresh and dist_xy <= 0.40:
+                        # Ground Truth Pad Occupancy Check (Operator Incompetence Failsafe for Base pads):
+                        if drone.flight_state != "FIELD_DESCENDING":
+                            occupant = None
+                            for other in self.drones:
+                                if other.id == drone.id or getattr(other, "retrieved", False):
+                                    continue
+                                d_other_xy = float(np.linalg.norm(other.pos[:2] - pad_pos[:2]))
+                                if d_other_xy <= 1.5 and other.pos[2] <= 1.0:
+                                    occupant = other
+                                    break
 
-                        if occupant is not None:
-                            self._trigger_crash(drone, reason=f"UNRETRIEVED_PAD_COLLISION_WITH_DRONE_{occupant.id}")
-                            if not occupant.crashed:
-                                self._trigger_crash(occupant, reason=f"UNRETRIEVED_PAD_COLLISION_WITH_DRONE_{drone.id}")
-                            continue
+                            if occupant is not None:
+                                self._trigger_crash(drone, reason=f"UNRETRIEVED_PAD_COLLISION_WITH_DRONE_{occupant.id}")
+                                if not occupant.crashed:
+                                    self._trigger_crash(occupant, reason=f"UNRETRIEVED_PAD_COLLISION_WITH_DRONE_{drone.id}")
+                                continue
 
                         drone.pos = np.copy(pad_pos)
                         drone.vel = np.zeros(3, dtype=float)
                         drone.acc = np.zeros(3, dtype=float)
-                        drone.flight_state = "LANDED"
-                        drone.status = "LANDED"
+                        if drone.flight_state == "FIELD_DESCENDING":
+                            drone.flight_state = "FIELD_LANDED"
+                            drone.status = "FIELD_LANDED"
+                        else:
+                            drone.flight_state = "LANDED"
+                            drone.status = "LANDED"
                         drone.landing_stage = "TOUCHDOWN_CONFIRMED"
                         drone.touchdown_confirmed = True
                         drone.rotor_rpm = 0.0
@@ -1538,13 +1544,58 @@ class SITLWorldEngine:
                             drone.is_leader = False
                             living_airborne = [
                                 d for d in self.drones
-                                if not d.crashed and d.flight_state != "LANDED" and d.id != drone.id
+                                if not d.crashed and d.flight_state not in ("LANDED", "FIELD_LANDED", "E_LANDED") and d.id != drone.id
                             ]
                             if living_airborne:
                                 successor = max(living_airborne, key=lambda d: d.succession_score())
                                 successor.is_leader = True
                                 successor.tier = TIER_LEADER
                                 successor.status = "FLEET_LEADER"
+
+            elif drone.flight_state == "EMERGENCY_LANDING":
+                target_spot = drone.e_landing_spot if drone.e_landing_spot is not None else np.array([drone.pos[0], drone.pos[1], 0.05], dtype=float)
+                drone.target_station = target_spot
+                to_spot_xy = target_spot[:2] - drone.pos[:2]
+                dist_xy = float(np.linalg.norm(to_spot_xy))
+
+                if dist_xy > 0.2:
+                    dir_xy = to_spot_xy / dist_xy
+                    v_target_xy = min(3.0, max(0.5, dist_xy * 1.2)) * dir_xy
+                    a_target_x = float(np.clip(3.0 * (v_target_xy[0] - drone.vel[0]), -5.0, 5.0))
+                    a_target_y = float(np.clip(3.0 * (v_target_xy[1] - drone.vel[1]), -5.0, 5.0))
+                else:
+                    a_target_x = float(-4.0 * drone.vel[0])
+                    a_target_y = float(-4.0 * drone.vel[1])
+
+                current_z = drone.pos[2]
+                target_vz = -1.2 if current_z > 1.0 else -0.3
+                a_target_z = float(np.clip(4.0 * (target_vz - drone.vel[2]), -5.0, 5.0))
+                guidance_accs[drone.id] = np.array([a_target_x, a_target_y, a_target_z], dtype=float)
+
+                if current_z < 3.0:
+                    avoidance_accs[drone.id][0] *= 0.1
+                    avoidance_accs[drone.id][1] *= 0.1
+
+                if current_z <= 0.12 and dist_xy <= 0.45:
+                    drone.pos = np.copy(target_spot)
+                    drone.vel = np.zeros(3, dtype=float)
+                    drone.acc = np.zeros(3, dtype=float)
+                    drone.flight_state = "E_LANDED"
+                    drone.status = "E_LANDED"
+                    drone.touchdown_confirmed = True
+                    drone.rotor_rpm = 0.0
+
+                    if drone.is_leader:
+                        drone.is_leader = False
+                        living_airborne = [
+                            d for d in self.drones
+                            if not d.crashed and d.flight_state not in ("LANDED", "FIELD_LANDED", "E_LANDED", "GROUND_IDLE") and d.id != drone.id
+                        ]
+                        if living_airborne:
+                            successor = max(living_airborne, key=lambda d: d.succession_score())
+                            successor.is_leader = True
+                            successor.tier = TIER_LEADER
+                            successor.status = "FLEET_LEADER"
 
         # 6. Integrate Kinematics (Euler) & Boundary Clamps
         for drone in self.drones:
@@ -1565,7 +1616,7 @@ class SITLWorldEngine:
                     drone.rotor_rpm = 0.0
                 continue
 
-            if drone.flight_state in ("LANDED", "GROUND_IDLE"):
+            if drone.flight_state in ("LANDED", "GROUND_IDLE", "FIELD_LANDED", "E_LANDED"):
                 # Grounded on pad: motors disarmed, zero kinematics
                 drone.acc = np.zeros(3, dtype=float)
                 drone.vel = np.zeros(3, dtype=float)
@@ -1634,7 +1685,7 @@ class SITLWorldEngine:
                         drone.vel[2] = 0.0
 
             # Floor safety clamp (keep airborne above 0.5m, unless taking off from pad)
-            floor_limit = 0.05 if drone.flight_state == "TAKEOFF" else 0.5
+            floor_limit = 0.05 if drone.flight_state in ("TAKEOFF", "FIELD_DESCENDING", "EMERGENCY_LANDING", "FIELD_LANDED", "E_LANDED") else 0.5
             if drone.pos[2] < floor_limit:
                 drone.pos[2] = floor_limit
                 if drone.vel[2] < 0.0:
@@ -1695,6 +1746,16 @@ class SITLWorldEngine:
                             drone.target_station = np.copy(target)
                     if hasattr(self, "c2") and hasattr(self.c2, "log_event"):
                         self.c2.log_event("WARN", f"[OBC BINGO FAILSAFE: Drone #{drone.id} in LOST_LINK hit BINGO battery ({drone.battery:.1f}%). Autonomically returning along corridor.]")
+
+            # Autonomous Beyond-BINGO E-Landing Failsafe (TKT-64 / PLN-05)
+            # If battery is physically insufficient to reach Base or active FLZ without mid-air crash:
+            home_target = self.atc.active_field_lz.coords if self.atc.active_field_lz is not None else np.array([0.0, 0.0, 0.0], dtype=float)
+            if not drone.crashed and drone.flight_state not in ("LANDED", "GROUND_IDLE", "RETRIEVED", "FIELD_LANDED", "E_LANDED", "EMERGENCY_LANDING"):
+                if hasattr(drone, "is_beyond_bingo") and drone.is_beyond_bingo(home_target, cruise_speed=12.0, drain_rate=0.25):
+                    if drone.pos[2] > 0.5:
+                        self.command_e_land(drone.id, reason="BEYOND_BINGO")
+                        if hasattr(self, "c2") and hasattr(self.c2, "log_event"):
+                            self.c2.log_event("WARN", f"[OBC BEYOND-BINGO: Drone #{drone.id} battery ({drone.battery:.1f}%) insufficient to reach home. Initiating autonomous safe E-LAND.]")
 
             # Emergency Low Battery Soft Settle Protection
             if drone.battery <= 3.0 and not drone.crashed and drone.flight_state not in ("LANDED", "GROUND_IDLE", "RETRIEVED"):
@@ -2387,7 +2448,7 @@ class SITLWorldEngine:
         """Check whether at least one living drone is within the GCS radio horizon."""
         return self.atc.is_in_comms_range(self.drones, self.tether_anchor, RADIO_RANGE)
 
-    def command_rtb_hold(self, force_autonomous: bool = False) -> Dict[str, Any]:
+    def command_rtb_hold(self, force_autonomous: bool = False, destination: str = "BASE") -> Dict[str, Any]:
         """Stage 1 Recovery: Commanded RTB (Hold)."""
         res = self.atc.command_rtb_hold(
             drones=self.drones,
@@ -2395,6 +2456,8 @@ class SITLWorldEngine:
             radio_range=RADIO_RANGE,
             force_autonomous=force_autonomous,
             set_target_fn=self.set_target,
+            destination=destination,
+            obstacles=self.urban_obstacles,
         )
         if res.get("status") == "OK":
             self.patrol_active = False
@@ -2415,14 +2478,59 @@ class SITLWorldEngine:
         if self.tether_severed and self.comms_mode == "TETHERED_RELAY":
             self.comms_mode = "LEADER_FOLLOWER"
 
-    def command_land_swarm(self) -> Union[List[int], Dict[str, Any]]:
+    def command_land_swarm(self, destination: str = "BASE") -> Union[List[int], Dict[str, Any]]:
         """Stage 2 Recovery: Operator-authorized coordinated landing."""
         return self.atc.command_land_swarm(
             drones=self.drones,
             tether_anchor=self.tether_anchor,
             radio_range=RADIO_RANGE,
             succession_fn=self._trigger_autonomic_succession,
+            destination=destination,
+            obstacles=self.urban_obstacles,
         )
+
+    def set_field_lz(
+        self,
+        coords: Union[List[float], np.ndarray],
+        name: str = "FLZ-1",
+        radius: float = 15.0,
+        capacity: int = 16,
+        slot_spacing: float = 4.0,
+    ) -> Dict[str, Any]:
+        return self.atc.set_field_lz(coords, name, radius, capacity, slot_spacing)
+
+    def clear_field_lz(self) -> Dict[str, Any]:
+        return self.atc.clear_field_lz()
+
+    def command_e_land(self, drone_id: int, reason: str = "MANUAL_OPERATOR") -> bool:
+        return self.atc.command_e_land(
+            drone_id=drone_id,
+            drones=self.drones,
+            obstacles=self.urban_obstacles,
+            reason=reason,
+            succession_fn=self._trigger_autonomic_succession,
+        )
+
+    def command_e_land_swarm(self, reason: str = "SWARM_EMERGENCY") -> List[int]:
+        return self.atc.command_e_land_swarm(
+            drones=self.drones,
+            obstacles=self.urban_obstacles,
+            reason=reason,
+            succession_fn=self._trigger_autonomic_succession,
+        )
+
+    @property
+    def field_lz(self) -> Optional[Dict[str, Any]]:
+        if self.atc.active_field_lz is not None:
+            return {
+                "id": self.atc.active_field_lz.id,
+                "name": self.atc.active_field_lz.name,
+                "coords": [round(float(v), 2) for v in self.atc.active_field_lz.coords],
+                "radius": self.atc.active_field_lz.radius,
+                "capacity": self.atc.active_field_lz.capacity,
+                "active": self.atc.active_field_lz.active,
+            }
+        return None
 
     def command_land_drone(self, drone_id: int) -> bool:
         """Command an individual drone to land on an available recovery pad."""
@@ -3052,6 +3160,7 @@ class SITLWorldEngine:
             "payload_deposit": self.c2.get_payload_drop_state(),
             "ground_repeaters": [r.to_dict() for r in self.ground_repeaters],
             "urban_obstacles": [o.to_dict() for o in self.urban_obstacles] if getattr(self, "urban_obstacles", None) else [],
+            "field_lz": self.field_lz,
             "two_ic_id": two_ic_id,
             "lost_link_loiter_timer": round(max(0.0, float(self.lost_link_loiter_timer)), 1),
             "swarm_rtb_active": self.swarm_rtb_active,

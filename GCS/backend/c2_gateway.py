@@ -1347,6 +1347,47 @@ class C2Gateway:
             "stage": self.payload_drop_stage,
         }
 
+    def set_field_lz(
+        self,
+        coords: Union[List[float], np.ndarray],
+        name: str = "FLZ-1",
+        radius: float = 15.0,
+        capacity: int = 16,
+        slot_spacing: float = 4.0,
+    ) -> Dict[str, Any]:
+        """Designate a Field Landing Zone via C2 Gateway."""
+        if self.sim and hasattr(self.sim, "set_field_lz"):
+            res = self.sim.set_field_lz(coords, name, radius, capacity, slot_spacing)
+            self.log_event("ATC", f"[FLZ DESIGNATED: Field Landing Zone '{name}' set at {[round(float(v), 1) for v in coords]}]")
+            return res
+        return {"status": "NOOP", "reason": "NO_SIM"}
+
+    def clear_field_lz(self) -> Dict[str, Any]:
+        """Clear active Field Landing Zone."""
+        if self.sim and hasattr(self.sim, "clear_field_lz"):
+            res = self.sim.clear_field_lz()
+            self.log_event("ATC", "[FLZ CLEARED: Field Landing Zone deactivated.]")
+            return res
+        return {"status": "NOOP", "reason": "NO_SIM"}
+
+    def command_e_land(self, drone_id: int, reason: str = "MANUAL_OPERATOR") -> Dict[str, Any]:
+        """Command emergency landing for specific drone."""
+        if self.sim and hasattr(self.sim, "command_e_land"):
+            ok = self.sim.command_e_land(drone_id, reason=reason)
+            if ok:
+                self.log_event("FAILSAFE", f"[EMERGENCY LANDING: Drone #{drone_id} descending to nearest clear flat ground.]")
+                return {"status": "OK", "drone_id": drone_id, "reason": reason}
+            return {"status": "DROPPED", "reason": "DRONE_NOT_ELIGIBLE"}
+        return {"status": "NOOP", "reason": "NO_SIM"}
+
+    def command_e_land_swarm(self, reason: str = "SWARM_EMERGENCY") -> Dict[str, Any]:
+        """Command emergency landing for entire swarm."""
+        if self.sim and hasattr(self.sim, "command_e_land_swarm"):
+            initiated = self.sim.command_e_land_swarm(reason=reason)
+            self.log_event("FAILSAFE", f"[SWARM EMERGENCY LANDING: {len(initiated)} drones descending to nearest flat ground.]")
+            return {"status": "OK", "initiated_count": len(initiated), "drone_ids": initiated}
+        return {"status": "NOOP", "reason": "NO_SIM"}
+
     def stop_payload_drop(self) -> Dict[str, Any]:
         """Abort active Cairn G1 payload drop mission (TKT-59)."""
         if not self.payload_drop_active:

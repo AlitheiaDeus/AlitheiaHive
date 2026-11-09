@@ -42,6 +42,13 @@ class FlightState(str, Enum):
     PRECISION_DESCENT = "PRECISION_DESCENT"
     CARRIER_EGRESS = "CARRIER_EGRESS"
 
+    # Designated Field LZ & Emergency Landing states (TKT-64 / PLN-05)
+    FIELD_HOLD = "FIELD_HOLD"
+    FIELD_DESCENDING = "FIELD_DESCENDING"
+    FIELD_LANDED = "FIELD_LANDED"
+    EMERGENCY_LANDING = "EMERGENCY_LANDING"
+    E_LANDED = "E_LANDED"
+
     def __str__(self) -> str:
         return self.value
 
@@ -266,6 +273,11 @@ class Drone:
         self.touchdown_confirmed: bool = False
         self.gated_by_drone_id: Optional[int] = None
 
+        # Designated Field Landing Zone & Autonomous E-Landing (TKT-64 / PLN-05)
+        self.field_lz_slot: Optional[int] = None
+        self.e_landing_spot: Optional[np.ndarray] = None
+        self.e_landing_reason: Optional[str] = None
+
         # Onboard Target Buffer (TKT-25: Ground Truth vs Autopilot Decoupling)
         self.acknowledged_target: np.ndarray = (
             np.array(pos, dtype=float) if pos is not None else np.array([60.0, 40.0, 30.0], dtype=float)
@@ -485,6 +497,32 @@ class Drone:
         """Record current 3D position into reversible corridor stack if novel displacement >= 15m (BUG-06)."""
         return self.corridor_stack.record(pos)
 
+    def calculate_bingo_energy(
+        self,
+        home_coords: np.ndarray,
+        cruise_speed: float = 12.0,
+        drain_rate: float = 0.25,
+        safety_margin: float = 10.0,
+    ) -> float:
+        """Calculate minimum battery energy needed to transit to home coordinates.
+        E_needed = (d_home / v_cruise) * drain_rate + safety_margin."""
+        d_home = float(np.linalg.norm(self.pos[:2] - np.asarray(home_coords)[:2]))
+        transit_time_s = d_home / max(1.0, cruise_speed)
+        return transit_time_s * drain_rate + safety_margin
+
+    def is_beyond_bingo(
+        self,
+        home_coords: np.ndarray,
+        cruise_speed: float = 12.0,
+        drain_rate: float = 0.25,
+        safety_margin: float = 10.0,
+        grace_buffer: float = 3.0,
+    ) -> bool:
+        """True if current battery is strictly below the required transit energy minus grace buffer,
+        meaning reaching home is physically impossible without in-flight exhaustion."""
+        e_needed = self.calculate_bingo_energy(home_coords, cruise_speed, drain_rate, safety_margin)
+        return self.battery < (e_needed - grace_buffer)
+
     def succession_score(self) -> int:
         """Calculate autonomic succession eligibility score: (Tier * 1000) - ID.
         Returns -1 if airframe lacks FLAGSHIP authorization (BUG-06)."""
@@ -536,6 +574,9 @@ class Drone:
             "landing_pad_idx": self.landing_pad_idx,
             "landing_stage": self.landing_stage,
             "touchdown_confirmed": self.touchdown_confirmed,
+            "field_lz_slot": self.field_lz_slot,
+            "e_landing_spot": [round(float(v), 2) for v in self.e_landing_spot] if self.e_landing_spot is not None else None,
+            "e_landing_reason": self.e_landing_reason,
             "gated_by_drone_id": self.gated_by_drone_id,
             "acknowledged_target": [round(float(v), 2) for v in self.acknowledged_target],
             "mission_active": self.mission_active,

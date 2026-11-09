@@ -551,7 +551,8 @@ class SwarmWebServer:
             return {"status": "OK", "cmd": cmd, "drone_count": len(self.sim.drones)}
 
         elif cmd in ("RTB_HOLD", "COMMAND_RTB_HOLD", "RETURN_TO_BASE_HOLD", "RTB"):
-            res = self.sim.command_rtb_hold()
+            destination = cmd_dict.get("destination", "BASE")
+            res = self.sim.command_rtb_hold(destination=destination)
             if isinstance(res, dict) and res.get("status") == "DROPPED":
                 return {
                     "status": "DROPPED",
@@ -583,7 +584,8 @@ class SwarmWebServer:
             }
 
         elif cmd in ("LAND_SWARM", "COMMAND_LAND_SWARM", "LAND_ALL"):
-            res = self.sim.command_land_swarm()
+            destination = cmd_dict.get("destination", "BASE")
+            res = self.sim.command_land_swarm(destination=destination)
             if isinstance(res, dict) and res.get("status") == "DROPPED":
                 return {
                     "status": "DROPPED",
@@ -656,6 +658,33 @@ class SwarmWebServer:
                 "drone_id": drone_id,
                 "reason": "UNAVAILABLE" if not success else None,
             }
+
+        elif cmd in ("SET_FIELD_LZ", "COMMAND_SET_FIELD_LZ"):
+            coords = cmd_dict.get("coords", [40.0, 20.0, 0.05])
+            name = str(cmd_dict.get("name", "FLZ-1"))
+            radius = float(cmd_dict.get("radius", 15.0))
+            cap = int(cmd_dict.get("capacity", 16))
+            res = self.sim.set_field_lz(coords=coords, name=name, radius=radius, capacity=cap)
+            self.session_manager.add_event("ATC", f"Field Landing Zone '{name}' designated at {coords}", sim_time=self.sim.sim_time)
+            return {"status": "OK", "cmd": cmd, "result": res}
+
+        elif cmd in ("CLEAR_FIELD_LZ", "COMMAND_CLEAR_FIELD_LZ"):
+            res = self.sim.clear_field_lz()
+            self.session_manager.add_event("ATC", "Field Landing Zone cleared", sim_time=self.sim.sim_time)
+            return {"status": "OK", "cmd": cmd, "result": res}
+
+        elif cmd in ("E_LAND", "COMMAND_E_LAND", "EMERGENCY_LAND"):
+            drone_id = cmd_dict.get("id", cmd_dict.get("drone_id", None))
+            reason = str(cmd_dict.get("reason", "MANUAL_OPERATOR"))
+            if drone_id is not None:
+                did = int(drone_id)
+                success = self.sim.command_e_land(did, reason=reason)
+                self.session_manager.add_event("FAILSAFE", f"Emergency landing initiated for Drone #{did} (Reason: {reason})", sim_time=self.sim.sim_time)
+                return {"status": "OK" if success else "DROPPED", "cmd": cmd, "drone_id": did}
+            else:
+                initiated = self.sim.command_e_land_swarm(reason=reason)
+                self.session_manager.add_event("FAILSAFE", f"Swarm emergency landing initiated for {len(initiated)} drones (Reason: {reason})", sim_time=self.sim.sim_time)
+                return {"status": "OK", "cmd": cmd, "initiated_count": len(initiated), "drone_ids": initiated}
 
         elif cmd in ("TAKEOFF_DRONE", "RELAUNCH_DRONE"):
             drone_id = int(cmd_dict.get("id", cmd_dict.get("drone_id", 0)))

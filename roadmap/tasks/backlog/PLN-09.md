@@ -1,6 +1,7 @@
 # [PLN-09] T3 Kodiak Simulated LiDAR Stream & Point-Cloud HUD Overlay
 
-* **Grade**: 🏗️ Epic | **Type**: Sensor Simulation, Edge Compute & WebGL Point Cloud (`Backlog / Epic`) | **Priority**: Medium
+* **Grade**: 🎭 Gimmick | **Type**: Sensor Simulation & Point Cloud (Frozen / Parked) | **Priority**: Very Low
+* **Parked Reason**: Frozen indefinitely to avoid GPU/CPU thermal throttling and point-cloud software rendering overhead on local laptop hardware.
 * **Target Files**: `SIM/backend/sitl_engine.py`, `SIM/backend/lidar_sim.py`, `OBC/backend/drone_firmware.py`, `GCS/frontend/js/app.js`, `GCS/frontend/js/lidar_overlay.js`
 * **Operational Inspiration**:
   - Delivers the signature sensor payload for `T3 Kodiak` (Heavy Edge Compute Hub) defined in `AIRFRAME_HARDWARE_TIERS.md`.
