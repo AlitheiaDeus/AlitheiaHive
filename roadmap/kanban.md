@@ -52,7 +52,12 @@ kanban
     tkt39["Standalone OBC Socket Daemon"]@{ ticket: '[TKT-39]', priority: 'Medium' }
     tkt45["Cryptographic Comms Guard (HMAC Signing)"]@{ ticket: '[TKT-45]', priority: 'Medium' }
     tkt47["Declarative Field Deployment Scenarios"]@{ ticket: '[TKT-47]', priority: 'Medium' }
+    pln11["3D Tactical Corridor Pathfinding & Operator Preview"]@{ ticket: '[PLN-11]', priority: 'Medium' }
   todo["Todo (Active Pipeline)"]
+    tkt66["Simplified RF & GNSS Shadow Occlusion Engine"]@{ ticket: '[TKT-66]', priority: 'High' }
+    bug08["Ghost Flagship Demotion & Casualty Badge Precedence"]@{ ticket: '[BUG-08]', priority: 'High' }
+    bug09["God-View Sim Viewport (/sim) Missing Drone ID Badges"]@{ ticket: '[BUG-09]', priority: 'Normal' }
+    bug10["Command Deck Button Typography & Emoji Alignment Fix"]@{ ticket: '[BUG-10]', priority: 'Normal' }
   in_progress["In Progress (WIP = 1)"]
   completed["Completed (Fresh / Review)"]
     tkt62["TKT-62: GCS-SIM Canyon Decoupling & Port Isolation"]@{ ticket: '[TKT-62]', priority: 'High' }
@@ -65,6 +70,7 @@ kanban
     tkt63["Core Hygiene: StrEnum, Geodetics & Packaging"]@{ ticket: '[TKT-63]', priority: 'High' }
     tkt64["Designated Field Landing Zones & Autonomous E-Landing"]@{ ticket: '[TKT-64]', priority: 'High' }
     tkt65["Modular 3D Terrain Blocks & Obstacle Shelves"]@{ ticket: '[TKT-65]', priority: 'High' }
+    bug07["Comms LKP Continuous Refresh & Launchpad Snap Fix"]@{ ticket: '[BUG-07]', priority: 'High' }
 ```
 
 ---
@@ -109,6 +115,12 @@ kanban
 | **`TKT-63`** | `🛠️ Refactor` | Core Hygiene: StrEnum, Geodetics & Packaging | StrEnum flight states, PyMAVLink geodetics, and UV packaging | [TKT-63.md](tasks/TKT-63.md) |
 | **`TKT-64`** | `🚀 Feature` | Designated Field Landing Zones (FLZ) & Autonomous E-Landing | PLN-05 Off-Nominal Landing Zones & Field E-Land (50/50 Architecture across 4 Airgaps) | [TKT-64.md](tasks/TKT-64.md) |
 | **`TKT-65`** | `TKT` | Modular 3D Terrain Blocks & Obstacle Shelves | PLN-08 Cyberpunk Obby Steppes, Altitude Shelves & Dynamic Surface Floor Clamping | [TKT-65.md](tasks/TKT-65.md) |
+| **`TKT-66`** | `TKT` | Simplified RF & GNSS Shadow Occlusion Engine | PLN-08 Ray-Cast RF Shadows, Virtual 4-Satellite GNSS Constellation & Dead-Reckoning Failsafe | [TKT-66.md](tasks/TKT-66.md) |
+| **`BUG-07`** | `BUG` | Comms LKP Continuous Refresh & Launchpad Snap Fix | Drone snapping to launchpad on comms drop because LKP was never updated during flight | [BUG-07.md](tasks/BUG-07.md) |
+| **`BUG-08`** | `BUG` | Ghost Flagship Demotion & Casualty Badge Precedence | Dead/demoted leaders retained flagship status in telemetry and masked crash/lost-link badges | [BUG-08.md](tasks/BUG-08.md) |
+| **`BUG-09`** | `BUG` | God-View Sim Viewport (/sim) Missing Drone ID Badges | Sim viewport /sim renders collision spheres and rotors but lacks drone ID badges | [BUG-09.md](tasks/BUG-09.md) |
+| **`BUG-10`** | `BUG` | Command Deck Button Typography & Emoji Alignment Fix | Emoji characters in GCS command deck buttons cause vertical misalignment and line-height glitches | [BUG-10.md](tasks/BUG-10.md) |
+| **`PLN-11`** | `PLN` | 3D Tactical Corridor Pathfinding & Operator Preview | Operator single-target 3D auto-pathfinding with corridor preview and confirmation before execution | [PLN-11.md](tasks/backlog/PLN-11.md) |
 
 ---
 

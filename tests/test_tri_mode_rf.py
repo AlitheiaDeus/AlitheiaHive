@@ -502,6 +502,41 @@ class TestTriModeRF(unittest.TestCase):
         self.assertFalse(sim_lead_out["crashed"])
         self.assertFalse(sim_fol_out["crashed"])
 
+    def test_bug07_continuous_lkp_refresh_prevents_launchpad_snap(self):
+        """Verify BUG-07: Continuous LKP updates prevent airframe snapping to launchpad on link drop."""
+        sim = SwarmSimulator(drone_count=3, enable_packet_loss=False, seed=42)
+        leader = sim.leader
+        self.assertIsNotNone(leader)
+
+        # Leader flies to a remote airborne coordinate in tethered mode
+        target_pos = np.array([45.0, 35.0, 25.0], dtype=float)
+        leader.pos = np.copy(target_pos)
+        leader.flight_state = "CRUISE"
+
+        # Step sim to let watchdog/radio update
+        sim._update_radio_comms()
+        sim._update_heartbeat_watchdog_and_breadcrumbs(dt=0.016)
+
+        # In tethered relay with intact tether, downlink is active
+        self.assertTrue(leader.downlink_active)
+        # BUG-07 Invariant: leader LKP must match its current position, not launchpad
+        np.testing.assert_allclose(leader.lkp, target_pos, atol=1e-2)
+
+        # Now simulate link loss (e.g. tether severed + beyond range)
+        sim.tether_severed = True
+        leader.pos = np.array([160.0, 35.0, 25.0], dtype=float) # Beyond Howl/Bork
+        sim._update_radio_comms()
+        self.assertFalse(leader.downlink_active)
+
+        # Telemetry snapshot for GCS
+        snap = sim.get_state_snapshot()
+        gcs_leader = next(d for d in snap["drones"] if d["id"] == leader.id)
+
+        # Must report the frozen LKP [45.0, 35.0, 25.0], NEVER pad 0 coordinates [0.0, -6.0, 0.5]
+        self.assertTrue(gcs_leader["lost_link"])
+        np.testing.assert_allclose(gcs_leader["pos"], target_pos, atol=0.1)
+        self.assertGreater(float(np.linalg.norm(np.array(gcs_leader["pos"]) - np.array([0.0, -6.0, 0.5]))), 30.0)
+
 
 if __name__ == "__main__":
     unittest.main()

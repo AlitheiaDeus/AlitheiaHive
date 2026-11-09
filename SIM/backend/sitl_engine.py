@@ -1816,6 +1816,10 @@ class SITLWorldEngine:
             if d.crashed:
                 continue
 
+            # Continuously refresh LKP while downlink is active (BUG-07)
+            if d.downlink_active and d.flight_state not in ("LANDED", "GROUND_IDLE"):
+                d.lkp = np.copy(d.pos)
+
             # 1. Rolling 10s Breadcrumbs buffer (@ 2 Hz = every 0.5s)
             if d.flight_state in ("CRUISE", "EN_ROUTE", "TAKEOFF", "OVERHEAD_HOLD") and not d.lost_link and not getattr(d, "holding_at_horizon", False):
                 d.breadcrumb_record_timer += dt
@@ -2320,6 +2324,7 @@ class SITLWorldEngine:
         drone.flight_state = FlightState.CRASHED
         drone.status = "CRASHED"
         if drone.downlink_active:
+            drone.lkp = np.copy(drone.pos)
             drone.mayday_beacon = True
             drone.mayday_reason = reason or "IMPACT_DETECTED"
             drone.outbox.append(

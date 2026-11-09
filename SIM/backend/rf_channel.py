@@ -277,6 +277,8 @@ class RFChannelManager:
                         drone.lost_link = False
                         drone.gcs_heartbeat_watchdog = 2.0
                         drone.last_heartbeat_time = sim_time
+                        if broadcast_tick:
+                            drone.lkp = np.copy(drone.pos)
                         if drone.status == "LOST_LINK":
                             drone.status = "FLEET_LEADER"
                     else:
@@ -341,6 +343,8 @@ class RFChannelManager:
                             drone.gcs_heartbeat_watchdog = 2.0
                             if drone.status == "LOST_LINK" and drone.flight_state not in ("LANDED", "GROUND_IDLE"):
                                 drone.status = "ACTIVE"
+                        elif drone.downlink_active:
+                            drone.lkp = np.copy(drone.pos)
                     if sim_time - drone.last_heartbeat_time > LINK_TIMEOUT:
                         drone.lost_link = True
                         if drone.flight_state not in ("LANDED", "GROUND_IDLE"):
@@ -431,6 +435,8 @@ class RFChannelManager:
                             drone.gcs_heartbeat_watchdog = 2.0
                             if drone.status == "LOST_LINK" and drone.flight_state not in ("LANDED", "GROUND_IDLE"):
                                 drone.status = "ACTIVE"
+                        elif drone.downlink_active:
+                            drone.lkp = np.copy(drone.pos)
                     if sim_time - drone.last_heartbeat_time > LINK_TIMEOUT:
                         drone.lost_link = True
                         if drone.flight_state not in ("LANDED", "GROUND_IDLE"):
