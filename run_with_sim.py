@@ -79,7 +79,7 @@ def _cleanup_children():
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     proc.wait(timeout=0.5)
-            except Exception:
+            except (ProcessLookupError, OSError):
                 pass
     _CHILD_PROCESSES.clear()
 

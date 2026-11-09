@@ -53,6 +53,7 @@ kanban
     tkt45["Cryptographic Comms Guard (HMAC Signing)"]@{ ticket: '[TKT-45]', priority: 'Medium' }
     tkt47["Declarative Field Deployment Scenarios"]@{ ticket: '[TKT-47]', priority: 'Medium' }
   todo["Todo (Active Pipeline)"]
+    tkt61["TKT-61: SITL Engine Modular Decomposition"]@{ ticket: '[TKT-61]', priority: 'High' }
   in_progress["In Progress (WIP = 1)"]
   completed["Completed (Fresh / Review)"]
     bug06["OBC Failsafe Consolidation: t-GCSH, Relays & Corridor ERTB"]@{ ticket: '[BUG-06]', priority: 'Very High' }
@@ -99,6 +100,7 @@ kanban
 
 | Ticket ID | Grade | Title | Operational Inspiration | Spec Document |
 | :--- | :--- | :--- | :--- | :--- |
+| **`TKT-61`** | `🛠️ Refactor` | SITL Engine Modular Decomposition (Extract RF & ATC) | Decompose 4,327-line monolith into rf_channel.py & atc_recovery.py | [TKT-61.md](tasks/TKT-61.md) |
 | **`TKT-59`** | `🚀 Feature` | 1-Click Aux Mission: Cairn G1 Solar Repeater Payload Drop | Precision payload release at Z=3m, ground solar repeater joins gossip mesh | [TKT-59.md](tasks/TKT-59.md) |
 | **`TKT-51`** | `🚀 Feature` | Physical Courier / Search-and-Recall Mule to LKP | Targeted LKP dwell, P2P rescue handshake, and reverse tandem escort | [TKT-51.md](tasks/TKT-51.md) |
 | **`TKT-58`** | `🚀 Feature` | 1-Click Aux Mission: Patrol to BINGO RTB | Autonomous patrol looping until BINGO battery triggers automated 2-stage RTB | [TKT-58.md](tasks/TKT-58.md) |

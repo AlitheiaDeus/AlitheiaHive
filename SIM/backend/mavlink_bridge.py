@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import math
 import socket
+import struct
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
@@ -764,7 +765,7 @@ class MavlinkBridge:
                     parsed = self.mav.parse_buffer(bytearray(data))
                     if parsed:
                         msgs.extend(parsed)
-                except Exception:
+                except (TypeError, ValueError, struct.error, IndexError, KeyError, AttributeError):
                     pass
 
                 if not msgs:
@@ -772,7 +773,7 @@ class MavlinkBridge:
                         single = self.mav.decode(bytearray(data))
                         if single:
                             msgs.append(single)
-                    except Exception:
+                    except (TypeError, ValueError, struct.error, IndexError, KeyError, AttributeError):
                         pass
 
                 for msg in msgs:
@@ -1096,13 +1097,13 @@ class MavlinkBridge:
         """Close all network sockets cleanly."""
         try:
             self.tx_sock.close()
-        except Exception:
+        except (OSError, socket.error):
             pass
         try:
             self.rx_sock.close()
-        except Exception:
+        except (OSError, socket.error):
             pass
         try:
             self.mavlink_sock.close()
-        except Exception:
+        except (OSError, socket.error):
             pass

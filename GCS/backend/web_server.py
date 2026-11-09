@@ -827,7 +827,7 @@ class SwarmWebServer:
         for ws in list(self.active_websockets):
             try:
                 await ws.close(code=1000, message=b"Server shutdown")
-            except Exception:
+            except (ConnectionResetError, asyncio.CancelledError, RuntimeError, OSError):
                 pass
         self.active_websockets.clear()
 
@@ -844,7 +844,7 @@ class SwarmWebServer:
         if sys.platform == "win32":
             try:
                 ctypes.windll.winmm.timeEndPeriod(1)
-            except Exception:
+            except (AttributeError, OSError):
                 pass
 
 

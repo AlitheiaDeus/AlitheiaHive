@@ -1,6 +1,6 @@
 # TKT-60: Urban 3D Obstacle Shelves, Structural Clash & RF LOS Shadowing
 
-> **Category**: 🚀 Feature | **Priority**: High | **State**: in_progress  
+> **Category**: 🚀 Feature | **Priority**: High | **State**: completed  
 > **Operational Inspiration**: PLN-08 Urban Canyon Geometry, Static 3D Obstacles & Safe Flight Corridors
 
 ---

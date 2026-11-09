@@ -43,3 +43,7 @@ desktop.ini
 logs/
 tmp/
 scratch/
+
+# Test Recordings & Telemetry Dumps
+tests/recordings/*.json
+
