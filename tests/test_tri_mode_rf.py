@@ -513,9 +513,10 @@ class TestTriModeRF(unittest.TestCase):
         leader.pos = np.copy(target_pos)
         leader.flight_state = "CRUISE"
 
-        # Step sim to let watchdog/radio update
-        sim._update_radio_comms()
-        sim._update_heartbeat_watchdog_and_breadcrumbs(dt=0.016)
+        # Step sim for 0.2s (12 frames) to let radio broadcast tick fire
+        for _ in range(12):
+            leader.pos = np.copy(target_pos)
+            sim.step()
 
         # In tethered relay with intact tether, downlink is active
         self.assertTrue(leader.downlink_active)

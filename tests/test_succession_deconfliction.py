@@ -159,6 +159,45 @@ class TestSuccessionDeconfliction(unittest.TestCase):
             survivor_crashes = [d.id for d in sim.drones if d.crashed and d.id != 0]
             self.assertEqual(len(survivor_crashes), 0, f"Collateral crash after leader kill: {survivor_crashes}")
 
+    def test_bug08_strict_single_flagship_invariant_and_demotion(self):
+        """Verify BUG-08: Exactly one leader exists across cascading casualties and demotions."""
+        sim = SwarmSimulator(drone_count=5)
+
+        # Initial check: only Drone 0 is leader
+        leaders = [d for d in sim.drones if d.is_leader]
+        self.assertEqual(len(leaders), 1)
+        self.assertEqual(leaders[0].id, 0)
+
+        # Kill Drone 0
+        sim.kill_leader()
+        self.assertTrue(sim.drones[0].crashed)
+        self.assertFalse(sim.drones[0].is_leader)
+
+        # Only one active leader must exist among living drones
+        living_leaders = [d for d in sim.drones if d.is_leader]
+        self.assertEqual(len(living_leaders), 1)
+        current_leader = living_leaders[0]
+        self.assertNotEqual(current_leader.id, 0)
+
+        # Check telemetry snapshot: exactly one drone has is_leader == True
+        snap = sim.get_state_snapshot()
+        gcs_leaders = [d for d in snap["drones"] if d.get("is_leader")]
+        self.assertEqual(len(gcs_leaders), 1)
+        self.assertEqual(gcs_leaders[0]["id"], current_leader.id)
+
+        # Kill the promoted successor as well (cascading casualty)
+        sim._trigger_crash(current_leader, reason="SIMULATED_TEST_CRASH")
+        self.assertFalse(current_leader.is_leader)
+
+        # Another follower should assume leadership
+        next_leaders = [d for d in sim.drones if d.is_leader]
+        self.assertEqual(len(next_leaders), 1)
+
+        # In telemetry, dead drones must NEVER carry is_leader == True
+        snap2 = sim.get_state_snapshot()
+        gcs_dead_flagships = [d for d in snap2["drones"] if d.get("is_leader") and (d.get("crashed") or d.get("lost_link"))]
+        self.assertEqual(len(gcs_dead_flagships), 0, "No dead or lost-link drone may broadcast is_leader == True")
+
 
 if __name__ == "__main__":
     unittest.main()

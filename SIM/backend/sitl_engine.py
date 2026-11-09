@@ -1169,6 +1169,9 @@ class SITLWorldEngine:
                 designated_leader.is_leader = False
                 if designated_leader.status == "FLEET_LEADER":
                     designated_leader.status = "ACTIVE"
+            for d in self.drones:
+                if d.id != successor.id:
+                    d.is_leader = False
             successor.is_leader = True
             successor.status = "FLEET_LEADER"
             if hasattr(self, "brain") and hasattr(self.brain, "on_succession"):
@@ -1560,6 +1563,9 @@ class SITLWorldEngine:
                             ]
                             if living_airborne:
                                 successor = max(living_airborne, key=lambda d: d.succession_score())
+                                for d in self.drones:
+                                    if d.id != successor.id:
+                                        d.is_leader = False
                                 successor.is_leader = True
                                 successor.tier = TIER_LEADER
                                 successor.status = "FLEET_LEADER"
@@ -1608,6 +1614,9 @@ class SITLWorldEngine:
                         ]
                         if living_airborne:
                             successor = max(living_airborne, key=lambda d: d.succession_score())
+                            for d in self.drones:
+                                if d.id != successor.id:
+                                    d.is_leader = False
                             successor.is_leader = True
                             successor.tier = TIER_LEADER
                             successor.status = "FLEET_LEADER"
@@ -1815,10 +1824,6 @@ class SITLWorldEngine:
         for d in self.drones:
             if d.crashed:
                 continue
-
-            # Continuously refresh LKP while downlink is active (BUG-07)
-            if d.downlink_active and d.flight_state not in ("LANDED", "GROUND_IDLE"):
-                d.lkp = np.copy(d.pos)
 
             # 1. Rolling 10s Breadcrumbs buffer (@ 2 Hz = every 0.5s)
             if d.flight_state in ("CRUISE", "EN_ROUTE", "TAKEOFF", "OVERHEAD_HOLD") and not d.lost_link and not getattr(d, "holding_at_horizon", False):
@@ -2319,7 +2324,9 @@ class SITLWorldEngine:
 
     def _trigger_crash(self, drone: Drone, reason: str = "") -> None:
         """Disengage drone motors and trigger ballistic tumble."""
+        was_leader = drone.is_leader
         drone.crashed = True
+        drone.is_leader = False
         drone.crashed_while_linked = bool(drone.downlink_active)
         drone.flight_state = FlightState.CRASHED
         drone.status = "CRASHED"
@@ -2342,8 +2349,7 @@ class SITLWorldEngine:
                 reason=reason,
                 sim_time=self.sim_time,
             )
-        was_leader = drone.is_leader
-        if (drone.is_leader or drone.id == 0) and self.comms_mode == "TETHERED_RELAY":
+        if (was_leader or drone.id == 0) and self.comms_mode == "TETHERED_RELAY":
             if not self.tether_severed:
                 self.tether_severed = True
                 drone.tether_lost = True
@@ -3086,6 +3092,7 @@ class SITLWorldEngine:
                 d_dict["pos"] = [round(float(v), 2) for v in d.lkp]
                 d_dict["vel"] = [0.0, 0.0, 0.0]
                 d_dict["lost_link"] = True
+                d_dict["is_leader"] = False
             elif not d.crashed and not d.downlink_active and d.flight_state not in ("LANDED", "GROUND_IDLE"):
                 # 2. Living airborne drone has lost downlink contact (beyond Bork/Yip horizon or lost link).
                 #    GCS receives NO live telemetry updates; coordinates freeze at Last Known Position (LKP).

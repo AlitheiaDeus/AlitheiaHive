@@ -968,6 +968,18 @@
             card.elRole.classList.add('badge-jettison');
             if (card.elLandBtn) card.elLandBtn.style.display = 'none';
             setActionBtn('KILL', 'card-btn-action btn-kill');
+        } else if (drone.lost_link) {
+            card.el.classList.add('lkp-card');
+            card.elStatus.textContent = 'LKP RECOVERY';
+            card.elStatus.className = 'status-tag tag-lkp';
+            const rfMode = drone.rf_power_mode || 'YIP';
+            card.elRole.textContent = drone.is_leader ? `LKP (LEADER) • ${rfMode}` : `LKP • ${rfMode}`;
+            if (card.elLandBtn) {
+                card.elLandBtn.style.display = 'inline-block';
+                card.elLandBtn.textContent = 'DECLARE DESTROYED';
+                card.elLandBtn.className = 'card-btn-action btn-danger';
+                card.elLandBtn.title = 'Manual Operator Action: Confirm airframe destroyed at LKP';
+            }
         } else if (drone.is_leader) {
             card.el.classList.add('leader-card');
             card.elStatus.textContent = overheadMarshalActive ? 'OVERHEAD HOLD' : 'LEADER';
@@ -1025,18 +1037,6 @@
                 card.elLandBtn.className = 'card-btn-action btn-land';
             }
             setActionBtn('KILL', 'card-btn-action btn-kill');
-        } else if (drone.lost_link) {
-            card.el.classList.add('lkp-card');
-            card.elStatus.textContent = 'LKP RECOVERY';
-            card.elStatus.className = 'status-tag tag-lkp';
-            const rfMode = drone.rf_power_mode || 'YIP';
-            card.elRole.textContent = `LKP • ${rfMode}`;
-            if (card.elLandBtn) {
-                card.elLandBtn.style.display = 'inline-block';
-                card.elLandBtn.textContent = 'DECLARE DESTROYED';
-                card.elLandBtn.className = 'card-btn-action btn-danger';
-                card.elLandBtn.title = 'Manual Operator Action: Confirm airframe destroyed at LKP';
-            }
         } else if (drone.status === 'PROPAGATING') {
             card.el.classList.add('gossip-card');
             card.elStatus.textContent = 'ECHO WAVE';

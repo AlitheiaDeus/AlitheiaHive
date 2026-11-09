@@ -55,7 +55,6 @@ kanban
     pln11["3D Tactical Corridor Pathfinding & Operator Preview"]@{ ticket: '[PLN-11]', priority: 'Medium' }
   todo["Todo (Active Pipeline)"]
     tkt66["Simplified RF & GNSS Shadow Occlusion Engine"]@{ ticket: '[TKT-66]', priority: 'High' }
-    bug08["Ghost Flagship Demotion & Casualty Badge Precedence"]@{ ticket: '[BUG-08]', priority: 'High' }
     bug09["God-View Sim Viewport (/sim) Missing Drone ID Badges"]@{ ticket: '[BUG-09]', priority: 'Normal' }
     bug10["Command Deck Button Typography & Emoji Alignment Fix"]@{ ticket: '[BUG-10]', priority: 'Normal' }
   in_progress["In Progress (WIP = 1)"]
@@ -71,6 +70,7 @@ kanban
     tkt64["Designated Field Landing Zones & Autonomous E-Landing"]@{ ticket: '[TKT-64]', priority: 'High' }
     tkt65["Modular 3D Terrain Blocks & Obstacle Shelves"]@{ ticket: '[TKT-65]', priority: 'High' }
     bug07["Comms LKP Continuous Refresh & Launchpad Snap Fix"]@{ ticket: '[BUG-07]', priority: 'High' }
+    bug08["Ghost Flagship Demotion & Casualty Badge Precedence"]@{ ticket: '[BUG-08]', priority: 'High' }
 ```
 
 ---

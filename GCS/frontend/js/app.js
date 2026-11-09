@@ -1074,6 +1074,13 @@
             labelText = `#${d.id}`;
             subText = '⏏ JETTISON';
             dotColor = '#FFAA00';
+        } else if (d.lost_link) {
+            borderColor = '#FFB800';
+            bgColor = 'rgba(38, 26, 5, 0.92)';
+            textColor = '#FFD24D';
+            labelText = `#${d.id}`;
+            subText = d.is_leader ? 'LOST (FLAG)' : 'LOST LINK';
+            dotColor = '#FFB800';
         } else if (d.is_leader) {
             borderColor = '#FFB800';
             bgColor = 'rgba(42, 28, 4, 0.92)';
@@ -1123,13 +1130,6 @@
             labelText = `#${d.id}`;
             subText = 'BACKTRACKING';
             dotColor = '#FF3366';
-        } else if (d.lost_link) {
-            borderColor = '#FFB800';
-            bgColor = 'rgba(38, 26, 5, 0.92)';
-            textColor = '#FFD24D';
-            labelText = `#${d.id}`;
-            subText = 'LOST LINK';
-            dotColor = '#FFB800';
         } else if (d.status === 'PROPAGATING') {
             borderColor = '#00FFAA';
             bgColor = 'rgba(4, 32, 20, 0.92)';

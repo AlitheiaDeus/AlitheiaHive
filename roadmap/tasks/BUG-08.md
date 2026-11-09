@@ -58,7 +58,7 @@ In the default urban obstacle scenario, followers in wide formation slots impact
 
 ## 4. Acceptance Criteria & Invariants
 
-* [ ] At any simulation tick, at most ONE airframe has `is_leader == True`.
-* [ ] Crashed or demoted airframes immediately have `is_leader == False`.
-* [ ] GCS 3D viewport renders `CRASH` (red) or `LOST` (amber) on dead/disconnected airframes, never active `FLAGSHIP`.
-* [ ] Unit test verifies single-leader invariant during cascading casualties.
+* [x] At any simulation tick, at most ONE airframe has `is_leader == True`.
+* [x] Crashed or demoted airframes immediately have `is_leader == False`.
+* [x] GCS 3D viewport renders `CRASH` (red) or `LOST` (amber) on dead/disconnected airframes, never active `FLAGSHIP`.
+* [x] Unit test verifies single-leader invariant during cascading casualties.
