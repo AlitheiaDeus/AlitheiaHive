@@ -359,6 +359,16 @@ class MavlinkBridge:
                 "count": len(queued),
             }
 
+        elif cmd in ("LOAD_URBAN_SCENARIO", "SET_URBAN_SCENARIO", "LOAD_SCENARIO"):
+            scenario_name = str(cmd_dict.get("scenario", cmd_dict.get("name", "default_canyon")))
+            obstacles = self.sim.load_urban_scenario(scenario_name)
+            return {
+                "status": "OK",
+                "cmd": cmd,
+                "scenario": scenario_name,
+                "obstacle_count": len(obstacles),
+            }
+
         elif cmd in ("LAND_DRONE", "COMMAND_LAND_DRONE"):
             drone_id = int(cmd_dict.get("id", cmd_dict.get("drone_id", 0)))
             success = self.sim.command_land_drone(drone_id)

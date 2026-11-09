@@ -63,6 +63,10 @@ from SIM.backend.urban_geometry import (
     point_to_aabb_repulsion,
     ray_intersects_aabb,
     get_default_urban_obstacles,
+    get_cyberpunk_obby_obstacles,
+    get_surface_elevation,
+    get_overhead_ceiling,
+    is_on_obstacle_top,
 )
 from SIM.backend.rf_channel import (
     RFChannelManager,
@@ -620,8 +624,13 @@ class SITLWorldEngine:
         name = scenario_name.lower().replace("-", "_").replace(" ", "_")
         if name in ("default_canyon", "canyon", "urban", "skybridge"):
             self.urban_obstacles = get_default_urban_obstacles()
+            self.urban_scenario_name = "default_canyon"
+        elif name in ("cyberpunk_obby", "obby", "stepped", "terraces", "terrain"):
+            self.urban_obstacles = get_cyberpunk_obby_obstacles()
+            self.urban_scenario_name = "cyberpunk_obby"
         elif name in ("empty", "clear", "none", "flat"):
             self.urban_obstacles = []
+            self.urban_scenario_name = "empty"
         return self.urban_obstacles
 
     def set_urban_obstacles(self, obstacles: List[UrbanObstacle]) -> None:
@@ -1486,11 +1495,13 @@ class SITLWorldEngine:
                     # Stage 1 Sink: vz = -1.5 m/s down to Z = 1.0m
                     # Stage 2 Cushion: vz = -0.5 m/s from Z = 1.0m down to Z = 0.5m
                     current_z = drone.pos[2]
+                    target_pad_z = float(pad_pos[2]) if pad_pos is not None else 0.5
+                    rel_alt = current_z - target_pad_z
                     if dist_xy > 2.5:
                         # Maintain safe approach altitude while closing horizontal distance
                         target_vz = float(np.clip(2.0 * (15.0 - current_z), -1.5, 2.0))
                         drone.landing_stage = "APPROACH"
-                    elif current_z > 1.0:
+                    elif rel_alt > 1.0:
                         target_vz = -1.5
                         drone.landing_stage = "APPROACH"
                     else:
@@ -1501,12 +1512,13 @@ class SITLWorldEngine:
                     guidance_accs[drone.id] = np.array([a_target_x, a_target_y, a_target_z], dtype=float)
 
                     # Suppress horizontal avoidance near ground (Z < 3.0m) to allow clean pad docking
-                    if current_z < 3.0:
+                    if rel_alt < 3.0:
                         avoidance_accs[drone.id][0] *= 0.1
                         avoidance_accs[drone.id][1] *= 0.1
 
                     # Touchdown Check: Ground contact check
-                    target_ground_z = pad_pos[2] if pad_pos is not None else (0.05 if drone.flight_state == "FIELD_DESCENDING" else 0.5)
+                    surf_z = get_surface_elevation(drone.pos, getattr(self, "urban_obstacles", None))
+                    target_ground_z = pad_pos[2] if pad_pos is not None else (surf_z + 0.05 if drone.flight_state == "FIELD_DESCENDING" else surf_z + 0.5)
                     touchdown_z_thresh = target_ground_z + 0.08
                     if current_z <= touchdown_z_thresh and dist_xy <= 0.40:
                         # Ground Truth Pad Occupancy Check (Operator Incompetence Failsafe for Base pads):
@@ -1553,7 +1565,8 @@ class SITLWorldEngine:
                                 successor.status = "FLEET_LEADER"
 
             elif drone.flight_state == "EMERGENCY_LANDING":
-                target_spot = drone.e_landing_spot if drone.e_landing_spot is not None else np.array([drone.pos[0], drone.pos[1], 0.05], dtype=float)
+                surf_z = get_surface_elevation(drone.pos, getattr(self, "urban_obstacles", None))
+                target_spot = drone.e_landing_spot if drone.e_landing_spot is not None else np.array([drone.pos[0], drone.pos[1], surf_z + 0.05], dtype=float)
                 drone.target_station = target_spot
                 to_spot_xy = target_spot[:2] - drone.pos[:2]
                 dist_xy = float(np.linalg.norm(to_spot_xy))
@@ -1568,15 +1581,17 @@ class SITLWorldEngine:
                     a_target_y = float(-4.0 * drone.vel[1])
 
                 current_z = drone.pos[2]
-                target_vz = -1.2 if current_z > 1.0 else -0.3
+                target_ground_z = float(target_spot[2])
+                rel_alt = current_z - target_ground_z
+                target_vz = -1.2 if rel_alt > 1.0 else -0.3
                 a_target_z = float(np.clip(4.0 * (target_vz - drone.vel[2]), -5.0, 5.0))
                 guidance_accs[drone.id] = np.array([a_target_x, a_target_y, a_target_z], dtype=float)
 
-                if current_z < 3.0:
+                if rel_alt < 3.0:
                     avoidance_accs[drone.id][0] *= 0.1
                     avoidance_accs[drone.id][1] *= 0.1
 
-                if current_z <= 0.12 and dist_xy <= 0.45:
+                if current_z <= target_ground_z + 0.08 and dist_xy <= 0.45:
                     drone.pos = np.copy(target_spot)
                     drone.vel = np.zeros(3, dtype=float)
                     drone.acc = np.zeros(3, dtype=float)
@@ -1685,7 +1700,8 @@ class SITLWorldEngine:
                         drone.vel[2] = 0.0
 
             # Floor safety clamp (keep airborne above 0.5m, unless taking off from pad)
-            floor_limit = 0.05 if drone.flight_state in ("TAKEOFF", "FIELD_DESCENDING", "EMERGENCY_LANDING", "FIELD_LANDED", "E_LANDED") else 0.5
+            surf_elev = get_surface_elevation(drone.pos, getattr(self, "urban_obstacles", None))
+            floor_limit = surf_elev + (0.05 if drone.flight_state in ("TAKEOFF", "FIELD_DESCENDING", "EMERGENCY_LANDING", "FIELD_LANDED", "E_LANDED") else 0.5)
             if drone.pos[2] < floor_limit:
                 drone.pos[2] = floor_limit
                 if drone.vel[2] < 0.0:
@@ -2271,11 +2287,15 @@ class SITLWorldEngine:
         # Check static urban obstacle collision and Zone 3 evasion (PLN-08 / TKT-60)
         if getattr(self, "urban_obstacles", None):
             for drone in self.drones:
-                if drone.crashed or drone.flight_state in ("LANDED", "GROUND_IDLE"):
+                if drone.crashed or drone.flight_state in ("LANDED", "GROUND_IDLE", "FIELD_LANDED", "E_LANDED"):
                     continue
                 min_obs_dist = 999.0
                 min_obs_id = None
+                is_landing_or_takeoff = drone.flight_state in ("TAKEOFF", "FIELD_DESCENDING", "EMERGENCY_LANDING", "DESCENDING")
                 for obs in self.urban_obstacles:
+                    if getattr(obs, "is_landable", False) and is_on_obstacle_top(drone.pos, obs):
+                        if is_landing_or_takeoff or drone.pos[2] >= obs.z_ceiling - 0.05:
+                            continue
                     dist, a_evade = point_to_aabb_repulsion(
                         drone.pos, drone.vel, obs.bounds, zone3_outer=ZONE3_OUTER, zone4_clash=ZONE4_CLASH
                     )
@@ -3159,6 +3179,7 @@ class SITLWorldEngine:
             },
             "payload_deposit": self.c2.get_payload_drop_state(),
             "ground_repeaters": [r.to_dict() for r in self.ground_repeaters],
+            "urban_scenario": getattr(self, "urban_scenario_name", "default_canyon"),
             "urban_obstacles": [o.to_dict() for o in self.urban_obstacles] if getattr(self, "urban_obstacles", None) else [],
             "field_lz": self.field_lz,
             "two_ic_id": two_ic_id,

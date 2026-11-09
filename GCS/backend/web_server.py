@@ -673,6 +673,18 @@ class SwarmWebServer:
             self.session_manager.add_event("ATC", "Field Landing Zone cleared", sim_time=self.sim.sim_time)
             return {"status": "OK", "cmd": cmd, "result": res}
 
+        elif cmd in ("LOAD_URBAN_SCENARIO", "SET_URBAN_SCENARIO", "LOAD_SCENARIO"):
+            scenario_name = str(cmd_dict.get("scenario", cmd_dict.get("name", "default_canyon")))
+            obstacles = self.sim.load_urban_scenario(scenario_name)
+            self.session_manager.add_event("ENV", f"Urban/Terrain Scenario Loaded: '{scenario_name}' ({len(obstacles)} obstacles)", sim_time=self.sim.sim_time)
+            return {
+                "status": "OK",
+                "cmd": cmd,
+                "scenario": scenario_name,
+                "obstacle_count": len(obstacles),
+                "obstacles": [o.to_dict() for o in obstacles],
+            }
+
         elif cmd in ("E_LAND", "COMMAND_E_LAND", "EMERGENCY_LAND"):
             drone_id = cmd_dict.get("id", cmd_dict.get("drone_id", None))
             reason = str(cmd_dict.get("reason", "MANUAL_OPERATOR"))

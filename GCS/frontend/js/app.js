@@ -659,6 +659,38 @@
                     const edgesLine = new THREE.LineSegments(edgesGeo, edgesMat);
                     group.add(edgesLine);
 
+                    // 3. Highlighted Top Landing Deck for Landable Blocks
+                    if (obs.is_landable) {
+                        const deckGeo = new THREE.PlaneGeometry(width * 0.96, depth * 0.96);
+                        const deckMat = new THREE.MeshBasicMaterial({
+                            color: hexColor,
+                            transparent: true,
+                            opacity: 0.35,
+                            side: THREE.DoubleSide,
+                        });
+                        const deckMesh = new THREE.Mesh(deckGeo, deckMat);
+                        deckMesh.position.set(0, 0, height / 2 + 0.02);
+                        group.add(deckMesh);
+                    }
+
+                    // 4. Tactical Elevation Billboard Label
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 256;
+                    canvas.height = 64;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = obs.color || '#00F0FF';
+                    ctx.font = 'bold 22px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    const elevStr = obs.obstacle_type === 'SKYBRIDGE' ? `Z:${bounds[4]}-${bounds[5]}m` : `+${bounds[5].toFixed(1)}m`;
+                    ctx.fillText(`${obs.name || obs.id} [${elevStr}]`, 128, 32);
+                    const texture = new THREE.CanvasTexture(canvas);
+                    const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true, opacity: 0.9 });
+                    const sprite = new THREE.Sprite(spriteMat);
+                    sprite.scale.set(7.0, 1.75, 1.0);
+                    sprite.position.set(0, 0, height / 2 + 2.0);
+                    group.add(sprite);
+
                     // Position group at center of AABB
                     group.position.set(cx, cy, cz);
                     scene.add(group);

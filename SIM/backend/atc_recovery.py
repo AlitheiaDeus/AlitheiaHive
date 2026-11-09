@@ -571,14 +571,19 @@ class ATCRecoveryManager:
         """Find the nearest clear, flat ground position for an emergency landing.
         Searches outward in concentric rings from current position, ensuring
         >= 3.0m clearance from any UrbanObstacle AABB and other grounded drones."""
-        from SIM.backend.urban_geometry import point_to_aabb_distance
+        from SIM.backend.urban_geometry import point_to_aabb_distance, get_surface_elevation
 
         cur_x, cur_y = float(drone_pos[0]), float(drone_pos[1])
+        surf_z = get_surface_elevation(drone_pos, obstacles)
+        platform_z = surf_z + 0.05 if surf_z > 0.1 else ground_z
 
-        def is_spot_safe(cx: float, cy: float) -> bool:
-            spot = np.array([cx, cy, ground_z], dtype=float)
+        def is_spot_safe(cx: float, cy: float, cz: float) -> bool:
+            spot = np.array([cx, cy, cz], dtype=float)
             for obs in obstacles:
                 if hasattr(obs, "bounds"):
+                    if getattr(obs, "is_landable", False) and cz >= obs.z_ceiling - 0.1:
+                        if (obs.x_min + 2.0 <= cx <= obs.x_max - 2.0) and (obs.y_min + 2.0 <= cy <= obs.y_max - 2.0):
+                            continue
                     d = point_to_aabb_distance(spot, obs.bounds)
                     if d < 3.0:
                         return False
@@ -586,25 +591,36 @@ class ATCRecoveryManager:
                 if getattr(other, "crashed", False) or getattr(other, "retrieved", False):
                     continue
                 d_other = float(np.linalg.norm(other.pos[:2] - spot[:2]))
-                if d_other < 3.0 and other.pos[2] <= 2.0:
+                if d_other < 3.0 and abs(other.pos[2] - spot[2]) <= 2.0:
                     return False
             return True
 
-        # 1. Test directly underneath current position
-        if is_spot_safe(cur_x, cur_y):
-            return np.array([cur_x, cur_y, ground_z], dtype=float)
+        # 1. Test directly underneath current position (at platform or ground altitude)
+        if is_spot_safe(cur_x, cur_y, platform_z):
+            return np.array([cur_x, cur_y, platform_z], dtype=float)
 
-        # 2. Concentric radial scan outward
+        # 2. Concentric radial scan outward on platform (if elevated)
+        if platform_z > ground_z:
+            for r in np.arange(2.0, min(12.0, search_radius) + 0.1, 2.0):
+                num_samples = max(8, int(r * 2))
+                for k in range(num_samples):
+                    theta = (2.0 * math.pi * k) / num_samples
+                    cand_x = cur_x + r * math.cos(theta)
+                    cand_y = cur_y + r * math.sin(theta)
+                    if is_spot_safe(cand_x, cand_y, platform_z):
+                        return np.array([cand_x, cand_y, platform_z], dtype=float)
+
+        # 3. Concentric radial scan outward on ground level
         for r in np.arange(2.0, search_radius + 0.1, 2.0):
             num_samples = max(8, int(r * 2))
             for k in range(num_samples):
                 theta = (2.0 * math.pi * k) / num_samples
                 cand_x = cur_x + r * math.cos(theta)
                 cand_y = cur_y + r * math.sin(theta)
-                if is_spot_safe(cand_x, cand_y):
+                if is_spot_safe(cand_x, cand_y, ground_z):
                     return np.array([cand_x, cand_y, ground_z], dtype=float)
 
-        # 3. Fallback: outward nudge
+        # 4. Fallback: outward nudge
         norm_xy = math.hypot(cur_x, cur_y)
         offset_dir = np.array([cur_x, cur_y], dtype=float) / max(0.1, norm_xy)
         return np.array([cur_x + offset_dir[0] * 5.0, cur_y + offset_dir[1] * 5.0, ground_z], dtype=float)
