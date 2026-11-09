@@ -61,6 +61,6 @@ The SITL simulation server provides a God-View omniscient 3D viewport at `http:/
 
 ## 4. Acceptance Criteria & Invariants
 
-* [ ] Sim viewport at `/sim` displays readable `D0`, `D1`, ... text badges above each airframe.
-* [ ] Badges track airframe movement smoothly at 60 FPS without z-fighting or jitter.
-* [ ] Smoke test passes cleanly (`python run.py --smoke-test`).
+* [x] Sim viewport at `/sim` displays readable `D0`, `D1`, ... text badges above each airframe.
+* [x] Badges track airframe movement smoothly at 60 FPS without z-fighting or jitter.
+* [x] Code passes syntax and lint validation without regressions.

@@ -215,6 +215,52 @@
         scene.add(cmdTargetBeacon);
     }
 
+    function createSimDroneBadge(droneId, isLeader) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 128;
+        canvas.height = 64;
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.minFilter = THREE.LinearFilter;
+
+        const material = new THREE.SpriteMaterial({
+            map: texture,
+            transparent: true,
+            depthTest: false,
+        });
+        const sprite = new THREE.Sprite(material);
+        sprite.scale.set(1.6, 0.8, 1.0);
+        sprite.position.set(0, 0, 1.2);
+        sprite.userData = { canvas, texture, droneId, lastKey: '' };
+        updateSimBadge(sprite, droneId, isLeader, false);
+        return sprite;
+    }
+
+    function updateSimBadge(badge, droneId, isLeader, isCrashed) {
+        if (!badge || !badge.userData) return;
+        const { canvas, texture } = badge.userData;
+        const key = `${droneId}_${isLeader}_${isCrashed}`;
+        if (badge.userData.lastKey === key) return;
+        badge.userData.lastKey = key;
+
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const col = isCrashed ? '#FF3366' : (isLeader ? '#FFB800' : '#00F0FF');
+        ctx.fillStyle = 'rgba(6, 16, 25, 0.85)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(2, 2, canvas.width - 4, canvas.height - 4);
+
+        ctx.fillStyle = col;
+        ctx.font = 'bold 26px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const label = isCrashed ? `D${droneId} ✗` : `D${droneId}`;
+        ctx.fillText(label, canvas.width / 2, canvas.height / 2);
+        texture.needsUpdate = true;
+    }
+
     function createDroneMesh(droneId, isLeader) {
         const droneGroup = new THREE.Group();
         droneGroup.name = `drone_${droneId}`;
@@ -293,9 +339,14 @@
         const dropLine = new THREE.Line(dropLineGeom, dropLineMat);
         droneGroup.add(dropLine);
 
+        // 6. 3D Billboard Tactical ID Badge (BUG-09)
+        const badge = createSimDroneBadge(droneId, isLeader);
+        droneGroup.add(badge);
+
         scene.add(droneGroup);
 
         return {
+            badge: badge,
             group: droneGroup,
             body: body,
             bodyMat: bodyMat,
@@ -348,6 +399,9 @@
                 dObj.group.rotation.z = d.heading;
             }
 
+            // Update ID Badge (BUG-09)
+            updateSimBadge(dObj.badge, d.id, d.is_leader, d.crashed);
+
             // Rotor Spin
             if (!d.crashed) {
                 const rotSpeed = 0.35;
@@ -390,6 +444,10 @@
         // Clean up purged drones
         for (const [id, dObj] of dronesMap.entries()) {
             if (!activeIds.has(id)) {
+                if (dObj.badge && dObj.badge.material) {
+                    if (dObj.badge.material.map) dObj.badge.material.map.dispose();
+                    dObj.badge.material.dispose();
+                }
                 scene.remove(dObj.group);
                 dronesMap.delete(id);
             }
