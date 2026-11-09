@@ -53,7 +53,6 @@ kanban
     tkt45["Cryptographic Comms Guard (HMAC Signing)"]@{ ticket: '[TKT-45]', priority: 'Medium' }
     tkt47["Declarative Field Deployment Scenarios"]@{ ticket: '[TKT-47]', priority: 'Medium' }
   todo["Todo (Active Pipeline)"]
-    tkt61["TKT-61: SITL Engine Modular Decomposition"]@{ ticket: '[TKT-61]', priority: 'High' }
   in_progress["In Progress (WIP = 1)"]
   completed["Completed (Fresh / Review)"]
     bug06["OBC Failsafe Consolidation: t-GCSH, Relays & Corridor ERTB"]@{ ticket: '[BUG-06]', priority: 'Very High' }
@@ -87,6 +86,7 @@ kanban
     tkt59["TKT-59: Cairn G1 Repeater Payload Drop"]@{ ticket: '[TKT-59]', priority: 'High' }
     pln02["PLN-02: Auxiliary Mission Engine Master"]@{ ticket: '[PLN-02]', priority: 'High' }
     tkt60["Urban 3D Obstacle Shelves & RF LOS"]@{ ticket: '[TKT-60]', priority: 'High' }
+    tkt61["TKT-61: SITL Engine Modular Decomposition"]@{ ticket: '[TKT-61]', priority: 'High' }
 ```
 
 ---

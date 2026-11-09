@@ -31,6 +31,8 @@ class TestPayloadDepositRepeater(unittest.TestCase):
     def setUp(self):
         # Initialize standard 4-drone simulation
         self.sim = SwarmSimulator(drone_count=4)
+        # Equip designated carrier Drone 1 with payload deployment hardware
+        self.sim.drones[1].capabilities = ["FORMATION_FLIGHT", "PATROL", "RECON", "HEAVY_PAYLOAD", "DROP_SERVO"]
 
     def test_preflight_capability_authorization(self):
         """Verify pre-flight capability gate: requires HEAVY_PAYLOAD and DROP_SERVO."""

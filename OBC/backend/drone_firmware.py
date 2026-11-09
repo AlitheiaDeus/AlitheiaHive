@@ -44,8 +44,6 @@ DEFAULT_CAPABILITIES_T1_5: List[str] = [
     "RECON",
     "S&R_OPTICAL",
     "BORK_AMPLIFY",
-    "HEAVY_PAYLOAD",
-    "DROP_SERVO",
 ]
 
 DEFAULT_CAPABILITIES_T3: List[str] = [
