@@ -60,6 +60,6 @@ In `GCS/frontend/index.html`, several command deck and auxiliary mission action 
 
 ## 4. Acceptance Criteria & Invariants
 
-* [ ] Command deck buttons maintain uniform vertical alignment and line-height across all rows.
-* [ ] No font-metric jumping or uneven padding caused by emoji fallback.
-* [ ] Preserves cyberpunk aesthetic and clean monospace HUD readability.
+* [x] Command deck buttons maintain uniform vertical alignment and line-height across all rows.
+* [x] No font-metric jumping or uneven padding caused by emoji fallback.
+* [x] Preserves cyberpunk aesthetic and clean monospace HUD readability.

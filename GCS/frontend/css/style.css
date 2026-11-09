@@ -972,11 +972,11 @@ body:has(#right-panel.collapsed) #tab-restore-right,
 }
 
 .tactical-btn {
-  font-family: inherit;
+  font-family: 'JetBrains Mono', 'Share Tech Mono', monospace;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.5px;
-  padding: 7px 8px;
+  padding: 6px 8px;
   background: rgba(6, 16, 25, 0.8);
   border: 1px solid rgba(0, 240, 255, 0.25);
   color: var(--text-primary);
@@ -984,6 +984,26 @@ body:has(#right-panel.collapsed) #tab-restore-right,
   cursor: pointer;
   text-align: center;
   transition: all 0.18s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  line-height: 1;
+  min-height: 28px;
+  box-sizing: border-box;
+  vertical-align: middle;
+}
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  font-size: 11px;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  vertical-align: middle;
 }
 
 .tactical-btn:hover {
@@ -1015,7 +1035,7 @@ body:has(#right-panel.collapsed) #tab-restore-right,
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.8px;
-  line-height: 1.2;
+  line-height: 1;
 }
 
 .btn-patrol:hover {
@@ -1047,7 +1067,7 @@ body:has(#right-panel.collapsed) #tab-restore-right,
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.8px;
-  line-height: 1.2;
+  line-height: 1;
 }
 
 .btn-rng:hover {
@@ -1079,7 +1099,7 @@ body:has(#right-panel.collapsed) #tab-restore-right,
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.8px;
-  line-height: 1.2;
+  line-height: 1;
 }
 
 .btn-bingo:hover {
@@ -1117,7 +1137,7 @@ body:has(#right-panel.collapsed) #tab-restore-right,
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.8px;
-  line-height: 1.2;
+  line-height: 1;
 }
 
 .btn-recall:hover {

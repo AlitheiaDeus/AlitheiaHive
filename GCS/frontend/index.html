@@ -144,21 +144,21 @@
           <button id="btn-route-hexagon" class="tactical-btn route-btn" title="6-Point Hexagon Sweep">HEXAGON</button>
         </div>
         <div class="btn-grid-2" style="margin-top: 4px;">
-          <button id="btn-toggle-patrol" class="tactical-btn btn-patrol" title="Continuous 3D figure-8 patrol stream">&#x221E; FIG-8 STREAM</button>
-          <button id="btn-toggle-rng" class="tactical-btn btn-rng" title="Tactical RNG touch-and-go reconnaissance">&#x25C7; RNG RECON</button>
+          <button id="btn-toggle-patrol" class="tactical-btn btn-patrol" title="Continuous 3D figure-8 patrol stream"><span class="btn-icon">∞</span> FIG-8 STREAM</button>
+          <button id="btn-toggle-rng" class="tactical-btn btn-rng" title="Tactical RNG touch-and-go reconnaissance"><span class="btn-icon">◇</span> RNG RECON</button>
         </div>
         <div class="btn-grid-2" style="margin-top: 4px;">
-          <button id="btn-patrol-bingo" class="tactical-btn btn-bingo" title="1-Click Aux Mission: Continuous Patrol to BINGO Battery RTB & Auto-Land">&#x26A1; PATROL &rarr; BINGO</button>
-          <button id="btn-search-recall" class="tactical-btn btn-recall" title="1-Click Aux Mission: Dispatch Courier Mule to LKP & Escort Lost Wingman">&#x1F50D; S&amp;R ESCORT (LKP)</button>
+          <button id="btn-patrol-bingo" class="tactical-btn btn-bingo" title="1-Click Aux Mission: Continuous Patrol to BINGO Battery RTB & Auto-Land"><span class="btn-icon">⚡</span> PATROL &rarr; BINGO</button>
+          <button id="btn-search-recall" class="tactical-btn btn-recall" title="1-Click Aux Mission: Dispatch Courier Mule to LKP & Escort Lost Wingman"><span class="btn-icon">⌕</span> S&amp;R ESCORT (LKP)</button>
         </div>
         <div style="margin-top: 4px;">
-          <button id="btn-payload-drop" class="tactical-btn btn-payload" title="1-Click Aux Mission: Precision Cairn G1 Solar Repeater Payload Drop">&#x1F4E6; CAIRN G1 REPEATER DROP</button>
+          <button id="btn-payload-drop" class="tactical-btn btn-payload" title="1-Click Aux Mission: Precision Cairn G1 Solar Repeater Payload Drop"><span class="btn-icon">⬢</span> CAIRN G1 REPEATER DROP</button>
         </div>
         <div id="route-control-row" class="btn-grid-2" style="display: none; margin-top: 4px;">
-          <button id="btn-pause-route" class="tactical-btn btn-warning" title="Pause / Resume active waypoint queue">&#x23F8; PAUSE</button>
-          <button id="btn-skip-wp" class="tactical-btn" title="Skip current waypoint">&#x23ED; SKIP WP</button>
+          <button id="btn-pause-route" class="tactical-btn btn-warning" title="Pause / Resume active waypoint queue"><span class="btn-icon">⏸</span> PAUSE</button>
+          <button id="btn-skip-wp" class="tactical-btn" title="Skip current waypoint"><span class="btn-icon">⏭</span> SKIP WP</button>
         </div>
-        <button id="btn-stop-route" class="tactical-btn btn-danger" style="display: none; margin-top: 4px; width: 100%;">&#x23F9; ABORT ROUTE</button>
+        <button id="btn-stop-route" class="tactical-btn btn-danger" style="display: none; margin-top: 4px; width: 100%;"><span class="btn-icon">⏹</span> ABORT ROUTE</button>
         
         <div id="hud-target-status" class="target-status-line status-synced">
           <span class="tgt-label cmd-label"><span class="tgt-dot dot-cmd"></span>CMD</span>
@@ -185,20 +185,20 @@
       <div class="control-group recovery-group">
         <div class="group-title recovery-title">&#x25C9; RECOVERY &amp; SOFT-LANDING</div>
         <div class="btn-grid-2">
-          <button id="btn-rtb-hold" class="tactical-btn btn-rtb" title="Stage 1: Transit to Base (0,0,25) in overhead sentry ring">&#x2302; RTB (HOLD)</button>
-          <button id="btn-land-swarm" class="tactical-btn btn-land-all" title="Stage 2: ATC pad allocation &amp; staggered soft-landing">&#x2913; LAND SWARM</button>
+          <button id="btn-rtb-hold" class="tactical-btn btn-rtb" title="Stage 1: Transit to Base (0,0,25) in overhead sentry ring"><span class="btn-icon">⌂</span> RTB (HOLD)</button>
+          <button id="btn-land-swarm" class="tactical-btn btn-land-all" title="Stage 2: ATC pad allocation &amp; staggered soft-landing"><span class="btn-icon">⤓</span> LAND SWARM</button>
         </div>
-        <button id="btn-clear-pads" class="tactical-btn btn-clear-pads" style="margin-top: 6px;" title="ATC Batched Recovery: Clear occupied pads &amp; release next wave of holding drones">&#x21BB; CLEAR PADS // NEXT WAVE</button>
-        <button id="btn-cancel-rtb" class="tactical-btn btn-cancel-recovery" style="display: none;">&#x2716; CANCEL RECOVERY &amp; RESUME</button>
+        <button id="btn-clear-pads" class="tactical-btn btn-clear-pads" style="margin-top: 6px;" title="ATC Batched Recovery: Clear occupied pads &amp; release next wave of holding drones"><span class="btn-icon">↻</span> CLEAR PADS // NEXT WAVE</button>
+        <button id="btn-cancel-rtb" class="tactical-btn btn-cancel-recovery" style="display: none;"><span class="btn-icon">✕</span> CANCEL RECOVERY &amp; RESUME</button>
       </div>
 
       <!-- Section: Fleet Flight Operations (TKT-41) -->
       <div class="control-group">
         <div class="group-title">&#x25C8; FLEET FLIGHT OPERATIONS</div>
-        <button id="btn-scramble-swarm" class="tactical-btn btn-send" style="margin-bottom: 6px; width: 100%;" title="Sequenced cold scramble: Flagship spools up, followers staggered">&#x25B2; SCRAMBLE SWARM</button>
+        <button id="btn-scramble-swarm" class="tactical-btn btn-send" style="margin-bottom: 6px; width: 100%;" title="Sequenced cold scramble: Flagship spools up, followers staggered"><span class="btn-icon">▲</span> SCRAMBLE SWARM</button>
         <div class="btn-grid-2">
-          <button id="btn-spawn-pad" class="tactical-btn" title="Stage standby reinforcement drone cold on pad with pre-briefing">&#x229E; STAGE REINFORCE</button>
-          <button id="btn-reinforce-swarm" class="tactical-btn btn-send" title="Immediate launch reserve airframe from base pad">&#x25B2; LAUNCH RESERVE</button>
+          <button id="btn-spawn-pad" class="tactical-btn" title="Stage standby reinforcement drone cold on pad with pre-briefing"><span class="btn-icon">⊞</span> STAGE REINFORCE</button>
+          <button id="btn-reinforce-swarm" class="tactical-btn btn-send" title="Immediate launch reserve airframe from base pad"><span class="btn-icon">▲</span> LAUNCH RESERVE</button>
         </div>
       </div>
 
