@@ -14,7 +14,36 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Union
 import numpy as np
 
+from enum import Enum
 from OBC.backend.brains import BaseBrain, LeaderFollowerBrain, RadioPacket
+
+
+class FlightState(str, Enum):
+    """Airframe flight states across nominal, failsafe, and recovery stages."""
+    TAKEOFF = "TAKEOFF"
+    EN_ROUTE = "EN_ROUTE"
+    CRUISE = "CRUISE"
+    OVERHEAD_HOLD = "OVERHEAD_HOLD"
+    DESCENDING = "DESCENDING"
+    LANDED = "LANDED"
+    GROUND_IDLE = "GROUND_IDLE"
+    CRASHED = "CRASHED"
+    CORRIDOR_ERTB = "CORRIDOR_ERTB"
+    BACKTRACK_HOLD = "BACKTRACK_HOLD"
+    PERIMETER_HOLD = "PERIMETER_HOLD"
+    RETRIEVED = "RETRIEVED"
+
+    # Auxiliary mission states (TKT-51, TKT-58, TKT-59)
+    COURIER_TRANSIT = "COURIER_TRANSIT"
+    RENDEZVOUS_DWELL = "RENDEZVOUS_DWELL"
+    ESCORT_LEAD = "ESCORT_LEAD"
+    ESCORT_REJOIN = "ESCORT_REJOIN"
+    PAYLOAD_TRANSIT = "PAYLOAD_TRANSIT"
+    PRECISION_DESCENT = "PRECISION_DESCENT"
+    CARRIER_EGRESS = "CARRIER_EGRESS"
+
+    def __str__(self) -> str:
+        return self.value
 
 # Hardware Tiers & Succession (TKT-48, TKT-57)
 TIER_LEADER: int = 3
@@ -200,7 +229,7 @@ class Drone:
 
         # Comms & Fault Tolerance
         self.crashed: bool = False
-        self.flight_state: str = "CRUISE"  # "TAKEOFF", "EN_ROUTE", "CRUISE", "CRASHED", "LANDED", "GROUND_IDLE"
+        self.flight_state: Union[FlightState, str] = FlightState.CRUISE  # "TAKEOFF", "EN_ROUTE", "CRUISE", "CRASHED", "LANDED", "GROUND_IDLE"
         self.lost_link: bool = False
         self.lkp: np.ndarray = np.copy(self.pos)
         self.last_heartbeat_time: float = 0.0
@@ -315,7 +344,7 @@ class Drone:
         self,
         pos: np.ndarray,
         is_leader: bool = False,
-        flight_state: str = "TAKEOFF",
+        flight_state: Union[FlightState, str] = FlightState.TAKEOFF,
         hardware_uid: Optional[str] = None,
         tail_number: Optional[str] = None,
     ) -> None:
@@ -484,7 +513,7 @@ class Drone:
             "pitch": round(float(self.pitch), 3),
             "roll": round(float(self.roll), 3),
             "crashed": self.crashed,
-            "flight_state": self.flight_state,
+            "flight_state": str(self.flight_state),
             "lost_link": self.lost_link,
             "lkp": [round(float(v), 2) for v in self.lkp],
             "rssi": round(float(self.rssi), 1),

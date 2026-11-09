@@ -27,7 +27,7 @@ except ImportError:
     HAVE_PYMAVLINK = False
 
 from SIM.backend.sitl_engine import SwarmSimulator, RADIO_RANGE, RANGE_HOWL
-from OBC.backend.drone_firmware import Drone
+from OBC.backend.drone_firmware import Drone, FlightState
 
 
 # ==============================================================================
@@ -66,6 +66,36 @@ STANDARD_PARAMS: List[Tuple[str, int, Any]] = [
 # ==============================================================================
 # UDP & MAVLink Network Bridge
 # ==============================================================================
+
+# ==============================================================================
+# WGS-84 Geodetic Coordinate Conversion Helpers (TKT-63)
+# ==============================================================================
+def cartesian_to_gps(
+    home_lat: float, home_lon: float, home_alt: float, pos: np.ndarray
+) -> Tuple[float, float, float]:
+    """Convert local Cartesian meters [x=East, y=North, z=Up] to WGS-84 [lat_deg, lon_deg, alt_amsl].
+    Accounts for WGS-84 ellipsoidal meridional and parallel curvature."""
+    lat_rad = math.radians(home_lat)
+    r_lat = 111132.954 - 559.822 * math.cos(2.0 * lat_rad) + 1.175 * math.cos(4.0 * lat_rad)
+    r_lon = (math.pi / 180.0) * 6378137.0 * math.cos(lat_rad)
+    lat_deg = home_lat + (pos[1] / r_lat)
+    lon_deg = home_lon + (pos[0] / r_lon)
+    alt_m = home_alt + pos[2]
+    return lat_deg, lon_deg, alt_m
+
+
+def gps_to_cartesian(
+    home_lat: float, home_lon: float, home_alt: float, lat_deg: float, lon_deg: float, alt_m: float
+) -> Tuple[float, float, float]:
+    """Convert WGS-84 [lat_deg, lon_deg, alt_m] to local Cartesian meters [x=East, y=North, z=RelAlt]."""
+    lat_rad = math.radians(home_lat)
+    r_lat = 111132.954 - 559.822 * math.cos(2.0 * lat_rad) + 1.175 * math.cos(4.0 * lat_rad)
+    r_lon = (math.pi / 180.0) * 6378137.0 * math.cos(lat_rad)
+    y = (lat_deg - home_lat) * r_lat
+    x = (lon_deg - home_lon) * r_lon
+    z = (alt_m - home_alt) if alt_m > home_alt else alt_m
+    return x, y, z
+
 class MavlinkBridge:
     """Manages UDP JSON telemetry broadcast, inbound command ingestion,
     and simulated binary MAVLink v2 loopback messages for external GCS/SITL."""
@@ -466,11 +496,10 @@ class MavlinkBridge:
 
                 # 2. GLOBAL_POSITION_INT, ATTITUDE, and VFR_HUD at 10 Hz (every 0.1s)
                 if send_pos:
-                    # Flat-Earth coordinate projection to GPS degrees relative to dynamic SIM home anchor
-                    # 1 deg lat ~ 111139m, 1 deg lon ~ 111139 * cos(lat)m
-                    lat_deg = self.home_lat + (drone.pos[1] / 111139.0)
-                    lon_deg = self.home_lon + (drone.pos[0] / (111139.0 * math.cos(math.radians(self.home_lat))))
-                    alt_m = self.home_alt + drone.pos[2]
+                    # WGS-84 coordinate projection relative to dynamic SIM home anchor (TKT-63)
+                    lat_deg, lon_deg, alt_m = cartesian_to_gps(
+                        self.home_lat, self.home_lon, self.home_alt, drone.pos
+                    )
                     rel_alt_m = drone.pos[2]
 
                     # True navigation heading: clockwise azimuth from True North [0..360) deg
@@ -846,11 +875,10 @@ class MavlinkBridge:
             else:
                 z = (alt_m - self.home_alt) if alt_m > self.home_alt else alt_m
 
-            # Inverse equirectangular projection to local Cartesian meters relative to SIM home
-            delta_lat = lat_deg - self.home_lat
-            delta_lon = lon_deg - self.home_lon
-            y = delta_lat * 111139.0
-            x = delta_lon * 111139.0 * math.cos(math.radians(self.home_lat))
+            # WGS-84 inverse projection to local Cartesian meters relative to SIM home (TKT-63)
+            x, y, _ = gps_to_cartesian(
+                self.home_lat, self.home_lon, self.home_alt, lat_deg, lon_deg, alt_m
+            )
 
             dist_horiz = math.hypot(x, y)
             GEOFENCE_RADIUS = RANGE_HOWL  # Max GCS RF Howl uplink horizon / arena boundary (m)

@@ -39,7 +39,7 @@ if sys.platform == "win32":
 import numpy as np
 
 from OBC.backend.drone_firmware import (
-    Drone, GroundRepeater, TIER_LEADER, TIER_ESCORT, TIER_SCOUT,
+    Drone, GroundRepeater, FlightState, TIER_LEADER, TIER_ESCORT, TIER_SCOUT,
     BASE_TIER_T0, BASE_TIER_T1_5, BASE_TIER_T3,
     TETHER_NONE, TETHER_DATA_ONLY, TETHER_POWER_DATA,
     RF_MODE_YIP, RF_MODE_BORK, RF_MODE_HOWL,
@@ -2236,7 +2236,7 @@ class SITLWorldEngine:
         """Disengage drone motors and trigger ballistic tumble."""
         drone.crashed = True
         drone.crashed_while_linked = bool(drone.downlink_active)
-        drone.flight_state = "CRASHED"
+        drone.flight_state = FlightState.CRASHED
         drone.status = "CRASHED"
         if drone.downlink_active:
             drone.mayday_beacon = True

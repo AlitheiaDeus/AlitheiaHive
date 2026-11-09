@@ -20,6 +20,8 @@ run.ps1
 *.cmd
 .env*
 *.local
+.venv/
+*.uv
 
 # Python Bytecode & Cache
 __pycache__/

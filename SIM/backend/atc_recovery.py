@@ -10,6 +10,8 @@ import math
 from typing import Dict, List, Optional, Tuple, Any, Union, Callable
 import numpy as np
 
+from OBC.backend.drone_firmware import FlightState
+
 # ATC Pad Layout Constants
 ATC_DEFAULT_CAPACITY: int = 8
 PAD_CLEARANCE_RADIUS: float = 3.0
@@ -79,7 +81,7 @@ class ATCRecoveryManager:
 
         for drone in drones:
             if not drone.crashed and drone.flight_state not in ("LANDED", "DESCENDING"):
-                drone.flight_state = "OVERHEAD_HOLD"
+                drone.flight_state = FlightState.OVERHEAD_HOLD
                 drone.status = "OVERHEAD_HOLD"
                 drone.acknowledged_target = np.array(base_target, dtype=float)
                 drone.lkp = np.array(base_target, dtype=float)
@@ -100,7 +102,7 @@ class ATCRecoveryManager:
         self.swarm_rtb_active = True
         for drone in drones:
             if not drone.crashed and drone.flight_state not in ("LANDED", "DESCENDING", "GROUND_IDLE"):
-                drone.flight_state = "CORRIDOR_ERTB"
+                drone.flight_state = FlightState.CORRIDOR_ERTB
                 drone.status = "CORRIDOR_ERTB"
                 if hasattr(drone, "corridor_stack"):
                     target = drone.corridor_stack.peek()

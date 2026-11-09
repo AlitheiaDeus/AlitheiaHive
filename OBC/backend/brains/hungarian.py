@@ -8,6 +8,12 @@ from __future__ import annotations
 from typing import List, Tuple
 import numpy as np
 
+try:
+    from scipy.optimize import linear_sum_assignment as _scipy_lsa
+    HAVE_SCIPY = True
+except ImportError:
+    HAVE_SCIPY = False
+
 
 def hungarian_assignment(cost_matrix: np.ndarray) -> Tuple[List[int], List[int]]:
     """Solve the linear sum assignment problem (minimum weight bipartite matching).
@@ -20,6 +26,10 @@ def hungarian_assignment(cost_matrix: np.ndarray) -> Tuple[List[int], List[int]]
     cost = np.array(cost_matrix, dtype=float)
     if cost.size == 0:
         return [], []
+
+    if HAVE_SCIPY:
+        r, c = _scipy_lsa(cost)
+        return r.tolist(), c.tolist()
 
     transposed = False
     if cost.shape[0] > cost.shape[1]:

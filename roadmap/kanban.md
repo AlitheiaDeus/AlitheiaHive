@@ -35,6 +35,7 @@ kanban
     tkt21["Dynamic Power & LiPo Curves"]@{ ticket: '[TKT-21]', priority: 'Very Low' }
     tkt24["Dynamic Wind Gust Vector Field"]@{ ticket: '[TKT-24]', priority: 'Very Low' }
     tkt44["High-Scale Multi-Tier Swarms"]@{ ticket: '[TKT-44]', priority: 'Very Low' }
+    pln09["PLN-09: T3 Kodiak Simulated LiDAR Stream"]@{ ticket: '[PLN-09]', priority: 'Medium' }
   backlog["Backlog (Staged / Non-Essential)"]
     pln01["PLN-01: Airframe Class Registry & Plugins"]@{ ticket: '[PLN-01]', priority: 'Medium' }
     pln07["PLN-07: Full MissionPlanner / QGC Parity"]@{ ticket: '[PLN-07]', priority: 'Medium' }
@@ -43,7 +44,6 @@ kanban
     pln06["PLN-06: Drone Show Pathing & Splines"]@{ ticket: '[PLN-06]', priority: 'Low' }
     pln03["PLN-03: Gamified Tactical Operations & Studio"]@{ ticket: '[PLN-03]', priority: 'Low' }
     pln08["PLN-08: Urban 3D Obstacles & Corridors"]@{ ticket: '[PLN-08]', priority: 'Medium' }
-    pln09["PLN-09: T3 Kodiak Simulated LiDAR Stream"]@{ ticket: '[PLN-09]', priority: 'Medium' }
     pln10["PLN-10: Adversarial Targets & Emitter Triangulation"]@{ ticket: '[PLN-10]', priority: 'Medium' }
     tkt22["Manual RC Joystick & Gamepad"]@{ ticket: '[TKT-22]', priority: 'Medium' }
     tkt36["TKT-36: 3D Corridor Canvas & Studio"]@{ ticket: '[TKT-36]', priority: 'Low' }
@@ -56,38 +56,13 @@ kanban
   in_progress["In Progress (WIP = 1)"]
   completed["Completed (Fresh / Review)"]
     tkt62["TKT-62: GCS-SIM Canyon Decoupling & Port Isolation"]@{ ticket: '[TKT-62]', priority: 'High' }
-    bug06["OBC Failsafe Consolidation: t-GCSH, Relays & Corridor ERTB"]@{ ticket: '[BUG-06]', priority: 'Very High' }
-    bug05["Downlink Telemetry Leak Beyond Bork Range"]@{ ticket: '[BUG-05]', priority: 'Medium' }
-    bug04["Wireless Star Coordinate Collapse at Range"]@{ ticket: '[BUG-04]', priority: 'High' }
-    bug03["P2P Mesh Split-Brain Target Oscillation"]@{ ticket: '[BUG-03]', priority: 'Very High' }
-    bug02["Async RF Range Calculation / C2 Uplink Disconnect"]@{ ticket: '[BUG-02]', priority: 'Very High' }
-    bug01["Fleet Telemetry Window Empty"]@{ ticket: '[BUG-01]', priority: 'High' }
-    tlk01["Induced Coma OBC Airgap Resuscitation"]@{ ticket: '[TLK-01]', priority: 'Very High' }
-    tkt57["Airframe Tier Registry & Authorization Gate"]@{ ticket: '[TKT-57]', priority: 'Medium' }
-    tkt56["4D Waypoint Queue & Loiter Progress Engine"]@{ ticket: '[TKT-56]', priority: 'High' }
-    tkt55["Tactical Formation Orientations & Perimeter Headings"]@{ ticket: '[TKT-55]', priority: 'High' }
-    tkt54["Heartbeat Watchdog & Breadcrumb Backtrack"]@{ ticket: '[TKT-54]', priority: 'Very High' }
-    fix10["Strict Network Decoupling & Landing Huddle Fix"]@{ ticket: '[FIX-10]', priority: 'High' }
-    fix09["Strict WE-GCS Airgap & Comms Integrity"]@{ ticket: '[FIX-09]', priority: 'High' }
-    tkt53["Flight Formation Test Suite & Playback"]@{ ticket: '[TKT-53]', priority: 'High' }
-    tkt43["Dynamic Hungarian Formation Inversion"]@{ ticket: '[TKT-43]', priority: 'High' }
-    tkt52["Tactical GNSS Denial & Dead-Reckoning"]@{ ticket: '[TKT-52]', priority: 'High' }
-    tkt42["Batched ATC Pad Recovery"]@{ ticket: '[TKT-42]', priority: 'High' }
-    tkt41["Cold-Start Pad Scramble"]@{ ticket: '[TKT-41]', priority: 'High' }
-    tkt48["Airframe Hardware Identity Registry"]@{ ticket: '[TKT-48]', priority: 'High' }
-    tkt50["Dynamic In-Flight Swarm Enrollment"]@{ ticket: '[TKT-50]', priority: 'Medium' }
-    tkt49["Asymmetric RF Link Budget (Yip-Back)"]@{ ticket: '[TKT-49]', priority: 'High' }
-    fix07["MAVLink Multi-Vehicle Telemetry"]@{ ticket: '[FIX-07]', priority: 'Very High' }
-    fix08["Coordinated ATC Landing Station-Keeping"]@{ ticket: '[FIX-08]', priority: 'High' }
-    fix06["MAVLink Multi-Vehicle Responders"]@{ ticket: '[FIX-06]', priority: 'Very High' }
-    tkt23["Natural Reynolds 3D Flocking"]@{ ticket: '[TKT-23]', priority: 'High' }
-    fix05["Comms Horizon Telemetry Gate"]@{ ticket: '[FIX-05]', priority: 'Very High' }
     tkt58["1-Click Aux Mission: Patrol to BINGO RTB"]@{ ticket: '[TKT-58]', priority: 'Medium' }
     tkt51["Physical Courier / Search-and-Recall Mule"]@{ ticket: '[TKT-51]', priority: 'Medium' }
     tkt59["TKT-59: Cairn G1 Repeater Payload Drop"]@{ ticket: '[TKT-59]', priority: 'High' }
     pln02["PLN-02: Auxiliary Mission Engine Master"]@{ ticket: '[PLN-02]', priority: 'High' }
     tkt60["Urban 3D Obstacle Shelves & RF LOS"]@{ ticket: '[TKT-60]', priority: 'High' }
     tkt61["TKT-61: SITL Engine Modular Decomposition"]@{ ticket: '[TKT-61]', priority: 'High' }
+    tkt63["Core Hygiene: StrEnum, Geodetics & Packaging"]@{ ticket: '[TKT-63]', priority: 'High' }
 ```
 
 ---
@@ -107,32 +82,6 @@ kanban
 | **`TKT-51`** | `🚀 Feature` | Physical Courier / Search-and-Recall Mule to LKP | Targeted LKP dwell, P2P rescue handshake, and reverse tandem escort | [TKT-51.md](tasks/TKT-51.md) |
 | **`TKT-58`** | `🚀 Feature` | 1-Click Aux Mission: Patrol to BINGO RTB | Autonomous patrol looping until BINGO battery triggers automated 2-stage RTB | [TKT-58.md](tasks/TKT-58.md) |
 | **`PLN-02`** | `🏗️ Epic` | Auxiliary Mission Concepts & Waypoint Engine (Tactical Sub-Routines) | Phased mission workflows: Waypoint queues & discrete sub-routines | [PLN-02.md](tasks/PLN-02.md) |
-| **`BUG-06`** | `🐞 Bug` | OBC Failsafe Consolidation & Corridor ERTB | t-GCSH/GCSH split, 2IC loiter hold, T2 gateway relay & corridor stack ERTB | [BUG-06.md](tasks/BUG-06.md) |
-| **`BUG-05`** | `🐞 Bug` | Downlink Telemetry Leak Beyond Bork Range | C2 downlink fails to drop frames beyond 70m Bork horizon | [BUG-05.md](tasks/BUG-05.md) |
-| **`BUG-04`** | `🐞 Bug` | Wireless Star Coordinate Collapse at Range | Formation offset collapses to singularity outside star link | [BUG-04.md](tasks/BUG-04.md) |
-| **`BUG-03`** | `🐞 Bug` | P2P Mesh Split-Brain Target Oscillation | Gossip consensus thrashing; split-brain loop between clusters | [BUG-03.md](tasks/BUG-03.md) |
-| **`BUG-02`** | `🐞 Bug` | Async RF Range Calculation / C2 Uplink Disconnect | Scaling/unit mismatch in RF range starving C2 uplink at range | [BUG-02.md](tasks/BUG-02.md) |
-| **`BUG-01`** | `🐞 Bug` | Fleet Telemetry Window Empty | GCS telemetry container rendered but drone cards/rows missing | [BUG-01.md](tasks/BUG-01.md) |
-| **`TLK-01`** | `💬 Discussion` | Codebase Sweep Findings, Test Fixes & Phase 3 | Remediate 3 test failures, unfreeze battery drain for TKT-58, promote S&R TKT-51 | [TLK-01.md](tasks/TLK-01.md) |
-| **`TKT-57`** | `🚀 Feature` | Airframe Tier Registry & Authorization Gate | Tether prefix taxonomy (T-, t-), dynamic Bork/Yip RF, and C2 pre-flight capability gate | [TKT-57.md](tasks/TKT-57.md) |
-| **`TKT-56`** | `🚀 Feature` | 4D Waypoint Queue & Loiter Progress Engine | Deterministic 4D waypoint execution [x, y, z, loiter] & live loiter stream | [TKT-56.md](tasks/TKT-56.md) |
-| **`TKT-55`** | `🚀 Feature` | Tactical Formation Orientations & Perimeter In/Out Headings | Align airframe yaw with mission intent at target (sentry in/out) | [TKT-55.md](tasks/TKT-55.md) |
-| **`TKT-54`** | `🚀 Feature` | Heartbeat Watchdog, Breadcrumb Backtrack & Zero-Range Peeking | Eliminates range peeking; auto-backtracks to comms boundary | [TKT-54.md](tasks/TKT-54.md) |
-| **`FIX-10`** | `🛠️ Improvement` | Strict Network Decoupling, Landing Huddle Fix & 3-Way Death Doctrine | Landing pad huddle, UDP canyon sockets & realistic casualty detection | [FIX-10.md](tasks/FIX-10.md) |
-| **`FIX-09`** | `🛠️ Improvement` | Strict WE-GCS Airgap & Comms Integrity | Q2-Q5, Q7: Cold start, pad crash, comms handover & UI | [FIX-09.md](tasks/FIX-09.md) |
-| **`TKT-53`** | `🚀 Feature` | Flight Formation Test Suite & Playback Recorder | Comprehensive formation testing & trajectory playback | [TKT-53.md](tasks/TKT-53.md) |
-| **`TKT-43`** | `🛠️ Improvement` | Dynamic Hungarian Formation Inversion | Eliminates 80m cross-flight drag races on U-turns | [TKT-43.md](tasks/TKT-43.md) |
-| **`TKT-52`** | `🚀 Feature` | Tactical GNSS Denial & Dead-Reckoning RTB | Real EW GPS spoofing in contested airspace | [TKT-52.md](tasks/TKT-52.md) |
-| **`TKT-42`** | `🛠️ Improvement` | Batched ATC Pad Recovery & Downwash Clearance | Large fleets landing in dirt outside pad capacity | [TKT-42.md](tasks/TKT-42.md) |
-| **`TKT-41`** | `🛠️ Improvement` | Cold-Start Pad Scramble & Sequenced Climb-Out | Airframes initializing mid-air without spool up | [TKT-41.md](tasks/TKT-41.md) |
-| **`TKT-48`** | `🛠️ Improvement` | Airframe Hardware Identity & Fleet Registry | Fleets using transient zero-indexed integers | [TKT-48.md](tasks/TKT-48.md) |
-| **`TKT-50`** | `🚀 Feature` | Dynamic In-Flight Swarm Enrollment & Rejoin | Reinforcements jumping directly to phantom slots | [TKT-50.md](tasks/TKT-50.md) |
-| **`TKT-49`** | `🚀 Feature` | Asymmetric RF Link Budget (Yip-Back) | GCS mast vs micro-drone TX asymmetry | [TKT-49.md](tasks/TKT-49.md) |
-| **`FIX-07`** | `🛠️ Improvement` | MAVLink Multi-Vehicle Telemetry & GPS Track | Mission Planner black North track & orange lines | [FIX-07.md](tasks/FIX-07.md) |
-| **`FIX-08`** | `🛠️ Improvement` | Coordinated ATC Landing Station-Keeping | Repulsion scattering hovering drones to map edge | [FIX-08.md](tasks/FIX-08.md) |
-| **`FIX-06`** | `🛠️ Improvement` | MAVLink Multi-Vehicle Params & Responders | Mission Planner hung on vehicle 2 param list | [FIX-06.md](tasks/FIX-06.md) |
-| **`TKT-23`** | `🚀 Feature` | Natural Boids Flocking (True Reynolds 3D) | Cartesian grid world offsets preventing organic turns | [TKT-23.md](tasks/TKT-23.md) |
-| **`FIX-05`** | `🛠️ Improvement` | Comms Horizon Telemetry Gate & Lost-Link | GCS receiving omniscient coordinates past radio horizon | [FIX-05.md](tasks/FIX-05.md) |
 | **`PLN-01`** | `🏗️ Epic` | Airframe Class Registry & Hardware Plugins | Formal classes (Den, Totem, Cairn, etc.) and capabilities | [PLN-01.md](tasks/backlog/PLN-01.md) |
 | **`PLN-07`** | `🏗️ Epic` | Full MissionPlanner & QGC Compatibility | MAVLink mission item upload/download, param sync | [PLN-07.md](tasks/backlog/PLN-07.md) |
 | **`PLN-05`** | `🏗️ Epic` | Off-Nominal Landing Zones & Field E-Land | Dynamic field landing zones and emergency touches | [PLN-05.md](tasks/backlog/PLN-05.md) |
@@ -155,6 +104,7 @@ kanban
 | **`TKT-24`** | `🎭 Gimmick` | Dynamic Wind Gust Vector Field | Airframe operating in ideal dead-calm air | [TKT-24.md](tasks/backlog/TKT-24.md) |
 | **`TKT-44`** | `🎭 Gimmick` | High-Scale Multi-Tier Swarm Formations | Formations stretching beyond radio range at large counts | [TKT-44.md](tasks/backlog/TKT-44.md) |
 | **`TKT-60`** | `🚀 Feature` | Urban 3D Obstacle Shelves & RF LOS | 3D AABB altitude shelves, structural clash, and ray-cast RF LOS shadowing | [TKT-60.md](tasks/TKT-60.md) |
+| **`TKT-63`** | `TKT` | Core Hygiene: StrEnum, Geodetics & Packaging | StrEnum flight states, PyMAVLink geodetics, and UV packaging | [TKT-63.md](tasks/TKT-63.md) |
 
 ---
 
