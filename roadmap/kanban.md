@@ -55,6 +55,7 @@ kanban
   todo["Todo (Active Pipeline)"]
   in_progress["In Progress (WIP = 1)"]
   completed["Completed (Fresh / Review)"]
+    tkt62["TKT-62: GCS-SIM Canyon Decoupling & Port Isolation"]@{ ticket: '[TKT-62]', priority: 'High' }
     bug06["OBC Failsafe Consolidation: t-GCSH, Relays & Corridor ERTB"]@{ ticket: '[BUG-06]', priority: 'Very High' }
     bug05["Downlink Telemetry Leak Beyond Bork Range"]@{ ticket: '[BUG-05]', priority: 'Medium' }
     bug04["Wireless Star Coordinate Collapse at Range"]@{ ticket: '[BUG-04]', priority: 'High' }
@@ -100,6 +101,7 @@ kanban
 
 | Ticket ID | Grade | Title | Operational Inspiration | Spec Document |
 | :--- | :--- | :--- | :--- | :--- |
+| **`TKT-62`** | `🛠️ Refactor` | GCS-SIM Canyon Decoupling & Port Isolation | GCS operates strictly over UDP 9000/9001 without in-memory sim handles | [TKT-62.md](tasks/TKT-62.md) |
 | **`TKT-61`** | `🛠️ Refactor` | SITL Engine Modular Decomposition (Extract RF & ATC) | Decompose 4,327-line monolith into rf_channel.py & atc_recovery.py | [TKT-61.md](tasks/TKT-61.md) |
 | **`TKT-59`** | `🚀 Feature` | 1-Click Aux Mission: Cairn G1 Solar Repeater Payload Drop | Precision payload release at Z=3m, ground solar repeater joins gossip mesh | [TKT-59.md](tasks/TKT-59.md) |
 | **`TKT-51`** | `🚀 Feature` | Physical Courier / Search-and-Recall Mule to LKP | Targeted LKP dwell, P2P rescue handshake, and reverse tandem escort | [TKT-51.md](tasks/TKT-51.md) |

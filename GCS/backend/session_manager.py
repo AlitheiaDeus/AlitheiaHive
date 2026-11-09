@@ -56,6 +56,8 @@ class SessionManager:
         Combines the complete running simulation state snapshot with the historical event journal."""
         if hasattr(sim, "get_state_snapshot"):
             bundle = dict(sim.get_state_snapshot())
+        elif isinstance(sim, dict):
+            bundle = dict(sim)
         else:
             bundle = {}
 

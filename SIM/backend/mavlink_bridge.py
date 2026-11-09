@@ -380,6 +380,45 @@ class MavlinkBridge:
         elif cmd in ("STOP_MISSION_ROUTE", "STOP_ROUTE", "ABORT_ROUTE"):
             return self.sim.stop_mission_route()
 
+        elif cmd in ("DEPLOY_PATROL_TO_BINGO", "PATROL_TO_BINGO", "START_PATROL_BINGO", "PATROL_BINGO"):
+            threshold = float(cmd_dict.get("threshold", cmd_dict.get("bingo_threshold", 25.0)))
+            pattern = str(cmd_dict.get("pattern", "BOX_PATROL"))
+            return self.sim.deploy_patrol_to_bingo(bingo_threshold=threshold, pattern=pattern)
+
+        elif cmd in ("STOP_PATROL_TO_BINGO", "ABORT_PATROL_BINGO", "STOP_PATROL_BINGO"):
+            return self.sim.stop_patrol_to_bingo()
+
+        elif cmd in ("DEPLOY_SEARCH_AND_RECALL", "SEARCH_AND_RECALL", "DISPATCH_COURIER", "START_SEARCH_AND_RECALL"):
+            target_id = cmd_dict.get("target_drone_id", cmd_dict.get("target_id"))
+            courier_id = cmd_dict.get("courier_id")
+            return self.sim.deploy_search_and_recall(target_drone_id=target_id, courier_id=courier_id)
+
+        elif cmd in ("STOP_SEARCH_AND_RECALL", "ABORT_SEARCH_AND_RECALL", "STOP_COURIER"):
+            return self.sim.stop_search_and_recall()
+
+        elif cmd in ("DEPLOY_PAYLOAD_DROP", "PAYLOAD_DROP", "DEPLOY_CAIRN_G1", "DROP_REPEATER"):
+            target_pos = cmd_dict.get("target_pos", cmd_dict.get("pos"))
+            carrier_id = cmd_dict.get("carrier_id")
+            return self.sim.deploy_payload_drop(target_pos=target_pos, carrier_id=carrier_id)
+
+        elif cmd in ("STOP_PAYLOAD_DROP", "ABORT_PAYLOAD_DROP", "ABORT_DROP"):
+            return self.sim.stop_payload_drop()
+
+        elif cmd in ("TOGGLE_URBAN_OBSTACLES", "SET_URBAN_OBSTACLES"):
+            from SIM.backend.urban_geometry import get_default_urban_obstacles
+            enabled = cmd_dict.get("enabled", True)
+            if enabled:
+                self.sim.set_urban_obstacles(get_default_urban_obstacles())
+            else:
+                self.sim.set_urban_obstacles([])
+            return {"status": "OK", "cmd": cmd, "urban_obstacles_count": len(self.sim.urban_obstacles)}
+
+        elif cmd in ("TOGGLE_GNSS_DENIAL", "SET_GNSS_DENIAL"):
+            drone_id = cmd_dict.get("drone_id", None)
+            denied = cmd_dict.get("denied", None)
+            res = self.sim.toggle_gnss_denial(drone_id=drone_id, denied=denied)
+            return {"status": "OK", "cmd": cmd, "gnss_denied": res}
+
         else:
             # Check active brain hook
             brain_res = self.sim.brain.handle_command(cmd_dict)

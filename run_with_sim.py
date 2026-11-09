@@ -274,15 +274,13 @@ async def run_gcs_only(args: argparse.Namespace) -> int:
     print(f"  Emitting Operator Commands: UDP {args.rx_port}")
     print("=" * 64)
 
-    engine = SITLWorldEngine(drone_count=args.count, cold_start=not getattr(args, "start_air", False))
-    bridge = MavlinkBridge(
-        sim=engine,
+    server = SwarmWebServer(
+        sim=None,
         host=args.host,
+        port=args.port,
         tx_port=args.tx_port,
         rx_port=args.rx_port,
-        mavlink_port=args.mavlink_port,
     )
-    server = SwarmWebServer(sim=engine, bridge=bridge, host=args.host, port=args.port)
 
     await server.start()
     gcs_url = f"http://{args.host}:{args.port}"
@@ -349,6 +347,10 @@ def run_multi_process(args: argparse.Namespace) -> int:
         str(args.port),
         "--host",
         args.host,
+        "--tx-port",
+        str(args.tx_port),
+        "--rx-port",
+        str(args.rx_port),
         "--count",
         str(args.count),
     ]

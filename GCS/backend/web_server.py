@@ -38,6 +38,7 @@ if sys.platform == "win32":
             except (AttributeError, OSError):
                 pass
 
+import socket
 from aiohttp import web, WSMsgType
 
 from SIM.backend.sitl_engine import SwarmSimulator, DT
@@ -48,31 +49,57 @@ from GCS.backend.session_manager import SessionManager
 logger = logging.getLogger("SwarmWebServer")
 
 
+
+class TelemetryProtocol(asyncio.DatagramProtocol):
+    """Async UDP datagram protocol receiving telemetry snapshots from port 9000."""
+
+    def __init__(self, server: "SwarmWebServer"):
+        self.server = server
+
+    def datagram_received(self, data: bytes, addr: tuple):
+        try:
+            snapshot = json.loads(data.decode("utf-8"))
+            self.server.handle_inbound_telemetry(snapshot)
+        except Exception:
+            pass
+
 class SwarmWebServer:
     """aiohttp server hosting the WebGL GCS static assets and streaming
     real-time 60 FPS simulation telemetry over WebSocket (/ws)."""
 
     def __init__(
         self,
-        sim: SwarmSimulator,
+        sim: Optional[SwarmSimulator] = None,
         bridge: Optional[MavlinkBridge] = None,
         host: str = "127.0.0.1",
         port: int = 8080,
+        tx_port: int = 9000,
+        rx_port: int = 9001,
         frontend_dir: Optional[Path] = None,
         fps: int = 60,
     ):
-        self.sim: SwarmSimulator = sim
+        self.sim: Optional[SwarmSimulator] = sim
         self.bridge: Optional[MavlinkBridge] = bridge
         self.host: str = host
         self.port: int = port
+        self.tx_port: int = tx_port
+        self.rx_port: int = rx_port
         self.fps: int = fps
         self.dt: float = 1.0 / float(fps)
+        self.latest_snapshot: Optional[Dict[str, Any]] = None
+        self.cmd_sock: Optional[socket.socket] = None
+        self.telemetry_transport: Optional[asyncio.DatagramTransport] = None
+        self.telemetry_protocol: Optional[asyncio.DatagramProtocol] = None
 
         # Persistent Telemetry Session & Reconnect Hydration Manager (TKT-32)
         self.session_manager: SessionManager = SessionManager(max_events=100)
         self._last_tether_severed: bool = False
         self._last_crashed_ids: Set[int] = set()
-        self._last_leader_id: int = self.sim.leader.id if self.sim.leader else 0
+        self._last_leader_id: int = (
+            self.sim.leader.id
+            if (self.sim and getattr(self.sim, "leader", None))
+            else 0
+        )
         self._last_rtb_active: bool = False
 
         if frontend_dir is None:
@@ -89,7 +116,7 @@ class SwarmWebServer:
         self.sim_frontend_dir = repo_root / "SIM" / "frontend"
 
         # Hydrate default urban canyon for tactical 3D viewport (PLN-08 / TKT-60)
-        if not getattr(self.sim, "urban_obstacles", None):
+        if self.sim is not None and not getattr(self.sim, "urban_obstacles", None):
             self.sim.load_urban_scenario("default_canyon")
 
         @web.middleware
@@ -109,14 +136,20 @@ class SwarmWebServer:
         self.is_running: bool = False
         self.frames_broadcast: int = 0
         self.last_telemetry_rx_time: float = -100.0
+        self._last_wall_rx_time: float = -100.0
 
         self._setup_routes()
 
     def is_link_active(self) -> bool:
         """Assess link status strictly via downlinked telemetry freshness without omniscient range peeking (TKT-54)."""
-        if getattr(self.sim, "sim_time", 0.0) < 1.0:
-            return True
-        return (getattr(self.sim, "sim_time", 0.0) - self.last_telemetry_rx_time) <= 1.0
+        if self.sim is not None:
+            if getattr(self.sim, "sim_time", 0.0) < 1.0:
+                return True
+            return (getattr(self.sim, "sim_time", 0.0) - self.last_telemetry_rx_time) <= 1.0
+
+        if self.latest_snapshot is None or self._last_wall_rx_time <= 0:
+            return False
+        return (time.monotonic() - self._last_wall_rx_time) <= 1.5
 
     def _setup_routes(self) -> None:
         """Configure REST, WebSocket, and static frontend file endpoints."""
@@ -187,11 +220,24 @@ class SwarmWebServer:
 
     async def api_status_handler(self, request: web.Request) -> web.Response:
         """Return high-level simulation status JSON."""
+        if self.sim is not None:
+            sim_time = round(float(self.sim.sim_time), 3)
+            drone_count = len(self.sim.drones)
+            formation = self.sim.formation_mode
+        elif self.latest_snapshot is not None:
+            sim_time = round(float(self.latest_snapshot.get("sim_time", 0.0)), 3)
+            drone_count = len(self.latest_snapshot.get("drones", []))
+            formation = self.latest_snapshot.get("formation", "HEXAGON")
+        else:
+            sim_time = 0.0
+            drone_count = 0
+            formation = "UNKNOWN"
+
         return web.json_response({
-            "status": "ONLINE",
-            "sim_time": round(float(self.sim.sim_time), 3),
-            "drone_count": len(self.sim.drones),
-            "formation": self.sim.formation_mode,
+            "status": "ONLINE" if self.is_link_active() else "LOST_LINK",
+            "sim_time": sim_time,
+            "drone_count": drone_count,
+            "formation": formation,
             "connected_clients": len(self.active_websockets),
             "frames_broadcast": self.frames_broadcast,
         })
@@ -208,6 +254,21 @@ class SwarmWebServer:
     def execute_command(self, cmd_dict: Dict[str, Any]) -> Dict[str, Any]:
         """Dispatch operator directive to simulation engine."""
         cmd = cmd_dict.get("cmd", "").upper()
+
+        if self.sim is None:
+            # Standalone GCS Mode: Forward operator command across Canyon Airgap via UDP
+            if self.cmd_sock is not None:
+                try:
+                    payload = json.dumps(cmd_dict).encode("utf-8")
+                    self.cmd_sock.sendto(payload, (self.host, self.rx_port))
+                except OSError as e:
+                    logger.warning("Failed to emit command across UDP port %d: %s", self.rx_port, e)
+            sim_time = self.latest_snapshot.get("sim_time", 0.0) if self.latest_snapshot else 0.0
+            self.session_manager.add_event("CMD", f"Operator Command Dispatched: {cmd}", sim_time=sim_time)
+            res = {"status": "OK", "cmd": cmd, "dispatched_via": "UDP"}
+            if "pos" in cmd_dict:
+                res["target"] = cmd_dict["pos"]
+            return res
 
         if cmd in ("SET_TARGET", "DISPATCH_TARGET"):
             pos = cmd_dict.get("pos", [60.0, 40.0, 30.0])
@@ -667,11 +728,17 @@ class SwarmWebServer:
         self.active_websockets.add(ws)
 
         # 1. Immediately send session hydration bundle to eliminate page-refresh amnesia (TKT-32)
-        hydration_bundle = self.session_manager.get_hydration_bundle(self.sim)
+        if self.sim is not None:
+            hydration_bundle = self.session_manager.get_hydration_bundle(self.sim)
+            initial_snapshot = self.sim.get_state_snapshot()
+        else:
+            snap = self.latest_snapshot or {"sim_time": 0.0, "drones": []}
+            hydration_bundle = self.session_manager.get_hydration_bundle(snap)
+            initial_snapshot = dict(snap)
+
         await ws.send_str(json.dumps(hydration_bundle))
 
         # 2. Send initial telemetry state on connect
-        initial_snapshot = self.sim.get_state_snapshot()
         initial_snapshot["type"] = "TELEMETRY_FRAME"
         await ws.send_str(json.dumps(initial_snapshot))
 
@@ -691,13 +758,74 @@ class SwarmWebServer:
 
         return ws
 
+    def handle_inbound_telemetry(self, snapshot: Dict[str, Any]) -> None:
+        """Handle incoming telemetry frame received over UDP from SITL or physical radio."""
+        self.latest_snapshot = snapshot
+        sim_time = snapshot.get("sim_time", 0.0)
+        self.last_telemetry_rx_time = sim_time
+        self._last_wall_rx_time = time.monotonic()
+        self._track_telemetry_events(snapshot)
+
+        # Broadcast state snapshot over WebSocket
+        if self.active_websockets:
+            payload = json.dumps(snapshot)
+            for ws in list(self.active_websockets):
+                if not ws.closed:
+                    asyncio.create_task(ws.send_str(payload))
+
+    def _track_telemetry_events(self, snapshot: Dict[str, Any]) -> None:
+        """Extract and record mission casualty/failsafe/succession events from telemetry."""
+        sim_time = snapshot.get("sim_time", 0.0)
+        tether_state = snapshot.get("tether", {})
+        tether_severed = bool(tether_state.get("severed", False))
+        if tether_severed and not self._last_tether_severed:
+            self.session_manager.add_event("FAILSAFE", "Tactical Umbilical Severed! Physical cable snap detected.", sim_time=sim_time)
+            self._last_tether_severed = True
+        elif not tether_severed and self._last_tether_severed:
+            self.session_manager.add_event("STATUS", "Tactical umbilical reconnected / swarm rebooted.", sim_time=sim_time)
+            self._last_tether_severed = False
+
+        downlink_drones = snapshot.get("drones", [])
+        cur_confirmed_dead = set()
+        for d_info in downlink_drones:
+            did = d_info.get("id")
+            is_dead = d_info.get("crashed", False)
+            is_declared = d_info.get("declared_destroyed", False)
+            is_mayday = d_info.get("mayday_beacon", False)
+            is_collision = d_info.get("collision_inferred", False)
+
+            if is_dead or is_declared:
+                cur_confirmed_dead.add(did)
+                if did not in self._last_crashed_ids:
+                    if is_declared:
+                        self.session_manager.add_event("CASUALTY", f"Drone #{did} declared lost/destroyed by operator.", sim_time=sim_time)
+                    elif is_collision:
+                        self.session_manager.add_event("CASUALTY", f"Mid-air collision confirmed for Drone #{did}! Proximity clash detected.", sim_time=sim_time)
+                    elif is_mayday:
+                        self.session_manager.add_event("CASUALTY", f"Mayday beacon received: Drone #{did} catastrophic impact.", sim_time=sim_time)
+                    else:
+                        self.session_manager.add_event("CASUALTY", f"Drone #{did} crash confirmed via telemetry downlink.", sim_time=sim_time)
+        self._last_crashed_ids = cur_confirmed_dead
+
+        cur_leader_id = tether_state.get("leader_id", -1)
+        if cur_leader_id != self._last_leader_id and self._last_leader_id != -1 and cur_leader_id != -1:
+            self.session_manager.add_event("SUCCESSION", f"Autonomic Succession: Drone #{cur_leader_id} promoted to Swarm Leader", sim_time=sim_time)
+            self._last_leader_id = cur_leader_id
+
+        rtb_active = bool(snapshot.get("swarm_rtb_active", False))
+        if rtb_active and not self._last_rtb_active:
+            self.session_manager.add_event("RTB", "Doctrine A 30s loiter grace period expired. Swarm RTB initiated to Base (0,0,25).", sim_time=sim_time)
+            self._last_rtb_active = True
+        elif not rtb_active and self._last_rtb_active:
+            self._last_rtb_active = False
+
     async def _simulation_loop(self) -> None:
         """Core async loop stepping the simulation at locked 60 FPS and
-        broadcasting JSON frames to all connected GCS clients."""
+        broadcasting JSON frames to all connected GCS clients (in-memory mode)."""
         interval = self.dt
         next_tick = time.perf_counter()
 
-        while self.is_running:
+        while self.is_running and self.sim is not None:
             # Advance GCS C2 layer and physics simulation world
             self.sim.step_c2(interval)
             self.sim.step(interval, advance_c2=False)
@@ -705,6 +833,7 @@ class SwarmWebServer:
             # Broadcast state snapshot over WebSocket & UDP
             snapshot = self.sim.get_state_snapshot()
             snapshot["type"] = "TELEMETRY_FRAME"
+            self.latest_snapshot = snapshot
 
             # Telemetry Freshness Assessment (TKT-54: No range peeking)
             drones_list = snapshot.get("drones", [])
@@ -713,50 +842,7 @@ class SwarmWebServer:
             if any_downlink or tether_intact:
                 self.last_telemetry_rx_time = self.sim.sim_time
 
-            # Track autonomous state transitions for session history (TKT-32 / FIX-10)
-            tether_state = snapshot.get("tether", {})
-            tether_severed = bool(tether_state.get("severed", False))
-            if tether_severed and not self._last_tether_severed:
-                self.session_manager.add_event("FAILSAFE", "Tactical Umbilical Severed! Physical cable snap detected.", sim_time=self.sim.sim_time)
-                self._last_tether_severed = True
-            elif not tether_severed and self._last_tether_severed:
-                self.session_manager.add_event("STATUS", "Tactical umbilical reconnected / swarm rebooted.", sim_time=self.sim.sim_time)
-                self._last_tether_severed = False
-
-            # Downlink Telemetry Casualty Detection: 3 Realistic Doctrines
-            downlink_drones = snapshot.get("drones", [])
-            cur_confirmed_dead = set()
-            for d_info in downlink_drones:
-                did = d_info.get("id")
-                is_dead = d_info.get("crashed", False)
-                is_declared = d_info.get("declared_destroyed", False)
-                is_mayday = d_info.get("mayday_beacon", False)
-                is_collision = d_info.get("collision_inferred", False)
-
-                if is_dead or is_declared:
-                    cur_confirmed_dead.add(did)
-                    if did not in self._last_crashed_ids:
-                        if is_declared:
-                            self.session_manager.add_event("CASUALTY", f"Drone #{did} declared lost/destroyed by operator.", sim_time=self.sim.sim_time)
-                        elif is_collision:
-                            self.session_manager.add_event("CASUALTY", f"Mid-air collision confirmed for Drone #{did}! Proximity clash detected.", sim_time=self.sim.sim_time)
-                        elif is_mayday:
-                            self.session_manager.add_event("CASUALTY", f"Mayday beacon received: Drone #{did} catastrophic impact.", sim_time=self.sim.sim_time)
-                        else:
-                            self.session_manager.add_event("CASUALTY", f"Drone #{did} crash confirmed via telemetry downlink.", sim_time=self.sim.sim_time)
-            self._last_crashed_ids = cur_confirmed_dead
-
-            cur_leader_id = tether_state.get("leader_id", -1)
-            if cur_leader_id != self._last_leader_id and self._last_leader_id != -1 and cur_leader_id != -1:
-                self.session_manager.add_event("SUCCESSION", f"Autonomic Succession: Drone #{cur_leader_id} promoted to Swarm Leader", sim_time=self.sim.sim_time)
-                self._last_leader_id = cur_leader_id
-
-            rtb_active = bool(snapshot.get("swarm_rtb_active", False))
-            if rtb_active and not self._last_rtb_active:
-                self.session_manager.add_event("RTB", "Doctrine A 30s loiter grace period expired. Swarm RTB initiated to Base (0,0,25).", sim_time=self.sim.sim_time)
-                self._last_rtb_active = True
-            elif not rtb_active and self._last_rtb_active:
-                self._last_rtb_active = False
+            self._track_telemetry_events(snapshot)
 
             # Step UDP / MAVLink bridge if attached
             if self.bridge is not None:
@@ -793,7 +879,10 @@ class SwarmWebServer:
                 await asyncio.sleep(0)  # Yield control to event loop
 
     async def start(self) -> None:
-        """Start web server and simulation ticker loop."""
+        """Start web server, UDP command dispatcher, and telemetry ingestion."""
+        # Initialize UDP command dispatch socket (for Canyon port 9001)
+        self.cmd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
         # Boost Windows multimedia timer resolution to 1ms
         if sys.platform == "win32":
             try:
@@ -808,12 +897,41 @@ class SwarmWebServer:
         self.site = web.TCPSite(self.runner, self.host, self.port)
         await self.site.start()
 
-        # Launch simulation loop as concurrent asyncio task
-        self.sim_task = asyncio.create_task(self._simulation_loop())
+        loop = asyncio.get_running_loop()
+        if self.sim is None:
+            # Standalone GCS Mode: Receive 60 FPS telemetry across Canyon UDP port (9000)
+            try:
+                listen_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                listen_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                listen_sock.bind((self.host, self.tx_port))
+                listen_sock.setblocking(False)
+                transport, protocol = await loop.create_datagram_endpoint(
+                    lambda: TelemetryProtocol(self),
+                    sock=listen_sock,
+                )
+                self.telemetry_transport = transport
+                self.telemetry_protocol = protocol
+                logger.info("Standalone GCS UDP Telemetry listener active on %s:%d", self.host, self.tx_port)
+            except OSError as err:
+                logger.warning("Could not bind standalone GCS UDP listener on %s:%d: %s", self.host, self.tx_port, err)
+        else:
+            # In-Memory Mode: Launch simulation loop as concurrent asyncio task
+            self.sim_task = asyncio.create_task(self._simulation_loop())
 
     async def stop(self) -> None:
-        """Gracefully stop server, close client sockets, and cancel sim loop."""
+        """Gracefully stop server, close client sockets, and cancel sim/telemetry loops."""
         self.is_running = False
+
+        if self.telemetry_transport is not None:
+            self.telemetry_transport.close()
+            self.telemetry_transport = None
+
+        if self.cmd_sock is not None:
+            try:
+                self.cmd_sock.close()
+            except OSError:
+                pass
+            self.cmd_sock = None
 
         if self.sim_task is not None:
             self.sim_task.cancel()
@@ -853,12 +971,20 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SwarmTech3 Tactical GCS Web Server")
     parser.add_argument("--port", type=int, default=8080, help="Web server port")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Web server host")
+    parser.add_argument("--tx-port", type=int, default=9000, help="UDP Telemetry TX port from SITL")
+    parser.add_argument("--rx-port", type=int, default=9001, help="UDP Command RX port to SITL")
     parser.add_argument("--count", type=int, default=8, help="Number of drones")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-    sim = SwarmSimulator(drone_count=args.count)
-    server = SwarmWebServer(sim=sim, host=args.host, port=args.port)
+    # Standalone GCS operator terminal (no in-memory sim handle)
+    server = SwarmWebServer(
+        sim=None,
+        host=args.host,
+        port=args.port,
+        tx_port=args.tx_port,
+        rx_port=args.rx_port,
+    )
 
     async def main():
         await server.start()

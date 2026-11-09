@@ -14,6 +14,9 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+import asyncio
+import json
+import socket
 import unittest
 import numpy as np
 
@@ -119,6 +122,74 @@ class TestBubbleDecoupling(unittest.TestCase):
         self.assertIn("GOSSIP_CONSENSUS", BRAIN_REGISTRY)
         self.assertIs(BRAIN_REGISTRY["LEADER_FOLLOWER"], LeaderFollowerBrain)
         self.assertIs(BRAIN_REGISTRY["GOSSIP_CONSENSUS"], GossipConsensusBrain)
+
+
+class TestGCSCanyonAirgap(unittest.IsolatedAsyncioTestCase):
+    """Verify GCS operates as a standalone operator terminal with sim=None (TKT-62)."""
+
+    async def test_standalone_gcs_udp_telemetry_and_command_emission(self):
+        """Verify SwarmWebServer runs with sim=None, ingests UDP telemetry, and emits UDP commands."""
+        gcs_port = 18090
+        tx_port = 19000
+        rx_port = 19001
+
+        # Setup mock SITL command listener on rx_port
+        sitl_rx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sitl_rx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sitl_rx_sock.bind(("127.0.0.1", rx_port))
+        sitl_rx_sock.setblocking(False)
+
+        server = SwarmWebServer(
+            sim=None,
+            host="127.0.0.1",
+            port=gcs_port,
+            tx_port=tx_port,
+            rx_port=rx_port,
+        )
+        self.assertIsNone(server.sim)
+        self.assertFalse(server.is_link_active())
+
+        await server.start()
+        try:
+            # 1. Send telemetry frame over UDP tx_port (simulating SITL World Engine)
+            mock_frame = {
+                "type": "TELEMETRY_FRAME",
+                "sim_time": 42.0,
+                "drones": [
+                    {"id": 0, "pos": [10.0, 20.0, 30.0], "downlink_active": True, "crashed": False}
+                ],
+                "tether": {"severed": False, "leader_id": 0},
+            }
+            tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            tx_sock.sendto(json.dumps(mock_frame).encode("utf-8"), ("127.0.0.1", tx_port))
+            tx_sock.close()
+
+            # Wait briefly for DatagramProtocol to receive and parse
+            await asyncio.sleep(0.05)
+
+            # Verify GCS ingested telemetry without peeking into sim memory
+            self.assertIsNotNone(server.latest_snapshot)
+            self.assertEqual(server.latest_snapshot.get("sim_time"), 42.0)
+            self.assertEqual(server.last_telemetry_rx_time, 42.0)
+            self.assertTrue(server.is_link_active())
+
+            # 2. Emit operator command from GCS -> should transmit out rx_port
+            res = server.execute_command({"cmd": "SET_TARGET", "pos": [50.0, 60.0, 25.0]})
+            self.assertEqual(res.get("status"), "OK")
+            self.assertEqual(res.get("dispatched_via"), "UDP")
+
+            # Receive on mock SITL rx_port
+            await asyncio.sleep(0.02)
+            try:
+                data, _ = sitl_rx_sock.recvfrom(4096)
+                cmd_obj = json.loads(data.decode("utf-8"))
+                self.assertEqual(cmd_obj.get("cmd"), "SET_TARGET")
+                self.assertEqual(cmd_obj.get("pos"), [50.0, 60.0, 25.0])
+            except BlockingIOError:
+                self.fail("Command packet was not received on SITL rx_port (9001)")
+        finally:
+            await server.stop()
+            sitl_rx_sock.close()
 
 
 if __name__ == "__main__":
