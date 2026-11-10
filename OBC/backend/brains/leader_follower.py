@@ -388,6 +388,10 @@ class LeaderFollowerBrain(BaseBrain):
                 if "acknowledged_target" in p and telemetry.enrolled and not is_aux_mission:
                     ack_arr = np.array(p["acknowledged_target"], dtype=float)
                     updates["acknowledged_target"] = ack_arr
+                    if telemetry.flight_state == "PERIMETER_HOLD":
+                        updates["flight_state"] = "CRUISE"
+                        updates["status"] = "ACTIVE"
+                        updates["holding_at_horizon"] = False
                 if "pos" in p and p["pos"] is not None:
                     l_pos = np.array(p["pos"], dtype=float)
                     if not np.isnan(l_pos).any():
@@ -403,6 +407,10 @@ class LeaderFollowerBrain(BaseBrain):
             elif pkt.msg_type in ("GCS_UPLINK", "C2_COMMAND"):
                 if "target" in p:
                     updates["acknowledged_target"] = np.array(p["target"], dtype=float)
+                    updates["holding_at_horizon"] = False
+                    if telemetry.flight_state == "PERIMETER_HOLD":
+                        updates["flight_state"] = "CRUISE"
+                        updates["status"] = "FLEET_LEADER" if telemetry.is_leader else "ACTIVE"
                 self.handle_command(dict(p))
 
         # Flagship Gateway Relay Discovery: if leader lacks direct GCS contact, bind heard peer relay

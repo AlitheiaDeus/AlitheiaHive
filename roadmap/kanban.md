@@ -57,12 +57,12 @@ kanban
     tkt66["Simplified RF & GNSS Shadow Occlusion Engine"]@{ ticket: '[TKT-66]', priority: 'High' }
     bug11["Migrate Tandem Escort Stationing to OBC Firmware"]@{ ticket: '[BUG-11]', priority: 'High' }
     bug12["Migrate Ingress Corridor Stack Popping to OBC Firmware"]@{ ticket: '[BUG-12]', priority: 'High' }
-    bug13["Route C2 Target Uplinks Through Transceiver Inboxes"]@{ ticket: '[BUG-13]', priority: 'High' }
     bug14["Decouple SITL Sim Proxies to Broadcast Command Packets"]@{ ticket: '[BUG-14]', priority: 'Normal' }
     bug15["Decouple GCS C2 Gateway to Standalone Downlink Telemetry"]@{ ticket: '[BUG-15]', priority: 'High' }
     bug16["Command ATC Recovery via Pure C2 Uplink Packets & Parity Bridge"]@{ ticket: '[BUG-16]', priority: 'High' }
   in_progress["In Progress (WIP = 1)"]
   completed["Completed (Fresh / Review)"]
+    bug13["Route C2 Target Uplinks Through Transceiver Inboxes"]@{ ticket: '[BUG-13]', priority: 'High' }
     bug17["Autonomous Outbox Radio Packet Emission for Gossip & Beacons"]@{ ticket: '[BUG-17]', priority: 'Normal' }
     tkt67["Render 3D Urban Obstacles & Elevation Shelves in God-View"]@{ ticket: '[TKT-67]', priority: 'High' }
     tkt62["TKT-62: GCS-SIM Canyon Decoupling & Port Isolation"]@{ ticket: '[TKT-62]', priority: 'High' }

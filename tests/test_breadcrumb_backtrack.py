@@ -177,6 +177,9 @@ class TestBreadcrumbBacktrack(unittest.TestCase):
         res = self.sim.dispatch_target_uplink([50.0, 20.0, 25.0])
         self.assertEqual(res["status"], "OK")
 
+        # Step simulation so OBC firmware ingests GCS_UPLINK packet from transceiver inbox
+        self.sim.step()
+
         self.assertFalse(drone.holding_at_horizon)
         self.assertEqual(drone.flight_state, "CRUISE")
         self.assertEqual(drone.status, "FLEET_LEADER")

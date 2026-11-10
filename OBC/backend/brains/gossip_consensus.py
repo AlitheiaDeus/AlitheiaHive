@@ -300,6 +300,10 @@ class GossipConsensusBrain(BaseBrain):
                     self.peer_state.active_target = np.copy(t_arr)
                     self.peer_state.echo_ack_peers = {telemetry.drone_id}
                     self.peer_state.gossip_status = "COORDINATED"
+                    updates["holding_at_horizon"] = False
+                    if telemetry.flight_state == "PERIMETER_HOLD":
+                        updates["flight_state"] = "CRUISE"
+                        updates["status"] = "ACTIVE"
                 self.handle_command(dict(p))
 
         # Prune stale peers
@@ -333,6 +337,10 @@ class GossipConsensusBrain(BaseBrain):
                 self.peer_state.gossip_status = "COORDINATED"
                 self.peer_state.propagating_timer = 0.0
                 self.current_seq = max(self.current_seq, self.peer_state.active_seq)
+                updates["holding_at_horizon"] = False
+                if telemetry.flight_state == "PERIMETER_HOLD":
+                    updates["flight_state"] = "CRUISE"
+                    updates["status"] = "ACTIVE"
 
     def _finalize_flight_intent(
         self,

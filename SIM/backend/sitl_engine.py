@@ -2822,14 +2822,16 @@ class SITLWorldEngine:
                     "reason": "TETHER_SEVERED",
                     "error": "Tactical umbilical is severed. Uplink packet dropped.",
                 }
-            # Hardline delivery to tethered leader
+            # Hardline delivery of GCS_UPLINK packet to tethered leader
+            pkt = RadioPacket(
+                sender_id=-1,
+                msg_type="GCS_UPLINK",
+                timestamp=float(self.sim_time),
+                payload={"cmd": "SET_TARGET", "target": [float(v) for v in target_arr]},
+            )
             for d in self.drones:
                 if d.id == 0 or d.is_leader:
-                    d.acknowledged_target = np.copy(target_arr)
-                    d.holding_at_horizon = False
-                    if d.flight_state == "PERIMETER_HOLD":
-                        d.flight_state = "CRUISE"
-                        d.status = "FLEET_LEADER"
+                    d.inbox.append(pkt)
             return {
                 "status": "OK",
                 "channel": "HARDLINE_UMBILICAL",
@@ -2852,13 +2854,13 @@ class SITLWorldEngine:
                     "reason": "RADIO_RANGE_EXCEEDED",
                     "error": f"Leader Drone #{current_leader.id} ({d_gcs:.1f}m) out of GCS radio range ({RADIO_RANGE}m)",
                 }
-            current_leader.acknowledged_target = np.copy(target_arr)
-            for d in self.drones:
-                if getattr(d, "holding_at_horizon", False):
-                    d.holding_at_horizon = False
-                    if d.flight_state == "PERIMETER_HOLD":
-                        d.flight_state = "CRUISE"
-                        d.status = "FLEET_LEADER" if d.is_leader else "ACTIVE"
+            pkt = RadioPacket(
+                sender_id=-1,
+                msg_type="GCS_UPLINK",
+                timestamp=float(self.sim_time),
+                payload={"cmd": "SET_TARGET", "target": [float(v) for v in target_arr]},
+            )
+            current_leader.inbox.append(pkt)
             return {
                 "status": "OK",
                 "channel": "WIRELESS_STAR",
@@ -2871,12 +2873,6 @@ class SITLWorldEngine:
                 res = self.brain.inject_target(target_arr)
                 if isinstance(res, dict) and res.get("status") == "OUT_OF_RANGE":
                     return res
-                for d in self.drones:
-                    if getattr(d, "holding_at_horizon", False):
-                        d.holding_at_horizon = False
-                        if d.flight_state == "PERIMETER_HOLD":
-                            d.flight_state = "CRUISE"
-                            d.status = "ACTIVE"
                 return res if isinstance(res, dict) else {
                     "status": "OK",
                     "channel": "P2P_MESH",

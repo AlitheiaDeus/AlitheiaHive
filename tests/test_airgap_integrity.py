@@ -249,6 +249,39 @@ class TestAirgapIntegrity(unittest.TestCase):
                     f"Drone #{d.id} OBC brain step_drone failed to emit packet into outbox",
                 )
 
+    def test_dispatch_target_uplink_uses_inbox_packets_zero_ram_mutation(self):
+        """Red 4 Airgap Enforcement (BUG-13): dispatch_target_uplink must deliver packets
+        to transceiver inbox without mutating drone.acknowledged_target directly in RAM."""
+        sim = SITLWorldEngine(drone_count=4, seed=42)
+        sim.comms_mode = "LEADER_FOLLOWER"
+        leader = sim.leader
+        self.assertIsNotNone(leader)
+
+        old_target = np.copy(leader.acknowledged_target)
+        new_target = np.array([45.0, 35.0, 20.0], dtype=float)
+
+        leader.inbox.clear()
+        res = sim.dispatch_target_uplink(new_target)
+        self.assertEqual(res["status"], "OK")
+
+        # Zero direct RAM mutation: acknowledged_target must NOT change immediately
+        self.assertTrue(
+            np.allclose(leader.acknowledged_target, old_target),
+            "dispatch_target_uplink cheated by mutating drone.acknowledged_target directly in RAM!",
+        )
+
+        # Target packet must be queued in inbox
+        uplink_pkts = [p for p in leader.inbox if p.msg_type == "GCS_UPLINK"]
+        self.assertEqual(len(uplink_pkts), 1, "Expected GCS_UPLINK packet in transceiver inbox")
+        self.assertEqual(uplink_pkts[0].payload.get("cmd"), "SET_TARGET")
+
+        # After step_drone execution, OBC brain ingests packet and updates target buffer
+        sim.step()
+        self.assertTrue(
+            np.allclose(leader.acknowledged_target, new_target),
+            "Leader OBC brain failed to update acknowledged_target from inbox packet during step()",
+        )
+
     def test_no_quarantined_tests_remain_at_stage_3(self):
         """Anti-orphan gate: at Heartbeat Stage 3, zero tests may remain quarantined."""
         if ACTIVE_HEARTBEAT_STAGE >= 3:
