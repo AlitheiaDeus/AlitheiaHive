@@ -1,6 +1,6 @@
 # BUG-14: Decouple SITL Sim Proxies to Broadcast Command Packets
 
-> **Category**: 🛡️ Architecture / 🐛 Bug | **Priority**: Normal | **State**: todo  
+> **Category**: 🛡️ Architecture / 🐛 Bug | **Priority**: Normal | **State**: completed  
 > **Operational Inspiration**: Replace in-memory brain proxy iteration with RF broadcast command packets (Red 5 Remediation)
 
 ---
@@ -45,6 +45,6 @@ This ticket refactors the proxy classes to simulate authentic over-the-air C2 co
 
 ## 4. Acceptance Criteria & Verification Invariants
 
-* [ ] `_LeaderFollowerSimProxy` and `_GossipSimProxy` do not directly mutate private brain attributes of peer drones in RAM.
-* [ ] Formation switches and target injections are driven by `RadioPacket`s in transceivers.
-* [ ] Targeted test module passes: `python -m unittest tests/test_gossip_formations.py`.
+* [x] `_LeaderFollowerSimProxy` and `_GossipSimProxy` do not directly mutate private brain attributes of peer drones in RAM.
+* [x] Formation switches and target injections are driven by `RadioPacket`s in transceivers.
+* [x] Targeted test module passes: `python -m unittest tests/test_gossip_formations.py`.

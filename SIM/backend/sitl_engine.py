@@ -3148,10 +3148,17 @@ class _LeaderFollowerSimProxy(LeaderFollowerBrain):
     def formation_mode(self, val: str) -> None:
         object.__setattr__(self, "_formation_mode", val)
         eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        pkt = RadioPacket(
+            sender_id=-1,
+            msg_type="C2_COMMAND",
+            timestamp=float(eng.sim_time),
+            payload={"cmd": "SET_FORMATION", "mode": val},
+        )
         if hasattr(eng, "drones"):
             for d in eng.drones:
+                d.inbox.append(pkt)
                 if hasattr(d, "brain") and d.brain is not None:
-                    d.brain.formation_mode = val
+                    d.brain.handle_command(dict(pkt.payload))
 
     @property
     def formation_heading(self) -> float:
@@ -3404,10 +3411,17 @@ class _GossipSimProxy(GossipConsensusBrain):
     def formation_mode(self, val: str) -> None:
         object.__setattr__(self, "_formation_mode", val)
         eng: SITLWorldEngine = object.__getattribute__(self, "_engine")
+        pkt = RadioPacket(
+            sender_id=-1,
+            msg_type="C2_COMMAND",
+            timestamp=float(eng.sim_time),
+            payload={"cmd": "SET_FORMATION", "mode": val},
+        )
         if hasattr(eng, "drones"):
             for d in eng.drones:
+                d.inbox.append(pkt)
                 if hasattr(d, "brain") and d.brain is not None:
-                    d.brain.formation_mode = val
+                    d.brain.handle_command(dict(pkt.payload))
 
     @property
     def formation_heading(self) -> float:
@@ -3721,20 +3735,22 @@ class _GossipSimProxy(GossipConsensusBrain):
 
         seq = self.current_seq + 1
         self.current_seq = seq
+        pkt = RadioPacket(
+            sender_id=-1,
+            msg_type="GCS_UPLINK",
+            timestamp=float(eng.sim_time),
+            seq=seq,
+            payload={
+                "cmd": "SET_TARGET",
+                "target": [float(v) for v in target_arr],
+                "seq": seq,
+                "multi_node": len(active_drones) > 1,
+            },
+        )
+        seed_drone.inbox.append(pkt)
         if hasattr(seed_drone, "brain") and isinstance(seed_drone.brain, GossipConsensusBrain):
-            seed_drone.brain.current_seq = seq
-            pstate = seed_drone.brain.peer_state
-            pstate.pending_seq = seq
-            pstate.pending_target = np.copy(target_arr)
-            pstate.echo_ack_peers = {seed_drone.id}
-            pstate.gossip_status = "PROPAGATING"
-            pstate.target_timestamp = float(eng.sim_time)
-            pstate.propagating_timer = 0.0
-            if len(active_drones) == 1:
-                pstate.active_seq = seq
-                pstate.active_target = np.copy(target_arr)
-                pstate.gossip_status = "COORDINATED"
-            seed_drone.acknowledged_target = np.copy(target_arr)
+            tel = eng._build_local_telemetry(seed_drone)
+            seed_drone.brain.ingest_gossip_packets(tel, [pkt])
 
         return {
             "status": "OK",

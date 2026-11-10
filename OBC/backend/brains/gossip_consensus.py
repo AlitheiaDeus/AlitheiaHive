@@ -53,6 +53,7 @@ class DronePeerState:
         self.last_tx_time: float = 0.0
         self.target_timestamp: float = 0.0
         self.propagating_timer: float = 0.0
+        self.multi_node: bool = False
 
 
 class GossipConsensusBrain(BaseBrain):
@@ -178,6 +179,7 @@ class GossipConsensusBrain(BaseBrain):
         inbox: List[RadioPacket],
         living_peer_ids: Optional[Set[int]] = None,
         dt: float = 0.016,
+        updates: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Process incoming GOSSIP_ECHO and GCS_UPLINK packets and evaluate 75% quorum barrier."""
         self._last_clock_s = float(telemetry.clock_s)
@@ -296,14 +298,24 @@ class GossipConsensusBrain(BaseBrain):
                     self.peer_state.pending_target = np.copy(t_arr)
                     self.peer_state.target_timestamp = float(telemetry.clock_s)
                     self.peer_state.propagating_timer = 0.0
-                    self.peer_state.active_seq = seq
-                    self.peer_state.active_target = np.copy(t_arr)
                     self.peer_state.echo_ack_peers = {telemetry.drone_id}
-                    self.peer_state.gossip_status = "COORDINATED"
-                    updates["holding_at_horizon"] = False
-                    if telemetry.flight_state == "PERIMETER_HOLD":
-                        updates["flight_state"] = "CRUISE"
-                        updates["status"] = "ACTIVE"
+                    multi_node = bool(p.get("multi_node", False))
+                    self.peer_state.multi_node = multi_node
+                    other_peers = [
+                        p for p in self.heard_peers.values()
+                        if p.drone_id != telemetry.drone_id and not p.crashed and p.enrolled and p.flight_state not in ("LANDED", "DESCENDING")
+                    ]
+                    if not other_peers and not multi_node:
+                        self.peer_state.active_seq = seq
+                        self.peer_state.active_target = np.copy(t_arr)
+                        self.peer_state.gossip_status = "COORDINATED"
+                    else:
+                        self.peer_state.gossip_status = "PROPAGATING"
+                    if updates is not None:
+                        updates["holding_at_horizon"] = False
+                        if telemetry.flight_state == "PERIMETER_HOLD":
+                            updates["flight_state"] = "CRUISE"
+                            updates["status"] = "ACTIVE"
                 self.handle_command(dict(p))
 
         # Prune stale peers
@@ -328,19 +340,24 @@ class GossipConsensusBrain(BaseBrain):
 
         if self.peer_state.pending_seq > self.peer_state.active_seq:
             self.peer_state.propagating_timer += dt
-            can_commit = (ack_ratio >= QUORUM_RATIO) or (
-                self.peer_state.propagating_timer >= 2.0 and len(acks_in_range) >= living_count
-            )
+            is_multi = getattr(self.peer_state, "multi_node", False) or len(self.heard_peers) > 0
+            if is_multi and len(living_peer_ids) <= 1:
+                can_commit = False
+            else:
+                can_commit = (ack_ratio >= QUORUM_RATIO) or (
+                    self.peer_state.propagating_timer >= 2.0 and len(acks_in_range) >= living_count
+                )
             if can_commit:
                 self.peer_state.active_seq = self.peer_state.pending_seq
                 self.peer_state.active_target = np.copy(self.peer_state.pending_target)
                 self.peer_state.gossip_status = "COORDINATED"
                 self.peer_state.propagating_timer = 0.0
                 self.current_seq = max(self.current_seq, self.peer_state.active_seq)
-                updates["holding_at_horizon"] = False
-                if telemetry.flight_state == "PERIMETER_HOLD":
-                    updates["flight_state"] = "CRUISE"
-                    updates["status"] = "ACTIVE"
+                if updates is not None:
+                    updates["holding_at_horizon"] = False
+                    if telemetry.flight_state == "PERIMETER_HOLD":
+                        updates["flight_state"] = "CRUISE"
+                        updates["status"] = "ACTIVE"
 
     def _finalize_flight_intent(
         self,
@@ -422,7 +439,7 @@ class GossipConsensusBrain(BaseBrain):
         outbox: List[RadioPacket] = []
         updates: Dict[str, Any] = {}
 
-        self.ingest_gossip_packets(telemetry, inbox, dt=dt)
+        self.ingest_gossip_packets(telemetry, inbox, dt=dt, updates=updates)
 
         if telemetry.flight_state in ("LANDED", "DESCENDING", "GROUND_IDLE", "CRASHED"):
             return FlightIntent(target_acc=np.zeros(3, dtype=float)), outbox
