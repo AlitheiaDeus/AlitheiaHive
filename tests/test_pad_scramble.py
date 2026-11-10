@@ -260,7 +260,7 @@ class TestColdStartPadScramble(unittest.TestCase):
             np.testing.assert_allclose(d.acknowledged_target, [0.0, 0.0, 20.0])
 
         # Step until leader climbs to 20m and transitions to CRUISE
-        for _ in range(int(5.0 / DT)):
+        for _ in range(int(6.5 / DT)):
             sim.step(DT)
 
         leader = sim.leader

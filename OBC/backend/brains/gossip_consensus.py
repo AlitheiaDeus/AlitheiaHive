@@ -35,8 +35,8 @@ QUORUM_RATIO: float = 0.75
 
 DEADBAND_RADIUS: float = 0.35
 MAX_SLEW_RATE: float = math.radians(45.0)
-FREEZE_SPEED: float = 0.5
-FREEZE_DIST: float = 2.0
+FREEZE_SPEED: float = 1.5
+FREEZE_DIST: float = 8.0
 
 
 class DronePeerState:
@@ -332,6 +332,24 @@ class GossipConsensusBrain(BaseBrain):
                 self.peer_state.propagating_timer = 0.0
                 self.current_seq = max(self.current_seq, self.peer_state.active_seq)
 
+    def _finalize_flight_intent(
+        self,
+        telemetry: LocalTelemetry,
+        nominal_acc: np.ndarray,
+        target_yaw: Optional[float] = None,
+        target_station: Optional[np.ndarray] = None,
+        state_updates: Optional[Dict[str, Any]] = None,
+    ) -> FlightIntent:
+        """Combine nominal guidance with OBC Zone 2/3 collision avoidance reflexes (TKT-69)."""
+        updates = state_updates if state_updates is not None else {}
+        final_acc = self.apply_avoidance_reflex(telemetry, nominal_acc)
+        return FlightIntent(
+            target_acc=final_acc,
+            target_yaw=target_yaw,
+            target_station=target_station,
+            state_updates=updates,
+        )
+
     # ==========================================================================
     # 2. Per-Drone Decentralized Guidance Step (Pure I/O Boundary)
     # ==========================================================================
@@ -369,12 +387,7 @@ class GossipConsensusBrain(BaseBrain):
                 station = np.copy(telemetry.pos)
             speed_xy = math.hypot(telemetry.vel[0], telemetry.vel[1])
             yaw = math.atan2(telemetry.vel[1], telemetry.vel[0]) if speed_xy > 0.5 else None
-            return FlightIntent(
-                target_acc=acc,
-                target_yaw=yaw,
-                target_station=station,
-                state_updates=updates,
-            ), outbox
+            return self._finalize_flight_intent(telemetry, acc, yaw, station, updates), outbox
 
         # 3. Quorum GCS Contact Bitmask & Corridor ERTB (BUG-06)
         any_gcs = any(peer.gcs_contact for peer in self.heard_peers.values())
@@ -394,12 +407,7 @@ class GossipConsensusBrain(BaseBrain):
             acc = self._steer_toward(telemetry.pos, telemetry.vel, ct, max_speed=8.0)
             speed_xy = math.hypot(telemetry.vel[0], telemetry.vel[1])
             yaw = math.atan2(telemetry.vel[1], telemetry.vel[0]) if speed_xy > 0.5 else None
-            return FlightIntent(
-                target_acc=acc,
-                target_yaw=yaw,
-                target_station=np.copy(ct),
-                state_updates=updates,
-            ), outbox
+            return self._finalize_flight_intent(telemetry, acc, yaw, np.copy(ct), updates), outbox
 
         # 4. Backtrack, Horizon Hold, and Lost-Link Failsafes (TKT-54)
         if telemetry.flight_state == "BACKTRACK_HOLD":
@@ -407,23 +415,13 @@ class GossipConsensusBrain(BaseBrain):
             acc = self._steer_toward(telemetry.pos, telemetry.vel, bt, max_speed=8.0)
             speed_xy = math.hypot(telemetry.vel[0], telemetry.vel[1])
             yaw = math.atan2(telemetry.vel[1], telemetry.vel[0]) if speed_xy > 0.5 else None
-            return FlightIntent(
-                target_acc=acc,
-                target_yaw=yaw,
-                target_station=np.copy(bt),
-                state_updates=updates,
-            ), outbox
+            return self._finalize_flight_intent(telemetry, acc, yaw, np.copy(bt), updates), outbox
 
         if telemetry.flight_state == "PERIMETER_HOLD" or telemetry.holding_at_horizon:
             acc = self._steer_toward(telemetry.pos, telemetry.vel, telemetry.acknowledged_target, max_speed=2.0)
             speed_xy = math.hypot(telemetry.vel[0], telemetry.vel[1])
             yaw = math.atan2(telemetry.vel[1], telemetry.vel[0]) if speed_xy > 0.5 else None
-            return FlightIntent(
-                target_acc=acc,
-                target_yaw=yaw,
-                target_station=np.copy(telemetry.acknowledged_target),
-                state_updates=updates,
-            ), outbox
+            return self._finalize_flight_intent(telemetry, acc, yaw, np.copy(telemetry.acknowledged_target), updates), outbox
 
         # Courier S&R Escort & Payload Drop States (TKT-51 / TKT-59)
         if telemetry.flight_state in ("COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN", "PAYLOAD_TRANSIT", "PRECISION_DESCENT", "CARRIER_EGRESS"):
@@ -432,23 +430,13 @@ class GossipConsensusBrain(BaseBrain):
             acc = self._steer_toward(telemetry.pos, telemetry.vel, ack_t, max_speed=spd)
             speed_xy = math.hypot(telemetry.vel[0], telemetry.vel[1])
             yaw = math.atan2(telemetry.vel[1], telemetry.vel[0]) if speed_xy > 0.5 else None
-            return FlightIntent(
-                target_acc=acc,
-                target_yaw=yaw,
-                target_station=ack_t,
-                state_updates=updates,
-            ), outbox
+            return self._finalize_flight_intent(telemetry, acc, yaw, ack_t, updates), outbox
 
         if telemetry.lost_link:
             acc = self._steer_toward(telemetry.pos, telemetry.vel, telemetry.lkp, max_speed=V_LKP)
             speed_xy = math.hypot(telemetry.vel[0], telemetry.vel[1])
             yaw = math.atan2(telemetry.vel[1], telemetry.vel[0]) if speed_xy > 0.5 else None
-            return FlightIntent(
-                target_acc=acc,
-                target_yaw=yaw,
-                target_station=np.copy(telemetry.lkp),
-                state_updates=updates,
-            ), outbox
+            return self._finalize_flight_intent(telemetry, acc, yaw, np.copy(telemetry.lkp), updates), outbox
 
         # Ensure self is up to date in heard_peers
         self.heard_peers[telemetry.drone_id] = HeardPeer(
@@ -598,12 +586,7 @@ class GossipConsensusBrain(BaseBrain):
         # 7. Tactical Formation Orientations & Headings (TKT-55)
         target_yaw = self._compute_tactical_yaw(telemetry, station, active_target)
 
-        return FlightIntent(
-            target_acc=acc,
-            target_yaw=target_yaw,
-            target_station=station,
-            state_updates=updates,
-        ), outbox
+        return self._finalize_flight_intent(telemetry, acc, target_yaw, station, updates), outbox
 
     def _advance_route_waypoint(self, current_target_wp: np.ndarray, updates: Dict[str, Any]) -> None:
         """Advance local 4D waypoint index and consensus target."""

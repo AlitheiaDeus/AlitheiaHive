@@ -112,6 +112,8 @@ class LocalTelemetry:
     patrol_active: bool
     tether_heartbeat_watchdog: float = 0.5
     corridor_target: Optional[np.ndarray] = None
+    nearby_peers: Tuple[Any, ...] = ()
+    urban_obstacles: Tuple[Any, ...] = ()
 
 
 @dataclass
@@ -121,6 +123,65 @@ class FlightIntent:
     target_yaw: Optional[float] = None
     target_station: Optional[np.ndarray] = None
     state_updates: Dict[str, Any] = field(default_factory=dict)
+
+
+def _is_on_obstacle_top(pos: np.ndarray, obs: Any, vertical_margin: float = 0.25, horizontal_inset: float = -0.1) -> bool:
+    if not getattr(obs, "is_landable", False):
+        return False
+    p = np.asarray(pos, dtype=float)
+    x, y, z = p[0], p[1], p[2]
+    x_min = getattr(obs, "x_min", getattr(obs, "bounds", [0, 0, 0, 0, 0, 0])[0])
+    x_max = getattr(obs, "x_max", getattr(obs, "bounds", [0, 0, 0, 0, 0, 0])[1])
+    y_min = getattr(obs, "y_min", getattr(obs, "bounds", [0, 0, 0, 0, 0, 0])[2])
+    y_max = getattr(obs, "y_max", getattr(obs, "bounds", [0, 0, 0, 0, 0, 0])[3])
+    z_ceiling = getattr(obs, "z_ceiling", getattr(obs, "bounds", [0, 0, 0, 0, 0, 0])[5])
+    in_xy = (x_min + horizontal_inset <= x <= x_max - horizontal_inset) and \
+            (y_min + horizontal_inset <= y <= y_max - horizontal_inset)
+    at_top = (z >= z_ceiling - vertical_margin)
+    return bool(in_xy and at_top)
+
+
+def _point_to_aabb_repulsion(
+    pos: np.ndarray,
+    vel: np.ndarray,
+    bounds: Tuple[float, float, float, float, float, float],
+    zone3_outer: float = 3.5,
+    zone4_clash: float = 1.5,
+) -> Tuple[float, np.ndarray]:
+    x_min, x_max, y_min, y_max, z_min, z_max = bounds
+    p = np.asarray(pos, dtype=float)
+    v = np.asarray(vel, dtype=float)
+
+    cx = np.clip(p[0], x_min, x_max)
+    cy = np.clip(p[1], y_min, y_max)
+    cz = np.clip(p[2], z_min, z_max)
+
+    c = np.array([cx, cy, cz], dtype=float)
+    diff = p - c
+    dist = float(np.linalg.norm(diff))
+
+    if dist > zone3_outer:
+        return dist, np.zeros(3, dtype=float)
+
+    if dist > 1e-4:
+        normal = diff / dist
+    else:
+        normal = np.array([0.0, 0.0, 1.0], dtype=float)
+
+    if dist <= zone4_clash:
+        return dist, np.zeros(3, dtype=float)
+
+    norm_interp = (zone3_outer - dist) / (zone3_outer - zone4_clash)
+    push_mag = 16.0 + 12.0 * norm_interp
+    a_push = push_mag * normal
+
+    v_into_wall = float(np.dot(v, -normal))
+    if v_into_wall > 0.0:
+        a_damp = 1.5 * v_into_wall * normal
+    else:
+        a_damp = np.zeros(3, dtype=float)
+
+    return dist, a_push + a_damp
 
 
 class BaseBrain(ABC):
@@ -263,3 +324,170 @@ class BaseBrain(ABC):
         ay = float(np.clip(3.0 * (v_target_xy[1] - drone.vel[1]), -6.0, 6.0))
 
         return np.array([ax, ay, az], dtype=float)
+
+    # ==========================================================================
+    # Autonomous OBC Zone 2 & Zone 3 Avoidance Reflexes (TKT-69 / Brain Airgap)
+    # ==========================================================================
+    def compute_inter_drone_avoidance(
+        self,
+        telemetry: LocalTelemetry,
+        peers: Optional[List[Any]] = None,
+    ) -> np.ndarray:
+        """Compute Zone 2 caution separation and Zone 3 emergency thrust + relative velocity damping
+        against heard peer drones from V2V radio telemetry (Brain Airgap)."""
+        acc_avoid = np.zeros(3, dtype=float)
+        own_id = telemetry.drone_id
+        own_pos = telemetry.pos
+        own_vel = telemetry.vel
+        if own_pos is None or np.any(np.isnan(own_pos)):
+            return np.zeros(3, dtype=float)
+        if telemetry.flight_state in ("LANDED", "GROUND_IDLE", "FIELD_LANDED", "E_LANDED"):
+            return np.zeros(3, dtype=float)
+
+        # Combine heard RF peers with any proximity telemetry sensors
+        known_peers: Dict[int, Any] = dict(self.heard_peers)
+        if hasattr(telemetry, "nearby_peers") and telemetry.nearby_peers:
+            for np_peer in telemetry.nearby_peers:
+                np_id = int(getattr(np_peer, "id", getattr(np_peer, "drone_id", -1)))
+                if np_id not in known_peers and np_id != own_id:
+                    known_peers[np_id] = np_peer
+
+        peer_list = peers if peers is not None else list(known_peers.values())
+
+        for other in peer_list:
+            oid = int(getattr(other, "drone_id", getattr(other, "id", -1)))
+            if oid == own_id:
+                continue
+            if getattr(other, "crashed", False):
+                continue
+            if not getattr(other, "enrolled", True):
+                continue
+            other_state = str(getattr(other, "flight_state", ""))
+            if other_state in ("LANDED", "GROUND_IDLE", "FIELD_LANDED", "E_LANDED"):
+                continue
+
+            other_pos = np.array(getattr(other, "pos"), dtype=float)
+            if np.any(np.isnan(other_pos)):
+                continue
+            other_vel = np.array(getattr(other, "vel", [0.0, 0.0, 0.0]), dtype=float)
+
+            diff = own_pos - other_pos
+            dist = float(np.linalg.norm(diff))
+
+            if dist <= 0.01:
+                n_ij = np.array([1.0, 0.0, 0.0], dtype=float)
+            else:
+                n_ij = diff / dist
+
+            # Zone 3: Critical Danger (1.5m < dist <= 3.5m)
+            if dist <= 3.5:
+                push_mag = 16.0 + 12.0 * ((3.5 - dist) / (3.5 - 1.5))
+                a_push = push_mag * n_ij
+
+                # Horizontal lateral breakout
+                d_xy = float(math.hypot(diff[0], diff[1]))
+                if d_xy < 2.8:
+                    if d_xy > 0.05:
+                        n_xy = np.array([diff[0] / d_xy, diff[1] / d_xy, 0.0], dtype=float)
+                    else:
+                        n_xy = np.array([1.0, 0.0, 0.0], dtype=float)
+                    lat_push = 14.0 * ((2.8 - d_xy) / 2.8)
+                    a_push += lat_push * n_xy
+
+                    # Vertical corridor expansion
+                    z_diff = diff[2]
+                    if abs(z_diff) < 2.0:
+                        z_sign = 1.0 if z_diff >= 0.0 else -1.0
+                        z_push = 16.0 * ((2.0 - abs(z_diff)) / 2.0)
+                        a_push[2] += z_sign * z_push
+
+                # Relative-velocity damping (brakes incoming momentum)
+                v_rel = own_vel - other_vel
+                v_closing = float(np.dot(v_rel, n_ij))
+                if v_closing < 0.0:
+                    a_damp = -3.5 * (v_closing * n_ij)
+                else:
+                    a_damp = np.zeros(3, dtype=float)
+
+                acc_avoid += a_push + a_damp
+
+                # P2P Yip RSSI Emergency Cushion
+                if dist <= 2.2:
+                    cushion_mag = 22.0 * (2.2 - dist)
+                    acc_avoid += cushion_mag * n_ij
+
+            # Zone 2: Caution Buffer (3.5m < dist <= 8.0m)
+            elif dist <= 8.0:
+                sep_mag = 5.0 * ((8.0 - dist) / (8.0 - 3.5))
+                acc_avoid += sep_mag * n_ij
+
+        # Suppress horizontal avoidance during pad climb to ascend cleanly along vertical corridor
+        if telemetry.flight_state == "TAKEOFF" and telemetry.pos[2] < 5.0:
+            acc_avoid[0] = 0.0
+            acc_avoid[1] = 0.0
+        elif telemetry.flight_state in ("DESCENDING", "FIELD_DESCENDING", "EMERGENCY_LANDING") and telemetry.pos[2] < 3.0:
+            acc_avoid[0] *= 0.1
+            acc_avoid[1] *= 0.1
+
+        return acc_avoid
+
+    def compute_obstacle_avoidance(
+        self,
+        telemetry: LocalTelemetry,
+        obstacles: Optional[Union[Tuple[Any, ...], List[Any]]] = None,
+    ) -> np.ndarray:
+        """Compute Zone 3 reflexive wall evasion and momentum damping against static obstacles (Brain Airgap)."""
+        obs_list = obstacles if obstacles is not None else getattr(telemetry, "urban_obstacles", ())
+        if not obs_list:
+            return np.zeros(3, dtype=float)
+
+        acc_obs = np.zeros(3, dtype=float)
+        pos = telemetry.pos
+        vel = telemetry.vel
+        if pos is None or np.any(np.isnan(pos)):
+            return np.zeros(3, dtype=float)
+        is_landing_or_takeoff = telemetry.flight_state in (
+            "TAKEOFF", "FIELD_DESCENDING", "EMERGENCY_LANDING", "DESCENDING"
+        )
+
+        for obs in obs_list:
+            if getattr(obs, "is_landable", False) and _is_on_obstacle_top(pos, obs):
+                if is_landing_or_takeoff or pos[2] >= getattr(obs, "z_ceiling", 0.0) - 0.05:
+                    continue
+            bounds = getattr(obs, "bounds", None)
+            if bounds is None:
+                continue
+            dist, a_evade = _point_to_aabb_repulsion(
+                pos, vel, bounds, zone3_outer=3.5, zone4_clash=1.5
+            )
+            acc_obs += a_evade
+
+        return acc_obs
+
+    def apply_avoidance_reflex(
+        self,
+        telemetry: LocalTelemetry,
+        a_nominal: np.ndarray,
+        peers: Optional[List[Any]] = None,
+    ) -> np.ndarray:
+        """Combine nominal guidance intent with OBC Zone 2 & 3 collision avoidance reflexes."""
+        if telemetry.flight_state in ("LANDED", "GROUND_IDLE", "FIELD_LANDED", "E_LANDED", "CRASHED") or telemetry.status == "CRASHED":
+            return np.zeros(3, dtype=float)
+
+        a_peers = self.compute_inter_drone_avoidance(telemetry, peers)
+        a_obs = self.compute_obstacle_avoidance(telemetry)
+        a_avoid = a_peers + a_obs
+
+        avoid_mag = float(np.linalg.norm(a_avoid))
+        res_nominal = np.copy(a_nominal)
+        if avoid_mag > 8.0:
+            # Attenuate forward guidance during emergency Zone 3 avoidance so drone brakes instead of plowing forward
+            attenuation = max(0.2, 1.0 - (avoid_mag - 8.0) / 25.0)
+            res_nominal = res_nominal * attenuation
+
+        total_acc = res_nominal + a_avoid
+        # Bounded to airframe kinematic acceleration limit A_MAX = 15.0 m/s^2
+        acc_mag = float(np.linalg.norm(total_acc))
+        if acc_mag > 15.0:
+            total_acc = (total_acc / acc_mag) * 15.0
+        return total_acc

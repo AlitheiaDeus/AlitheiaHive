@@ -61,6 +61,24 @@ class LeaderFollowerBrain(BaseBrain):
         self.route_paused = False
         self._last_clock_s = 0.0
 
+    def _finalize_flight_intent(
+        self,
+        telemetry: LocalTelemetry,
+        nominal_acc: np.ndarray,
+        target_yaw: Optional[float] = None,
+        target_station: Optional[np.ndarray] = None,
+        state_updates: Optional[Dict[str, Any]] = None,
+    ) -> FlightIntent:
+        """Combine nominal guidance with OBC Zone 2/3 collision avoidance reflexes (TKT-69)."""
+        updates = state_updates if state_updates is not None else {}
+        final_acc = self.apply_avoidance_reflex(telemetry, nominal_acc)
+        return FlightIntent(
+            target_acc=final_acc,
+            target_yaw=target_yaw,
+            target_station=target_station,
+            state_updates=updates,
+        )
+
     def step_drone(
         self,
         telemetry: LocalTelemetry,
@@ -128,36 +146,21 @@ class LeaderFollowerBrain(BaseBrain):
             acc = self._steer_toward(telemetry.pos, telemetry.vel, ct, max_speed=8.0)
             yaw = self._velocity_yaw(telemetry.vel)
             self._emit_periodic_packets(telemetry, updates, outbox, dt)
-            return FlightIntent(
-                target_acc=acc,
-                target_yaw=yaw,
-                target_station=np.copy(ct),
-                state_updates=updates,
-            ), outbox
+            return self._finalize_flight_intent(telemetry, acc, yaw, np.copy(ct), updates), outbox
 
         if telemetry.flight_state == "BACKTRACK_HOLD":
             bt = telemetry.backtrack_target if telemetry.backtrack_target is not None else telemetry.lkp
             acc = self._steer_toward(telemetry.pos, telemetry.vel, bt, max_speed=8.0)
             yaw = self._velocity_yaw(telemetry.vel)
             self._emit_periodic_packets(telemetry, updates, outbox, dt)
-            return FlightIntent(
-                target_acc=acc,
-                target_yaw=yaw,
-                target_station=np.copy(bt),
-                state_updates=updates,
-            ), outbox
+            return self._finalize_flight_intent(telemetry, acc, yaw, np.copy(bt), updates), outbox
 
         if telemetry.flight_state == "PERIMETER_HOLD" or telemetry.holding_at_horizon:
             ack_t = np.copy(updates.get("acknowledged_target", telemetry.acknowledged_target))
             acc = self._steer_toward(telemetry.pos, telemetry.vel, ack_t, max_speed=2.0)
             yaw = self._velocity_yaw(telemetry.vel)
             self._emit_periodic_packets(telemetry, updates, outbox, dt)
-            return FlightIntent(
-                target_acc=acc,
-                target_yaw=yaw,
-                target_station=ack_t,
-                state_updates=updates,
-            ), outbox
+            return self._finalize_flight_intent(telemetry, acc, yaw, ack_t, updates), outbox
 
         # Courier S&R Escort & Payload Drop States (TKT-51 / TKT-59)
         if telemetry.flight_state in ("COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN", "PAYLOAD_TRANSIT", "PRECISION_DESCENT", "CARRIER_EGRESS"):
@@ -166,24 +169,14 @@ class LeaderFollowerBrain(BaseBrain):
             acc = self._steer_toward(telemetry.pos, telemetry.vel, ack_t, max_speed=spd)
             yaw = self._velocity_yaw(telemetry.vel)
             self._emit_periodic_packets(telemetry, updates, outbox, dt)
-            return FlightIntent(
-                target_acc=acc,
-                target_yaw=yaw,
-                target_station=ack_t,
-                state_updates=updates,
-            ), outbox
+            return self._finalize_flight_intent(telemetry, acc, yaw, ack_t, updates), outbox
 
         if telemetry.lost_link and not telemetry.is_leader:
             lkp_t = np.copy(updates.get("lkp", telemetry.lkp))
             acc = self._steer_toward(telemetry.pos, telemetry.vel, lkp_t, max_speed=V_LKP)
             yaw = self._velocity_yaw(telemetry.vel)
             self._emit_periodic_packets(telemetry, updates, outbox, dt)
-            return FlightIntent(
-                target_acc=acc,
-                target_yaw=yaw,
-                target_station=lkp_t,
-                state_updates=updates,
-            ), outbox
+            return self._finalize_flight_intent(telemetry, acc, yaw, lkp_t, updates), outbox
 
         # 3. Breakaway Dive & Cable Jettison Guidance (TKT-16 / TKT-27)
         if telemetry.status == "BREAKAWAY_JETTISON" and not telemetry.tether_jettisoned:
@@ -210,13 +203,13 @@ class LeaderFollowerBrain(BaseBrain):
                 a_dive_z,
             ], dtype=float)
             self._emit_periodic_packets(telemetry, updates, outbox, dt)
-            return FlightIntent(target_acc=acc, state_updates=updates), outbox
+            return self._finalize_flight_intent(telemetry, acc, state_updates=updates), outbox
 
         if telemetry.tether_failsafe_policy == "RTB" and telemetry.tether_lost:
             rtb_pos = np.array([0.0, 0.0, 25.0], dtype=float)
             acc = self._steer_toward(telemetry.pos, telemetry.vel, rtb_pos, max_speed=V_CRUISE)
             self._emit_periodic_packets(telemetry, updates, outbox, dt)
-            return FlightIntent(target_acc=acc, target_station=rtb_pos, state_updates=updates), outbox
+            return self._finalize_flight_intent(telemetry, acc, target_station=rtb_pos, state_updates=updates), outbox
 
         # 4. Unenrolled Solo Scout Guidance (TKT-50)
         if not telemetry.enrolled:
@@ -227,11 +220,8 @@ class LeaderFollowerBrain(BaseBrain):
                 acc = self._steer_toward(telemetry.pos, telemetry.vel, telemetry.pos, max_speed=0.0)
                 station = np.copy(telemetry.pos)
             self._emit_periodic_packets(telemetry, updates, outbox, dt)
-            return FlightIntent(
-                target_acc=acc,
-                target_yaw=self._velocity_yaw(telemetry.vel),
-                target_station=station,
-                state_updates=updates,
+            return self._finalize_flight_intent(
+                telemetry, acc, self._velocity_yaw(telemetry.vel), station, updates
             ), outbox
 
         # 5. Leader Navigation toward Onboard Acknowledged Target & 4D Waypoints
@@ -315,12 +305,7 @@ class LeaderFollowerBrain(BaseBrain):
             acc = self._steer_toward(telemetry.pos, telemetry.vel, target_dest, max_speed=leader_speed)
             target_yaw = self._compute_target_yaw_local(telemetry, target_dest, target_dest)
             self._emit_periodic_packets(telemetry, updates, outbox, dt)
-            return FlightIntent(
-                target_acc=acc,
-                target_yaw=target_yaw,
-                target_station=np.copy(target_dest),
-                state_updates=updates,
-            ), outbox
+            return self._finalize_flight_intent(telemetry, acc, target_yaw, np.copy(target_dest), updates), outbox
 
         # 6. Follower Formation Guidance via Heard Leader Telemetry (Heartbeat 2)
         heard_leader = self._get_heard_leader()
@@ -347,22 +332,12 @@ class LeaderFollowerBrain(BaseBrain):
             center_pos = heard_leader.acknowledged_target
             target_yaw = self._compute_target_yaw_follower(telemetry, slot_pos, center_pos)
             self._emit_periodic_packets(telemetry, updates, outbox, dt)
-            return FlightIntent(
-                target_acc=acc,
-                target_yaw=target_yaw,
-                target_station=np.copy(slot_pos),
-                state_updates=updates,
-            ), outbox
+            return self._finalize_flight_intent(telemetry, acc, target_yaw, np.copy(slot_pos), updates), outbox
 
         # No surviving/heard leader: loiter in place with velocity damping
         acc = -telemetry.vel * 2.0
         self._emit_periodic_packets(telemetry, updates, outbox, dt)
-        return FlightIntent(
-            target_acc=acc,
-            target_yaw=telemetry.yaw,
-            target_station=np.copy(telemetry.pos),
-            state_updates=updates,
-        ), outbox
+        return self._finalize_flight_intent(telemetry, acc, telemetry.yaw, np.copy(telemetry.pos), updates), outbox
 
     # ==========================================================================
     # Packet Ingestion & Emission (Pure I/O Airgap)

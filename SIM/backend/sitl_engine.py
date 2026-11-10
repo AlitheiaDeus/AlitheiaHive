@@ -303,6 +303,11 @@ class SITLWorldEngine:
             patrol_active=bool(self.patrol_active),
             tether_heartbeat_watchdog=float(getattr(drone, "tether_heartbeat_watchdog", 0.5)),
             corridor_target=np.copy(drone.corridor_target) if getattr(drone, "corridor_target", None) is not None else None,
+            nearby_peers=tuple(
+                d for d in self.drones
+                if d.id != drone.id and not d.crashed
+            ),
+            urban_obstacles=tuple(getattr(self, "urban_obstacles", [])),
         )
 
     def _build_transceiver_beacon(self, sender: Drone) -> RadioPacket:
@@ -1366,12 +1371,11 @@ class SITLWorldEngine:
         if self.comms_mode == "TETHERED_RELAY":
             self._update_tether_dynamics(dt)
 
-        # 3. Compute Guidance Targets from active Brain Plugin
+        # 3. Compute Guidance Targets from active Brain Plugin (includes OBC Zone 2/3 reflexes)
         guidance_accs = self.brain.compute_guidance(dt)
 
-        # 4. Compute 4-Zone Separation & Relative-Velocity Evasion
-        # Bounded flight controller steering effort (not god-mode physics)
-        avoidance_accs = self._compute_4zone_avoidance()
+        # 4. Check Physical Collisions (Zone 4 Physical Contact & Structural Clash)
+        self._check_zone4_physical_collisions()
 
         # 5. Compute Tether Clearance Repulsion (if tethered)
         tether_accs = (
@@ -1415,11 +1419,6 @@ class SITLWorldEngine:
                 climb_az = float(np.clip(4.0 * (target_vz - drone.vel[2]), 0.0, 8.0))
                 guidance_accs[drone.id] = np.array([hold_ax, hold_ay, climb_az], dtype=float)
 
-                # Near launch pad, suppress horizontal avoidance so drone ascends cleanly along corridor
-                if drone.pos[2] < 5.0:
-                    avoidance_accs[drone.id][0] = 0.0
-                    avoidance_accs[drone.id][1] = 0.0
-
             elif drone.flight_state == "EN_ROUTE":
                 # Phase 2: Autonomous transit toward swarm formation slot or active target
                 # Check arrival proximity to transition to Phase 3: CRUISE (only once enrolled)
@@ -1444,11 +1443,7 @@ class SITLWorldEngine:
 
             elif drone.flight_state in ("LANDED", "GROUND_IDLE"):
                 guidance_accs[drone.id] = np.zeros(3, dtype=float)
-                avoidance_accs[drone.id] = np.zeros(3, dtype=float)
                 tether_accs[drone.id] = np.zeros(3, dtype=float)
-                drone.vel = np.zeros(3, dtype=float)
-                drone.acc = np.zeros(3, dtype=float)
-                drone.rotor_rpm = 0.0
                 drone.vel = np.zeros(3, dtype=float)
                 drone.acc = np.zeros(3, dtype=float)
                 drone.rotor_rpm = 0.0
@@ -1487,7 +1482,7 @@ class SITLWorldEngine:
                     # 1. Horizontal Guidance toward Assigned Recovery Pad
                     if dist_xy > 0.15:
                         dir_xy = to_pad_xy / dist_xy
-                        v_target_xy = min(4.0, max(0.8, dist_xy * 1.5)) * dir_xy
+                        v_target_xy = min(5.0, max(1.0, dist_xy * 1.8)) * dir_xy
                         a_target_x = float(np.clip(3.5 * (v_target_xy[0] - drone.vel[0]), -6.0, 6.0))
                         a_target_y = float(np.clip(3.5 * (v_target_xy[1] - drone.vel[1]), -6.0, 6.0))
                     else:
@@ -1505,7 +1500,7 @@ class SITLWorldEngine:
                         target_vz = float(np.clip(2.0 * (15.0 - current_z), -1.5, 2.0))
                         drone.landing_stage = "APPROACH"
                     elif rel_alt > 1.0:
-                        target_vz = -1.5
+                        target_vz = -1.8
                         drone.landing_stage = "APPROACH"
                     else:
                         target_vz = -0.5
@@ -1513,11 +1508,6 @@ class SITLWorldEngine:
 
                     a_target_z = float(np.clip(4.0 * (target_vz - drone.vel[2]), -6.0, 6.0))
                     guidance_accs[drone.id] = np.array([a_target_x, a_target_y, a_target_z], dtype=float)
-
-                    # Suppress horizontal avoidance near ground (Z < 3.0m) to allow clean pad docking
-                    if rel_alt < 3.0:
-                        avoidance_accs[drone.id][0] *= 0.1
-                        avoidance_accs[drone.id][1] *= 0.1
 
                     # Touchdown Check: Ground contact check
                     surf_z = get_surface_elevation(drone.pos, getattr(self, "urban_obstacles", None))
@@ -1593,10 +1583,6 @@ class SITLWorldEngine:
                 a_target_z = float(np.clip(4.0 * (target_vz - drone.vel[2]), -5.0, 5.0))
                 guidance_accs[drone.id] = np.array([a_target_x, a_target_y, a_target_z], dtype=float)
 
-                if rel_alt < 3.0:
-                    avoidance_accs[drone.id][0] *= 0.1
-                    avoidance_accs[drone.id][1] *= 0.1
-
                 if current_z <= target_ground_z + 0.08 and dist_xy <= 0.45:
                     drone.pos = np.copy(target_spot)
                     drone.vel = np.zeros(3, dtype=float)
@@ -1649,20 +1635,9 @@ class SITLWorldEngine:
                 drone.rotor_rpm = 0.0
                 continue
 
-            # Priority Safety Overrides: attenuate forward guidance during emergency Zone 3 avoidance
-            a_avoid = avoidance_accs[drone.id]
-            avoid_mag = float(np.linalg.norm(a_avoid))
+            # Airframe guidance intent from OBC (including Zone 2/3 reflexes) + external physical forces (tether cable)
             a_guide = guidance_accs[drone.id]
-            if avoid_mag > 8.0:
-                attenuation = max(0.2, 1.0 - (avoid_mag - 8.0) / 25.0)
-                a_guide = a_guide * attenuation
-
-            # Sum and clamp accelerations
-            total_acc = (
-                a_guide
-                + a_avoid
-                + tether_accs[drone.id]
-            )
+            total_acc = a_guide + tether_accs[drone.id]
             acc_mag = float(np.linalg.norm(total_acc))
             if acc_mag > A_MAX:
                 total_acc = (total_acc / acc_mag) * A_MAX
@@ -1847,7 +1822,7 @@ class SITLWorldEngine:
                 d.lost_link = True
                 if not getattr(d, "radio_silence_permitted", False):
                     # Autonomous backtrack toward radio horizon (suppressed during tether loiter)
-                    if not is_tether_loitering and d.flight_state not in ("TAKEOFF", "DESCENDING", "BACKTRACK_HOLD", "PERIMETER_HOLD", "LANDED", "GROUND_IDLE", "CRASHED", "BREAKAWAY_JETTISON", "CORRIDOR_ERTB", "COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN", "PAYLOAD_TRANSIT", "PRECISION_DESCENT", "CARRIER_EGRESS"):
+                    if not is_tether_loitering and d.flight_state not in ("TAKEOFF", "DESCENDING", "FIELD_DESCENDING", "EMERGENCY_LANDING", "BACKTRACK_HOLD", "PERIMETER_HOLD", "LANDED", "FIELD_LANDED", "E_LANDED", "GROUND_IDLE", "CRASHED", "BREAKAWAY_JETTISON", "CORRIDOR_ERTB", "COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN", "PAYLOAD_TRANSIT", "PRECISION_DESCENT", "CARRIER_EGRESS"):
                         d.flight_state = "BACKTRACK_HOLD"
                         d.status = "BACKTRACK_HOLD"
                         d.backtrack_hold = True
@@ -2201,17 +2176,13 @@ class SITLWorldEngine:
         return steering_force
 
     # ==========================================================================
-    # 4. Sane 4-Zone Spatial Safety (Relative-Velocity Damping)
+    # 4. Sane 4-Zone Spatial Safety (Physical Zone 4 Damage vs OBC Reflexes)
     # ==========================================================================
-    def _compute_4zone_avoidance(self) -> Dict[int, np.ndarray]:
-        """Compute pairwise collision avoidance across the 4 physical zones:
-        - Zone 1 (d > 8.0m): Nominal clear, 0 force.
-        - Zone 2 (3.5m < d <= 8.0m): Linear separation push.
-        - Zone 3 (1.5m < d <= 3.5m): Critical push + active relative-velocity braking.
-        - Zone 4 (d <= 1.5m): Prop clash, motors killed, ballistic crash."""
-        accs = {d.id: np.zeros(3, dtype=float) for d in self.drones}
+    def _check_zone4_physical_collisions(self) -> None:
+        """Physical prop clash and structural impact detection (SITL Physics Airgap).
+        Zone 4 (d <= 1.5m): Prop clash destroys airframe motors and triggers ballistic tumble.
+        SIM strictly detects physical damage; Zone 2 & 3 evasion reflexes run in OBC firmware."""
         n = len(self.drones)
-
         for i in range(n):
             drone_i = self.drones[i]
             if drone_i.crashed or drone_i.flight_state in ("LANDED", "GROUND_IDLE"):
@@ -2231,69 +2202,8 @@ class SITLWorldEngine:
                     drone_j.collision_inferred = True
                     self._trigger_crash(drone_i, reason=f"CLASH_WITH_DRONE_{drone_j.id}")
                     self._trigger_crash(drone_j, reason=f"CLASH_WITH_DRONE_{drone_i.id}")
-                    continue
 
-                # Normal vector from j to i
-                if dist < 0.01:
-                    n_ij = np.array([1.0, 0.0, 0.0], dtype=float)
-                else:
-                    n_ij = diff / dist
-
-                # Check Zone 3: Critical Danger (1.5m < d <= 3.5m)
-                if dist <= ZONE3_OUTER:
-                    # Evasive push magnitude
-                    push_mag = 16.0 + 12.0 * ((ZONE3_OUTER - dist) / (ZONE3_OUTER - ZONE4_CLASH))
-                    a_push_i = push_mag * n_ij
-                    a_push_j = -push_mag * n_ij
-
-                    # Horizontal lateral breakout and vertical corridor expansion to prevent stacking plunge
-                    d_xy = float(math.hypot(diff[0], diff[1]))
-                    if d_xy < 2.8:
-                        if d_xy > 0.05:
-                            n_xy = np.array([diff[0] / d_xy, diff[1] / d_xy, 0.0], dtype=float)
-                        else:
-                            n_xy = np.array([1.0, 0.0, 0.0], dtype=float)
-                        lat_push = 14.0 * ((2.8 - d_xy) / 2.8)
-                        a_push_i += lat_push * n_xy
-                        a_push_j -= lat_push * n_xy
-
-                        # Vertical corridor expansion: push vertically apart if Z difference < 2.0m
-                        z_diff = diff[2]
-                        if abs(z_diff) < 2.0:
-                            z_sign = 1.0 if z_diff >= 0.0 else -1.0
-                            z_push = 16.0 * ((2.0 - abs(z_diff)) / 2.0)
-                            a_push_i[2] += z_sign * z_push
-                            a_push_j[2] -= z_sign * z_push
-
-                    # Relative-velocity damping (brakes incoming momentum)
-                    # v_rel = v_i - v_j. Project onto n_ij.
-                    v_rel = drone_i.vel - drone_j.vel
-                    v_closing = float(np.dot(v_rel, n_ij))
-                    if v_closing < 0.0:
-                        # Approaching each other: apply opposing braking force
-                        a_damp_i = -3.5 * (v_closing * n_ij)
-                        a_damp_j = 3.5 * (v_closing * n_ij)
-                    else:
-                        a_damp_i = np.zeros(3, dtype=float)
-                        a_damp_j = np.zeros(3, dtype=float)
-
-                    accs[drone_i.id] += a_push_i + a_damp_i
-                    accs[drone_j.id] += a_push_j + a_damp_j
-
-                    # P2P Yip RSSI Emergency Cushion (TKT-52):
-                    # Inter-drone close-range proximity cushion (hat_d < 2.2m <=> RSSI > -38 dBm)
-                    if dist <= 2.2:
-                        cushion_mag = 22.0 * (2.2 - dist)
-                        accs[drone_i.id] += cushion_mag * n_ij
-                        accs[drone_j.id] -= cushion_mag * n_ij
-
-                # Check Zone 2: Caution Buffer (3.5m < d <= 8.0m)
-                elif dist <= ZONE2_OUTER:
-                    sep_mag = 5.0 * ((ZONE2_OUTER - dist) / (ZONE2_OUTER - ZONE3_OUTER))
-                    accs[drone_i.id] += sep_mag * n_ij
-                    accs[drone_j.id] -= sep_mag * n_ij
-
-        # Check static urban obstacle collision and Zone 3 evasion (PLN-08 / TKT-60)
+        # Check static urban obstacle physical impact (d <= ZONE4_CLASH)
         if getattr(self, "urban_obstacles", None):
             for drone in self.drones:
                 if drone.crashed or drone.flight_state in ("LANDED", "GROUND_IDLE", "FIELD_LANDED", "E_LANDED"):
@@ -2305,7 +2215,7 @@ class SITLWorldEngine:
                     if getattr(obs, "is_landable", False) and is_on_obstacle_top(drone.pos, obs):
                         if is_landing_or_takeoff or drone.pos[2] >= obs.z_ceiling - 0.05:
                             continue
-                    dist, a_evade = point_to_aabb_repulsion(
+                    dist, _ = point_to_aabb_repulsion(
                         drone.pos, drone.vel, obs.bounds, zone3_outer=ZONE3_OUTER, zone4_clash=ZONE4_CLASH
                     )
                     if dist < min_obs_dist:
@@ -2315,11 +2225,30 @@ class SITLWorldEngine:
                         drone.collision_inferred = True
                         self._trigger_crash(drone, reason=f"STRUCTURAL_CLASH_{obs.id}")
                         break
-                    elif dist <= ZONE3_OUTER:
-                        accs[drone.id] += a_evade
                 drone.nearest_obstacle_dist = min_obs_dist
                 drone.nearest_obstacle_id = min_obs_id
 
+    def _compute_4zone_avoidance(self) -> Dict[int, np.ndarray]:
+        """Compute pairwise collision avoidance across the 4 physical zones:
+        - Zone 1 (d > 8.0m): Nominal clear, 0 force.
+        - Zone 2 (3.5m < d <= 8.0m): Linear separation push.
+        - Zone 3 (1.5m < d <= 3.5m): Critical push + active relative-velocity braking.
+        - Zone 4 (d <= 1.5m): Prop clash, motors killed, ballistic crash.
+        Delegates Zone 4 physical collision checking to _check_zone4_physical_collisions(),
+        and queries OBC firmware avoidance reflexes for diagnostic and test inspection."""
+        self._check_zone4_physical_collisions()
+        accs = {}
+        for d in self.drones:
+            if d.crashed or d.flight_state in ("LANDED", "GROUND_IDLE", "FIELD_LANDED", "E_LANDED"):
+                accs[d.id] = np.zeros(3, dtype=float)
+                continue
+            telem = self._build_local_telemetry(d)
+            if hasattr(d, "brain") and d.brain is not None and hasattr(d.brain, "compute_inter_drone_avoidance"):
+                a_peers = d.brain.compute_inter_drone_avoidance(telem)
+                a_obs = d.brain.compute_obstacle_avoidance(telem)
+                accs[d.id] = a_peers + a_obs
+            else:
+                accs[d.id] = np.zeros(3, dtype=float)
         return accs
 
     def _trigger_crash(self, drone: Drone, reason: str = "") -> None:

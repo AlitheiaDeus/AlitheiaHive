@@ -73,6 +73,7 @@ kanban
     bug10["Command Deck Button Typography & Emoji Alignment Fix"]@{ ticket: '[BUG-10]', priority: 'Normal' }
     bug09["God-View Sim Viewport (/sim) Missing Drone ID Badges"]@{ ticket: '[BUG-09]', priority: 'Normal' }
     tkt68["Scramble Overhead Muster Hold & Target Stage-to-Send Confirmation"]@{ ticket: '[TKT-68]', priority: 'Normal' }
+    tkt69["Migrate Zone 2 & 3 Avoidance Reflexes to OBC Firmware (Airgap Enforcement)"]@{ ticket: '[TKT-69]', priority: 'Normal' }
 ```
 
 ---
@@ -125,6 +126,7 @@ kanban
 | **`PLN-11`** | `PLN` | 3D Tactical Corridor Pathfinding & Operator Preview | Operator single-target 3D auto-pathfinding with corridor preview and confirmation before execution | [PLN-11.md](tasks/backlog/PLN-11.md) |
 | **`TKT-67`** | `TKT` | Render 3D Urban Obstacles & Elevation Shelves in God-View | God-View /sim missing 3D obstacle meshes causing drones to clash into invisible buildings | [TKT-67.md](tasks/TKT-67.md) |
 | **`TKT-68`** | `TKT` | Scramble Overhead Muster Hold & Target Stage-to-Send Confirmation | Active task specification | [TKT-68.md](tasks/TKT-68.md) |
+| **`TKT-69`** | `TKT` | Migrate Zone 2 & 3 Avoidance Reflexes to OBC Firmware (Airgap Enforcement) | Active task specification | [TKT-69.md](tasks/TKT-69.md) |
 
 ---
 
