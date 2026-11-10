@@ -69,11 +69,11 @@
         setupBtn('btn-form-patrol', () => dispatchFormation('PERIMETER_IN'));
         setupBtn('btn-form-patrol-out', () => dispatchFormation('PERIMETER_OUT'));
 
-        // Preset Waypoints: Stage coordinates for operator review (TKT-68)
-        setupBtn('btn-wp-alpha', () => stageTarget([60.0, 40.0, 30.0], 'ALPHA'));
-        setupBtn('btn-wp-bravo', () => stageTarget([-40.0, 70.0, 45.0], 'BRAVO'));
-        setupBtn('btn-wp-charlie', () => stageTarget([50.0, -50.0, 25.0], 'CHARLIE'));
-        setupBtn('btn-wp-rtb', () => stageTarget([0.0, 0.0, 20.0], 'RTB_BASE'));
+        // Preset Waypoints: Direct 1-Click Dispatch (BUG-18)
+        setupBtn('btn-wp-alpha', () => dispatchTarget([60.0, 40.0, 30.0], 'ALPHA'));
+        setupBtn('btn-wp-bravo', () => dispatchTarget([-40.0, 70.0, 45.0], 'BRAVO'));
+        setupBtn('btn-wp-charlie', () => dispatchTarget([50.0, -50.0, 25.0], 'CHARLIE'));
+        setupBtn('btn-wp-rtb', () => dispatchTarget([0.0, 0.0, 20.0], 'RTB_BASE'));
 
         // Discrete Mission Routes (TKT-28)
         setupBtn('btn-route-box', () => deployRoutePreset('BOX_PATROL'));
@@ -572,7 +572,7 @@
         } else {
             if (btnBingo) {
                 btnBingo.classList.remove('active-bingo');
-                btnBingo.innerHTML = '&#x26A1; PATROL &rarr; BINGO RTB';
+                btnBingo.innerHTML = '<span class="btn-icon">&#x26A1;</span> PATROL &rarr; BINGO';
             }
         }
 

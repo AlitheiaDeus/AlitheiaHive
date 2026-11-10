@@ -55,6 +55,7 @@ kanban
     pln11["3D Tactical Corridor Pathfinding & Operator Preview"]@{ ticket: '[PLN-11]', priority: 'Medium' }
   todo["Todo (Active Pipeline)"]
     tkt66["Simplified RF & GNSS Shadow Occlusion Engine"]@{ ticket: '[TKT-66]', priority: 'High' }
+    bug19["Cairn G1 Carrier Binding and Target Drop Coordinate Designation"]@{ ticket: '[BUG-19]', priority: 'High' }
   in_progress["In Progress (WIP = 1)"]
   completed["Completed (Fresh / Review)"]
     bug14["Decouple SITL Sim Proxies to Broadcast Command Packets"]@{ ticket: '[BUG-14]', priority: 'Normal' }
@@ -81,6 +82,7 @@ kanban
     bug12["Migrate Ingress Corridor Stack Popping to OBC Firmware"]@{ ticket: '[BUG-12]', priority: 'High' }
     bug16["Command ATC Recovery via Pure C2 Uplink Packets & Parity Bridge"]@{ ticket: '[BUG-16]', priority: 'High' }
     bug15["Decouple GCS C2 Gateway to Standalone Downlink Telemetry"]@{ ticket: '[BUG-15]', priority: 'High' }
+    bug18["GCS Target Waypoint Direct Dispatch & Single-Line Typography"]@{ ticket: '[BUG-18]', priority: 'High' }
 ```
 
 ---
@@ -141,6 +143,8 @@ kanban
 | **`BUG-15`** | `BUG` | Decouple GCS C2 Gateway to Standalone Downlink Telemetry | Complete Canyon Airgap decoupling: C2 Gateway operates standalone with sim=None (Red 6) | [BUG-15.md](tasks/BUG-15.md) |
 | **`BUG-16`** | `BUG` | Command ATC Recovery via Pure C2 Uplink Packets & Parity Bridge | Decouple ATC recovery from God-mode actuator manipulation; complete Canyon UDP parity (Red 7 & Yellow 4) | [BUG-16.md](tasks/BUG-16.md) |
 | **`BUG-17`** | `BUG` | Autonomous Outbox Radio Packet Emission for Gossip & Beacons | Forbid SITL from forging radio packets; OBC firmware autonomously emits beacons and gossip echoes (Red 8) | [BUG-17.md](tasks/BUG-17.md) |
+| **`BUG-18`** | `BUG` | GCS Target Waypoint Direct Dispatch & Single-Line Typography | Restore 1-click waypoint dispatch from muster hold and fix button wrapping | [BUG-18.md](tasks/BUG-18.md) |
+| **`BUG-19`** | `BUG` | Cairn G1 Carrier Binding and Target Drop Coordinate Designation | Bind G1 drop to carrier airframe, designate drop coordinates, add T3 pad staging | [BUG-19.md](tasks/BUG-19.md) |
 
 ---
 
