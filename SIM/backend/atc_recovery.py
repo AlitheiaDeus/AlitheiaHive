@@ -536,6 +536,13 @@ class ATCRecoveryManager:
         self.scramble_timer = 0.0
         self.scramble_active = True
 
+        # Swarm assembles in Base Overhead Muster Hold [0, 0, 20] on cold scramble (TKT-68)
+        muster_target = np.array([0.0, 0.0, 20.0], dtype=float)
+        for d in launch_sequence:
+            d.acknowledged_target = np.copy(muster_target)
+            if hasattr(d, "target_station"):
+                d.target_station = np.copy(muster_target)
+
         stagger_order = []
         for idx, drone in enumerate(launch_sequence):
             drone.scramble_time = round(idx * self.scramble_stagger, 2)

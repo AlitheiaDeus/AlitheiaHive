@@ -248,6 +248,28 @@ class TestColdStartPadScramble(unittest.TestCase):
         self.assertEqual(d1.flight_state, "LANDED")
         self.assertTrue(d1.touchdown_confirmed)
 
+    def test_scramble_muster_hold_overhead(self):
+        """[TKT-68] Cold scramble must assemble swarm at base overhead muster hold [0, 0, 20]
+        instead of sprinting away to distant coordinates."""
+        sim = SwarmSimulator(count=3, seed=42, cold_start=True)
+        res = sim.command_scramble_swarm(stagger_s=1.2)
+        self.assertEqual(res["status"], "SCRAMBLE_INITIATED")
+        np.testing.assert_allclose(sim.target_pos, [0.0, 0.0, 20.0])
+
+        for d in sim.drones:
+            np.testing.assert_allclose(d.acknowledged_target, [0.0, 0.0, 20.0])
+
+        # Step until leader climbs to 20m and transitions to CRUISE
+        for _ in range(int(5.0 / DT)):
+            sim.step(DT)
+
+        leader = sim.leader
+        self.assertEqual(leader.flight_state, "CRUISE")
+        np.testing.assert_allclose(leader.acknowledged_target, [0.0, 0.0, 20.0])
+        # Leader must remain overhead above base (XY displacement < 2.0m from [0, 0])
+        dist_xy = float(np.linalg.norm(leader.pos[:2]))
+        self.assertLess(dist_xy, 2.0)
+
 
 if __name__ == "__main__":
     unittest.main()

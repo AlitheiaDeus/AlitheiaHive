@@ -69,11 +69,11 @@
         setupBtn('btn-form-patrol', () => dispatchFormation('PERIMETER_IN'));
         setupBtn('btn-form-patrol-out', () => dispatchFormation('PERIMETER_OUT'));
 
-        // Preset Waypoints
-        setupBtn('btn-wp-alpha', () => dispatchTarget([60.0, 40.0, 30.0], 'ALPHA'));
-        setupBtn('btn-wp-bravo', () => dispatchTarget([-40.0, 70.0, 45.0], 'BRAVO'));
-        setupBtn('btn-wp-charlie', () => dispatchTarget([50.0, -50.0, 25.0], 'CHARLIE'));
-        setupBtn('btn-wp-rtb', () => dispatchTarget([0.0, 0.0, 20.0], 'RTB_BASE'));
+        // Preset Waypoints: Stage coordinates for operator review (TKT-68)
+        setupBtn('btn-wp-alpha', () => stageTarget([60.0, 40.0, 30.0], 'ALPHA'));
+        setupBtn('btn-wp-bravo', () => stageTarget([-40.0, 70.0, 45.0], 'BRAVO'));
+        setupBtn('btn-wp-charlie', () => stageTarget([50.0, -50.0, 25.0], 'CHARLIE'));
+        setupBtn('btn-wp-rtb', () => stageTarget([0.0, 0.0, 20.0], 'RTB_BASE'));
 
         // Discrete Mission Routes (TKT-28)
         setupBtn('btn-route-box', () => deployRoutePreset('BOX_PATROL'));
@@ -128,16 +128,33 @@
             }
         });
 
-        // Custom Target Coordinates
+        // Custom Target Coordinates (TKT-68)
         const btnDispatchCustom = document.getElementById('btn-dispatch-custom');
         if (btnDispatchCustom) {
             btnDispatchCustom.addEventListener('click', () => {
                 const x = parseFloat(inputX?.value || 0);
                 const y = parseFloat(inputY?.value || 0);
-                const z = parseFloat(inputZ?.value || 25);
-                dispatchTarget([x, y, z], 'CUSTOM_COORD');
+                const z = parseFloat(inputZ?.value || 20);
+                dispatchTarget([x, y, z], 'OPERATOR_COMMITTED');
             });
         }
+
+        // Live coordinate staging and Enter key commit (TKT-68)
+        [inputX, inputY, inputZ].forEach(inp => {
+            if (!inp) return;
+            inp.addEventListener('input', () => {
+                const x = parseFloat(inputX?.value || 0);
+                const y = parseFloat(inputY?.value || 0);
+                const z = parseFloat(inputZ?.value || 20);
+                window.tacticalApp?.setStagedTarget([x, y, z]);
+                if (btnDispatchCustom) btnDispatchCustom.classList.add('pulse-send');
+            });
+            inp.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    if (btnDispatchCustom) btnDispatchCustom.click();
+                }
+            });
+        });
 
         // 2-Stage Tactical Recovery & Soft-Landing Controls (TKT-19)
         setupBtn('btn-rtb-hold', () => {
@@ -289,6 +306,19 @@
         if (inputX) inputX.value = pos[0];
         if (inputY) inputY.value = pos[1];
         if (inputZ) inputZ.value = pos[2];
+        const btnSend = document.getElementById('btn-dispatch-custom');
+        if (btnSend) btnSend.classList.remove('pulse-send');
+        window.tacticalApp?.clearStagedTarget();
+    }
+
+    function stageTarget(pos, label) {
+        if (inputX) inputX.value = pos[0];
+        if (inputY) inputY.value = pos[1];
+        if (inputZ) inputZ.value = pos[2];
+        window.tacticalApp?.setStagedTarget(pos);
+        const btnSend = document.getElementById('btn-dispatch-custom');
+        if (btnSend) btnSend.classList.add('pulse-send');
+        logEvent('STAGE', `Staged Target [${label}] -> (${pos[0]}, ${pos[1]}, ${pos[2]}). Press SEND to commit.`);
     }
 
     function deployRoutePreset(presetName) {
@@ -1361,9 +1391,11 @@
         }
     }
 
-    // Export logger for global access (e.g. from app.js)
+    // Export logger and target staging API for global access (e.g. from app.js)
     window.tacticalHud = {
         logEvent: logEvent,
+        stageTarget: stageTarget,
+        dispatchTarget: dispatchTarget,
     };
 
     window.addEventListener('DOMContentLoaded', init);

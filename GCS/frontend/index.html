@@ -162,22 +162,22 @@
         
         <div id="hud-target-status" class="target-status-line status-synced">
           <span class="tgt-label cmd-label"><span class="tgt-dot dot-cmd"></span>CMD</span>
-          <span id="val-cmd-tgt" class="tgt-coord">[60, 40, 30]</span>
+          <span id="val-cmd-tgt" class="tgt-coord">[0, 0, 20]</span>
           <span class="tgt-sep">|</span>
           <span class="tgt-label ack-label"><span class="tgt-dot dot-ack"></span>ACK</span>
-          <span id="val-ack-tgt" class="tgt-coord">[60, 40, 30]</span>
+          <span id="val-ack-tgt" class="tgt-coord">[0, 0, 20]</span>
         </div>
 
         <div class="coord-input-row">
-          <input type="number" id="tgt-input-x" class="tactical-input" placeholder="X" value="60" step="5">
-          <input type="number" id="tgt-input-y" class="tactical-input" placeholder="Y" value="40" step="5">
-          <input type="number" id="tgt-input-z" class="tactical-input" placeholder="Z" value="30" step="5">
-          <button id="btn-dispatch-custom" class="tactical-btn btn-send">SEND</button>
+          <input type="number" id="tgt-input-x" class="tactical-input" placeholder="X" value="0" step="5">
+          <input type="number" id="tgt-input-y" class="tactical-input" placeholder="Y" value="0" step="5">
+          <input type="number" id="tgt-input-z" class="tactical-input" placeholder="Z" value="20" step="5">
+          <button id="btn-dispatch-custom" class="tactical-btn btn-send" title="Stage and commit target coordinates to fleet">SEND</button>
         </div>
 
         <label class="checkbox-label">
           <input type="checkbox" id="chk-click-target" checked>
-          <span>CLICK GROUND GRID TO DISPATCH</span>
+          <span>CLICK GROUND GRID TO STAGE TARGET</span>
         </label>
       </div>
 

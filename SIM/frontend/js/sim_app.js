@@ -205,14 +205,14 @@
         const geom = new THREE.OctahedronGeometry(1.2, 0);
         const mat = new THREE.MeshBasicMaterial({ color: COLORS.target, wireframe: true });
         targetBeacon = new THREE.Mesh(geom, mat);
-        targetBeacon.position.set(60, 40, 30);
+        targetBeacon.position.set(0, 0, 20);
         scene.add(targetBeacon);
 
         // Commanded Target Beacon
         const cmdGeom = new THREE.OctahedronGeometry(1.5, 0);
         const cmdMat = new THREE.MeshBasicMaterial({ color: COLORS.cmdTarget, wireframe: true });
         cmdTargetBeacon = new THREE.Mesh(cmdGeom, cmdMat);
-        cmdTargetBeacon.position.set(60, 40, 30);
+        cmdTargetBeacon.position.set(0, 0, 20);
         scene.add(cmdTargetBeacon);
     }
 

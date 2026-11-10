@@ -34,6 +34,7 @@
     let tetherMesh = null;
     let targetBeacon = null;
     let commandedBeacon = null;
+    let stagedBeacon = null;
     let gcsMast = null;
 
     let isChaseCam = false;
@@ -99,6 +100,7 @@
         createGcsMast();
         createTargetBeacon();
         createCommandedBeacon();
+        createStagedBeacon();
         createCatenaryTether();
         createRecoveryPads();
         createMissionRouteGroup();
@@ -256,7 +258,7 @@
         ring.name = 'ring';
         targetBeacon.add(ring);
 
-        targetBeacon.position.set(60, 40, 30);
+        targetBeacon.position.set(0, 0, 20);
         scene.add(targetBeacon);
     }
 
@@ -304,8 +306,91 @@
         dropLine.visible = false;
         commandedBeacon.add(dropLine);
 
-        commandedBeacon.position.set(60, 40, 30);
+        commandedBeacon.position.set(0, 0, 20);
         scene.add(commandedBeacon);
+    }
+
+    function createStagedBeacon() {
+        stagedBeacon = new THREE.Group();
+        stagedBeacon.name = 'stagedBeacon';
+        stagedBeacon.visible = false;
+
+        const colorGold = 0xFFB800;
+
+        // 1. Rotating gold octahedron wireframe (TKT-68)
+        const octGeom = new THREE.OctahedronGeometry(1.45, 0);
+        const octMat = new THREE.MeshBasicMaterial({
+            color: colorGold,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.9,
+        });
+        const diamond = new THREE.Mesh(octGeom, octMat);
+        diamond.name = 'diamond';
+        stagedBeacon.add(diamond);
+
+        // 2. Tactical targeting reticle ring
+        const reticleGeom = new THREE.RingGeometry(1.65, 1.9, 24);
+        const reticleMat = new THREE.MeshBasicMaterial({
+            color: colorGold,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.8,
+        });
+        const reticle = new THREE.Mesh(reticleGeom, reticleMat);
+        reticle.name = 'reticle';
+        stagedBeacon.add(reticle);
+
+        // 3. Dashed vertical ground guide line
+        const dropGeom = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0, 0, 0),
+            new THREE.Vector3(0, 0, -20),
+        ]);
+        const dropMat = new THREE.LineDashedMaterial({
+            color: colorGold,
+            dashSize: 0.8,
+            gapSize: 0.5,
+            transparent: true,
+            opacity: 0.75,
+        });
+        const dropLine = new THREE.Line(dropGeom, dropMat);
+        dropLine.name = 'dropLine';
+        stagedBeacon.add(dropLine);
+
+        // 4. Ground pulse ring
+        const ringGeom = new THREE.RingGeometry(1.8, 2.2, 32);
+        const ringMat = new THREE.MeshBasicMaterial({
+            color: colorGold,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.65,
+        });
+        const ring = new THREE.Mesh(ringGeom, ringMat);
+        ring.name = 'ring';
+        stagedBeacon.add(ring);
+
+        // 5. Tactical Billboard Label
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#FFB800';
+        ctx.font = 'bold 20px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('STAGED TARGET', 128, 22);
+        ctx.font = 'bold 15px monospace';
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillText('[CLICK SEND]', 128, 44);
+        const texture = new THREE.CanvasTexture(canvas);
+        const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true, opacity: 0.95 });
+        const sprite = new THREE.Sprite(spriteMat);
+        sprite.scale.set(6.0, 1.5, 1.0);
+        sprite.position.set(0, 0, 2.5);
+        stagedBeacon.add(sprite);
+
+        stagedBeacon.position.set(0, 0, 20);
+        scene.add(stagedBeacon);
     }
 
     function createCatenaryTether() {
@@ -1619,6 +1704,35 @@
             }
         }
 
+        // 2b. Animate Staged Target Beacon (TKT-68)
+        if (stagedBeacon && stagedBeacon.visible) {
+            const stagedDiamond = stagedBeacon.getObjectByName('diamond');
+            if (stagedDiamond) stagedDiamond.rotation.z += 0.025;
+
+            const stagedReticle = stagedBeacon.getObjectByName('reticle');
+            if (stagedReticle) {
+                stagedReticle.rotation.z -= 0.02;
+                const rScale = 1.0 + 0.1 * Math.sin(performance.now() * 0.007);
+                stagedReticle.scale.set(rScale, rScale, 1);
+            }
+
+            const stagedRing = stagedBeacon.getObjectByName('ring');
+            if (stagedRing) {
+                const ringScale = 1.0 + 0.15 * Math.sin(performance.now() * 0.006);
+                stagedRing.scale.set(ringScale, ringScale, 1);
+                stagedRing.position.z = -stagedBeacon.position.z + 0.05;
+            }
+
+            const stagedDropLine = stagedBeacon.getObjectByName('dropLine');
+            if (stagedDropLine && stagedBeacon.position.z > 0.6) {
+                stagedDropLine.geometry.setFromPoints([
+                    new THREE.Vector3(0, 0, 0),
+                    new THREE.Vector3(0, 0, -stagedBeacon.position.z)
+                ]);
+                stagedDropLine.computeLineDistances();
+            }
+        }
+
         // 2b. Animate Approaching Landing Pads Pulse
         if (landingPads.length) {
             const padPulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.008);
@@ -1697,15 +1811,24 @@
             if (clickRaycaster.ray.intersectPlane(groundPlane, clickPoint)) {
                 const targetX = Math.round(Math.max(-140, Math.min(140, clickPoint.x)));
                 const targetY = Math.round(Math.max(-140, Math.min(140, clickPoint.y)));
-                const targetZ = 30.0;
+                const targetZ = parseFloat(document.getElementById('tgt-input-z')?.value || 20.0);
 
                 spawnClickRipple(targetX, targetY);
 
-                if (window.swarmClient) {
-                    window.swarmClient.send({ cmd: 'SET_TARGET', pos: [targetX, targetY, targetZ] });
-                }
-                if (window.tacticalHud) {
-                    window.tacticalHud.logEvent('DISPATCH', `Ground click waypoint -> [${targetX}, ${targetY}, ${targetZ}]`);
+                // Stage target coordinates for operator review rather than immediate flight (TKT-68)
+                if (window.tacticalHud && typeof window.tacticalHud.stageTarget === 'function') {
+                    window.tacticalHud.stageTarget([targetX, targetY, targetZ], 'GROUND_CLICK');
+                } else {
+                    const ix = document.getElementById('tgt-input-x');
+                    const iy = document.getElementById('tgt-input-y');
+                    const iz = document.getElementById('tgt-input-z');
+                    if (ix) ix.value = targetX;
+                    if (iy) iy.value = targetY;
+                    if (iz) iz.value = targetZ;
+                    if (stagedBeacon) {
+                        stagedBeacon.position.set(targetX, targetY, targetZ);
+                        stagedBeacon.visible = true;
+                    }
                 }
             }
         }
@@ -1772,6 +1895,19 @@
         targetDroneId = id;
         isChaseCam = true;
         console.log(`[CAM] Focused camera on Drone #${id}`);
+    };
+
+    // Public API for Staged Target Preview (TKT-68)
+    window.tacticalApp = {
+        setStagedTarget: function(pos) {
+            if (!stagedBeacon) return;
+            stagedBeacon.position.set(pos[0], pos[1], pos[2]);
+            stagedBeacon.visible = true;
+        },
+        clearStagedTarget: function() {
+            if (!stagedBeacon) return;
+            stagedBeacon.visible = false;
+        }
     };
 
     // Initialize when DOM is ready

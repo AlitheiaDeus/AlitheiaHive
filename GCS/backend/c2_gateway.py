@@ -81,8 +81,8 @@ class C2Gateway:
     def __init__(self, sim: Optional[Any] = None):
         self.sim: Optional[Any] = sim
 
-        # Commanded Target (GCS intent)
-        self._target_pos: np.ndarray = np.array([60.0, 40.0, 30.0], dtype=float)
+        # Commanded Target (GCS intent) - defaults to Base Overhead Muster Hold [0, 0, 20]
+        self._target_pos: np.ndarray = np.array([0.0, 0.0, 20.0], dtype=float)
 
         # Dynamic Target Auto-Patrol Loop (TKT-12)
         self.patrol_active: bool = False

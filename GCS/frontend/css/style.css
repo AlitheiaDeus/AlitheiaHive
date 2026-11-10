@@ -1328,11 +1328,25 @@ body:has(#right-panel.collapsed) #tab-restore-right,
   font-weight: 700;
   border-color: var(--neon-emerald);
   color: var(--neon-emerald);
+  transition: all 0.2s ease;
 }
 
 .btn-send:hover {
   background: rgba(0, 255, 170, 0.2);
   box-shadow: 0 0 8px var(--neon-emerald);
+}
+
+.btn-send.pulse-send {
+  background: rgba(255, 184, 0, 0.25) !important;
+  border-color: #FFB800 !important;
+  color: #FFB800 !important;
+  box-shadow: 0 0 12px rgba(255, 184, 0, 0.65) !important;
+  animation: pulse-send-glow 1.0s infinite alternate ease-in-out;
+}
+
+@keyframes pulse-send-glow {
+  0% { box-shadow: 0 0 4px rgba(255, 184, 0, 0.4); border-color: rgba(255, 184, 0, 0.6); }
+  100% { box-shadow: 0 0 18px rgba(255, 184, 0, 0.95); border-color: #FFD000; }
 }
 
 /* Dual Target C2 Status Line (TKT-26) */

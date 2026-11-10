@@ -2599,19 +2599,23 @@ class SITLWorldEngine:
         )
 
     def command_scramble_swarm(self, stagger_s: float = 1.2) -> Dict[str, Any]:
-        """Initiate sequenced cold scramble from ground pads (TKT-41)."""
-        return self.atc.command_scramble_swarm(
+        """Initiate sequenced cold scramble from ground pads (TKT-41 & TKT-68)."""
+        res = self.atc.command_scramble_swarm(
             drones=self.drones,
             tether_anchor=self.tether_anchor,
             stagger_s=stagger_s,
             radio_range=RADIO_RANGE,
             tier_leader=TIER_LEADER,
         )
+        if res.get("status") == "SCRAMBLE_INITIATED":
+            self.target_pos = np.array([0.0, 0.0, 20.0], dtype=float)
+        return res
 
     def command_cold_start_swarm(self, count: Optional[int] = None) -> Dict[str, Any]:
-        """Cold ground reset: resets or grounds fleet onto numbered ground launch pads (TKT-41)."""
+        """Cold ground reset: resets or grounds fleet onto numbered ground launch pads (TKT-41 & TKT-68)."""
         n = count if count is not None else len(self.drones)
         self.cold_start = True
+        self.target_pos = np.array([0.0, 0.0, 20.0], dtype=float)
         self._init_fleet(n, cold_start=True)
         return {"status": "COLD_START_ACTIVE", "drone_count": n}
 
