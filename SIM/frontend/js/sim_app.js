@@ -215,10 +215,10 @@
         scene.add(cmdTargetBeacon);
     }
 
-    function createSimDroneBadge(droneId, isLeader) {
+    function createSimDroneBadge(droneId, isLeader, tailNumber) {
         const canvas = document.createElement('canvas');
-        canvas.width = 128;
-        canvas.height = 64;
+        canvas.width = 256;
+        canvas.height = 48;
         const texture = new THREE.CanvasTexture(canvas);
         texture.minFilter = THREE.LinearFilter;
 
@@ -228,17 +228,18 @@
             depthTest: false,
         });
         const sprite = new THREE.Sprite(material);
-        sprite.scale.set(1.6, 0.8, 1.0);
-        sprite.position.set(0, 0, 1.2);
+        sprite.scale.set(2.2, 0.42, 1.0);
+        sprite.position.set(0, 0, 1.15);
         sprite.userData = { canvas, texture, droneId, lastKey: '' };
-        updateSimBadge(sprite, droneId, isLeader, false);
+        updateSimBadge(sprite, droneId, isLeader, false, tailNumber);
         return sprite;
     }
 
-    function updateSimBadge(badge, droneId, isLeader, isCrashed) {
+    function updateSimBadge(badge, droneId, isLeader, isCrashed, tailNumber) {
         if (!badge || !badge.userData) return;
         const { canvas, texture } = badge.userData;
-        const key = `${droneId}_${isLeader}_${isCrashed}`;
+        const tail = tailNumber || `ALITHEIA-V${String(droneId + 1).padStart(2, '0')}`;
+        const key = `${droneId}_${isLeader}_${isCrashed}_${tail}`;
         if (badge.userData.lastKey === key) return;
         badge.userData.lastKey = key;
 
@@ -246,17 +247,18 @@
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         const col = isCrashed ? '#FF3366' : (isLeader ? '#FFB800' : '#00F0FF');
-        ctx.fillStyle = 'rgba(6, 16, 25, 0.85)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        // Sleek minimal tactical ID pill
+        ctx.fillStyle = 'rgba(6, 16, 25, 0.82)';
+        ctx.fillRect(4, 4, canvas.width - 8, canvas.height - 8);
         ctx.strokeStyle = col;
-        ctx.lineWidth = 3;
-        ctx.strokeRect(2, 2, canvas.width - 4, canvas.height - 4);
+        ctx.lineWidth = 2;
+        ctx.strokeRect(4, 4, canvas.width - 8, canvas.height - 8);
 
         ctx.fillStyle = col;
-        ctx.font = 'bold 26px "JetBrains Mono", monospace';
+        ctx.font = 'bold 20px "JetBrains Mono", monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        const label = isCrashed ? `D${droneId} ✗` : `D${droneId}`;
+        const label = isCrashed ? `${tail} [CRASH]` : tail;
         ctx.fillText(label, canvas.width / 2, canvas.height / 2);
         texture.needsUpdate = true;
     }
@@ -340,7 +342,7 @@
         droneGroup.add(dropLine);
 
         // 6. 3D Billboard Tactical ID Badge (BUG-09)
-        const badge = createSimDroneBadge(droneId, isLeader);
+        const badge = createSimDroneBadge(droneId, isLeader, null);
         droneGroup.add(badge);
 
         scene.add(droneGroup);
@@ -400,7 +402,7 @@
             }
 
             // Update ID Badge (BUG-09)
-            updateSimBadge(dObj.badge, d.id, d.is_leader, d.crashed);
+            updateSimBadge(dObj.badge, d.id, d.is_leader, d.crashed, d.tail_number);
 
             // Rotor Spin
             if (!d.crashed) {

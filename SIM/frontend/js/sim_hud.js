@@ -309,6 +309,9 @@
             }
 
             // Update in-place
+            if (card.elIdTag) {
+                card.elIdTag.textContent = d.tail_number || `ALITHEIA-V${String(d.id + 1).padStart(2, '0')}`;
+            }
             card.elPos.textContent = `X:${d.pos[0].toFixed(1)} Y:${d.pos[1].toFixed(1)} Z:${d.pos[2].toFixed(1)}`;
             const speed = Math.hypot(d.vel[0], d.vel[1], d.vel[2]).toFixed(1);
             card.elSpeed.textContent = `${speed}m/s`;
@@ -355,9 +358,10 @@
         el.className = 'drone-truth-card';
         el.id = `truth-card-${d.id}`;
 
+        const tailNum = d.tail_number || `ALITHEIA-V${String(d.id + 1).padStart(2, '0')}`;
         el.innerHTML = `
             <div class="card-header-line">
-                <span class="drone-id-tag">DRONE #${d.id}</span>
+                <span class="drone-id-tag">${tailNum}</span>
                 <span class="status-tag">ACTIVE</span>
             </div>
             <div class="coord-grid">
@@ -375,17 +379,18 @@
         const btnRevive = el.querySelector('.btn-card-revive');
 
         btnKill.addEventListener('click', () => {
-            logEvent('CASUALTY', `Terminating Drone #${d.id}`);
+            logEvent('CASUALTY', `Terminating ${d.tail_number || ('Drone #' + d.id)}`);
             window.swarmClient?.send({ cmd: 'KILL_DRONE', id: d.id });
         });
 
         btnRevive.addEventListener('click', () => {
-            logEvent('STATUS', `Reviving Drone #${d.id}`);
+            logEvent('STATUS', `Reviving ${d.tail_number || ('Drone #' + d.id)}`);
             window.swarmClient?.send({ cmd: 'REBOOT_DRONE', id: d.id });
         });
 
         return {
             el: el,
+            elIdTag: el.querySelector('.drone-id-tag'),
             elTag: el.querySelector('.status-tag'),
             elPos: el.querySelector('.card-pos'),
             elSpeed: el.querySelector('.card-spd'),
@@ -405,7 +410,8 @@
             if (!d.crashed) {
                 const opt = document.createElement('option');
                 opt.value = d.id;
-                opt.textContent = `Drone #${d.id} (${d.is_leader ? 'Flagship' : 'Escort'})`;
+                const tailNum = d.tail_number || `ALITHEIA-V${String(d.id + 1).padStart(2, '0')}`;
+                opt.textContent = `${tailNum} (${d.is_leader ? 'Flagship' : 'Escort'})`;
                 sel.appendChild(opt);
             }
         });

@@ -69,8 +69,8 @@ kanban
     tkt65["Modular 3D Terrain Blocks & Obstacle Shelves"]@{ ticket: '[TKT-65]', priority: 'High' }
     bug07["Comms LKP Continuous Refresh & Launchpad Snap Fix"]@{ ticket: '[BUG-07]', priority: 'High' }
     bug08["Ghost Flagship Demotion & Casualty Badge Precedence"]@{ ticket: '[BUG-08]', priority: 'High' }
-    bug09["God-View Sim Viewport (/sim) Missing Drone ID Badges"]@{ ticket: '[BUG-09]', priority: 'Normal' }
     bug10["Command Deck Button Typography & Emoji Alignment Fix"]@{ ticket: '[BUG-10]', priority: 'Normal' }
+    bug09["God-View Sim Viewport (/sim) Missing Drone ID Badges"]@{ ticket: '[BUG-09]', priority: 'Normal' }
 ```
 
 ---
