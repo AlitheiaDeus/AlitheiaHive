@@ -480,11 +480,41 @@ class GossipConsensusBrain(BaseBrain):
                 updates["status"] = "CORRIDOR_ERTB"
 
         if telemetry.flight_state == "CORRIDOR_ERTB" or updates.get("flight_state") == "CORRIDOR_ERTB":
-            ct = telemetry.corridor_target if telemetry.corridor_target is not None else np.array([0.0, 0.0, 25.0], dtype=float)
-            acc = self._steer_toward(telemetry.pos, telemetry.vel, ct, max_speed=8.0)
+            base_pos = np.array([0.0, 0.0, 25.0], dtype=float)
+            stack = telemetry.corridor_stack
+            stack_len = len(stack)
+
+            if stack_len > 0:
+                curr_target = np.array(stack[-1], dtype=float)
+            elif telemetry.corridor_target is not None:
+                curr_target = np.array(telemetry.corridor_target, dtype=float)
+            else:
+                curr_target = base_pos
+
+            dist_curr = float(np.linalg.norm(telemetry.pos - curr_target))
+
+            if dist_curr <= 4.5 and stack_len > 1:
+                next_target = np.array(stack[-2], dtype=float)
+                updates["corridor_pop"] = True
+                updates["corridor_target"] = np.copy(next_target)
+                updates["acknowledged_target"] = np.copy(next_target)
+                active_target = next_target
+            else:
+                updates["corridor_target"] = np.copy(curr_target)
+                updates["acknowledged_target"] = np.copy(curr_target)
+                active_target = curr_target
+
+            dist_base = float(np.linalg.norm(telemetry.pos - base_pos))
+            if (stack_len <= 1 or dist_curr <= 4.5) and dist_base <= 4.5:
+                updates["flight_state"] = "OVERHEAD_HOLD"
+                updates["status"] = "OVERHEAD_HOLD"
+                active_target = base_pos
+                updates["acknowledged_target"] = np.copy(base_pos)
+
+            acc = self._steer_toward(telemetry.pos, telemetry.vel, active_target, max_speed=8.0)
             speed_xy = math.hypot(telemetry.vel[0], telemetry.vel[1])
             yaw = math.atan2(telemetry.vel[1], telemetry.vel[0]) if speed_xy > 0.5 else None
-            return self._finalize_flight_intent(telemetry, acc, yaw, np.copy(ct), updates), outbox
+            return self._finalize_flight_intent(telemetry, acc, yaw, np.copy(active_target), updates), outbox
 
         # 4. Backtrack, Horizon Hold, and Lost-Link Failsafes (TKT-54)
         if telemetry.flight_state == "BACKTRACK_HOLD":

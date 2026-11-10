@@ -305,6 +305,7 @@ class SITLWorldEngine:
             corridor_target=np.copy(drone.corridor_target) if getattr(drone, "corridor_target", None) is not None else None,
             urban_obstacles=tuple(getattr(self, "urban_obstacles", [])),
             escort_leader_id=getattr(drone, "escort_leader_id", None),
+            corridor_stack=tuple(drone.corridor_stack._stack) if hasattr(drone, "corridor_stack") else (),
         )
 
     def _build_transceiver_beacon(self, sender: Drone) -> RadioPacket:
@@ -397,21 +398,14 @@ class SITLWorldEngine:
                 drone.target_station = np.copy(intent.target_station)
             accs[drone.id] = np.array(intent.target_acc, dtype=float)
 
-            # Advance reversible corridor ERTB stack (BUG-06)
-            if drone.flight_state == "CORRIDOR_ERTB" and hasattr(drone, "corridor_stack"):
-                next_t = drone.corridor_stack.pop_target(drone.pos, arrival_radius=4.5)
-                drone.corridor_target = next_t
-                if next_t is not None:
-                    drone.acknowledged_target = np.copy(next_t)
-                    drone.target_station = np.copy(next_t)
-                    if drone.is_leader:
-                        self.target_pos = np.copy(next_t)
-                dist_base = float(np.linalg.norm(drone.pos - np.array([0.0, 0.0, 25.0], dtype=float)))
-                if len(drone.corridor_stack) <= 1 and dist_base <= 4.5:
-                    drone.flight_state = "OVERHEAD_HOLD"
-                    drone.status = "OVERHEAD_HOLD"
-                    self.overhead_marshal_active = True
-                    self.recovery_stage = "OVERHEAD_MARSHAL"
+            if intent.state_updates.get("corridor_pop"):
+                if hasattr(drone, "corridor_stack") and len(drone.corridor_stack) > 1:
+                    drone.corridor_stack._stack.pop()
+            if drone.is_leader and intent.state_updates.get("acknowledged_target") is not None:
+                self.target_pos = np.copy(intent.state_updates["acknowledged_target"])
+            if intent.state_updates.get("flight_state") == "OVERHEAD_HOLD" and drone.is_leader:
+                self.overhead_marshal_active = True
+                self.recovery_stage = "OVERHEAD_MARSHAL"
 
             # If leader or escort leader just stepped in LEADER_FOLLOWER mode, propagate fresh heartbeat
             # across the physical RF medium to followers/escortee before they execute their step.
@@ -1774,8 +1768,8 @@ class SITLWorldEngine:
                     if d.status != "LOST_LINK" and d.flight_state not in ("LANDED", "GROUND_IDLE", "CRASHED", "COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN", "PAYLOAD_TRANSIT", "PRECISION_DESCENT", "CARRIER_EGRESS"):
                         d.status = "LOST_LINK"
 
-            # 4. Link restoration during backtrack or corridor ERTB
-            if d.flight_state in ("BACKTRACK_HOLD", "CORRIDOR_ERTB") and d.gcs_heartbeat_watchdog > 0.0 and d.uplink_active:
+            # 4. Link restoration during backtrack or corridor ERTB (suppressed if operator commanded RTB)
+            if not getattr(self.atc, "swarm_rtb_active", False) and d.flight_state in ("BACKTRACK_HOLD", "CORRIDOR_ERTB") and d.gcs_heartbeat_watchdog > 0.0 and d.uplink_active:
                 d.flight_state = "PERIMETER_HOLD"
                 d.status = "PERIMETER_HOLD"
                 d.backtrack_hold = False

@@ -114,6 +114,7 @@ class LocalTelemetry:
     corridor_target: Optional[np.ndarray] = None
     urban_obstacles: Tuple[Any, ...] = ()
     escort_leader_id: Optional[int] = None
+    corridor_stack: Tuple[Tuple[float, float, float], ...] = ()
 
 
 @dataclass

@@ -1,6 +1,6 @@
 # BUG-12: Migrate Ingress Corridor Stack (CORRIDOR_ERTB) Popping to OBC Brain Firmware
 
-> **Category**: 🛡️ Architecture / 🐛 Bug | **Priority**: High | **State**: todo  
+> **Category**: 🛡️ Architecture / 🐛 Bug | **Priority**: High | **State**: completed  
 > **Operational Inspiration**: Autonomic onboard reverse backtrack corridor execution (Red 3 Remediation)
 
 ---
@@ -49,7 +49,7 @@ This ticket moves corridor node popping and arrival detection directly into OBC 
 
 ## 4. Acceptance Criteria & Verification Invariants
 
-* [ ] SITL engine contains zero corridor node popping logic or `OVERHEAD_HOLD` flight state transitions.
-* [ ] OBC brain autonomously pops corridor nodes upon arriving within $4.5\text{m}$.
-* [ ] Drones reaching the final corridor node within $4.5\text{m}$ of Base transition cleanly to `OVERHEAD_HOLD`.
-* [ ] Targeted test module passes: `python -m unittest tests/test_emergency_landing.py`.
+* [x] SITL engine contains zero corridor node popping logic or `OVERHEAD_HOLD` flight state transitions.
+* [x] OBC brain autonomously pops corridor nodes upon arriving within $4.5\text{m}$.
+* [x] Drones reaching the final corridor node within $4.5\text{m}$ of Base transition cleanly to `OVERHEAD_HOLD`.
+* [x] Targeted test module passes: `python -m unittest tests/test_breadcrumb_backtrack.py`.

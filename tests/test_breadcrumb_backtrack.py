@@ -283,6 +283,38 @@ class TestBreadcrumbBacktrack(unittest.TestCase):
         self.assertGreaterEqual(brain0.gcs_lost_timer, 2.0)
         self.assertEqual(intent.state_updates.get("flight_state"), "CORRIDOR_ERTB")
 
+    def test_autonomous_obc_corridor_ertb_popping_and_overhead_hold(self):
+        """[BUG-12] Verify OBC autonomously pops corridor stack and transitions to OVERHEAD_HOLD."""
+        d = self.sim.drones[0]
+        d.corridor_stack.clear()
+        d.record_corridor([20.0, 0.0, 25.0])
+        d.record_corridor([40.0, 0.0, 25.0])
+        self.assertEqual(len(d.corridor_stack), 3)  # Base + 2 nodes
+
+        # Set drone at [40, 0, 25] and trigger ERTB
+        d.pos = np.array([40.0, 0.0, 25.0], dtype=float)
+        res = self.sim.command_corridor_ertb()
+        self.assertEqual(res["status"], "OK")
+        self.assertEqual(d.flight_state, "CORRIDOR_ERTB")
+
+        # Step sim: since drone is at 40m (d <= 4.5m of node 40m), OBC must pop node 40m
+        self.sim.step()
+        self.assertEqual(len(d.corridor_stack), 2)
+        np.testing.assert_allclose(d.acknowledged_target, [20.0, 0.0, 25.0])
+
+        # Move drone to [20, 0, 25] (d <= 4.5m of node 20m)
+        d.pos = np.array([20.0, 0.0, 25.0], dtype=float)
+        self.sim.step()
+        self.assertEqual(len(d.corridor_stack), 1)
+        np.testing.assert_allclose(d.acknowledged_target, [0.0, 0.0, 25.0])
+
+        # Move drone to Base [0, 0, 25] (d <= 4.5m of Base)
+        d.pos = np.array([0.0, 0.0, 25.0], dtype=float)
+        self.sim.step()
+        self.assertEqual(d.flight_state, "OVERHEAD_HOLD")
+        self.assertEqual(d.status, "OVERHEAD_HOLD")
+        self.assertTrue(self.sim.overhead_marshal_active)
+
 
 if __name__ == "__main__":
     unittest.main()
