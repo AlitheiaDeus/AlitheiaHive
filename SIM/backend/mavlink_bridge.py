@@ -459,6 +459,43 @@ class MavlinkBridge:
             res = self.sim.toggle_gnss_denial(drone_id=drone_id, denied=denied)
             return {"status": "OK", "cmd": cmd, "gnss_denied": res}
 
+        elif cmd in ("COMMAND_E_LAND", "E_LAND"):
+            drone_id = cmd_dict.get("drone_id", cmd_dict.get("id"))
+            reason = str(cmd_dict.get("reason", "MANUAL_OPERATOR"))
+            if drone_id is None or str(drone_id).upper() == "ALL":
+                res = self.sim.command_e_land_swarm(reason=reason)
+                return {"status": "OK", "cmd": cmd, "drones_landed": res}
+            ok = self.sim.command_e_land(int(drone_id), reason=reason)
+            return {"status": "OK" if ok else "ERROR", "cmd": cmd, "drone_id": int(drone_id)}
+
+        elif cmd in ("SET_FIELD_LZ", "DEPLOY_FIELD_LZ"):
+            coords = cmd_dict.get("coords", [0.0, 0.0, 0.0])
+            name = str(cmd_dict.get("name", "FLZ-1"))
+            radius = float(cmd_dict.get("radius", 15.0))
+            capacity = int(cmd_dict.get("capacity", 16))
+            slot_spacing = float(cmd_dict.get("slot_spacing", 4.0))
+            res = self.sim.set_field_lz(coords, name=name, radius=radius, capacity=capacity, slot_spacing=slot_spacing)
+            return {"status": "OK", "cmd": cmd, "field_lz": res}
+
+        elif cmd in ("CLEAR_FIELD_LZ", "REMOVE_FIELD_LZ"):
+            res = self.sim.clear_field_lz()
+            return {"status": "OK", "cmd": cmd, **res}
+
+        elif cmd in ("TAKEOFF_DRONE", "LAUNCH_DRONE"):
+            drone_id = int(cmd_dict.get("drone_id", cmd_dict.get("id", 0)))
+            ok = self.sim.command_takeoff_drone(drone_id)
+            return {"status": "OK" if ok else "ERROR", "cmd": cmd, "drone_id": drone_id}
+
+        elif cmd in ("DECLARE_LOST", "DECLARE_DESTROYED", "MARK_DESTROYED", "CONFIRM_CASUALTY"):
+            drone_id = int(cmd_dict.get("drone_id", cmd_dict.get("id", 0)))
+            drone = self.sim.get_drone_by_id(drone_id)
+            if drone:
+                drone.declared_destroyed = True
+                drone.flight_state = "DECLARED_LOST"
+                drone.status = "DECLARED_LOST"
+                return {"status": "OK", "cmd": cmd, "drone_id": drone_id}
+            return {"status": "ERROR", "error": "DRONE_NOT_FOUND"}
+
         else:
             # Check active brain hook
             brain_res = self.sim.brain.handle_command(cmd_dict)

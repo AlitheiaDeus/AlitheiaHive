@@ -12,6 +12,7 @@ import numpy as np
 
 from dataclasses import dataclass, field
 from OBC.backend.drone_firmware import FlightState
+from OBC.backend.brains.base import RadioPacket
 
 
 @dataclass
@@ -193,10 +194,18 @@ class ATCRecoveryManager:
                 drone.status = status_text
                 drone.acknowledged_target = np.array(target_hold, dtype=float)
                 drone.lkp = np.array(target_hold, dtype=float)
-                if hasattr(drone, "brain") and hasattr(drone.brain, "peer_state"):
-                    drone.brain.peer_state.active_target = np.array(target_hold, dtype=float)
-                    drone.brain.peer_state.pending_target = np.array(target_hold, dtype=float)
-                    drone.brain.peer_state.gossip_status = "COORDINATED"
+                pkt = RadioPacket(
+                    sender_id=-1,
+                    msg_type="C2_COMMAND",
+                    timestamp=0.0,
+                    payload={
+                        "cmd": "HOLD_POSITION",
+                        "target": [float(v) for v in target_hold],
+                    },
+                )
+                drone.inbox.append(pkt)
+                if hasattr(drone, "brain") and drone.brain is not None:
+                    drone.brain.handle_command(dict(pkt.payload))
         return {"status": "OK", "recovery_stage": self.recovery_stage, "destination": target_dest}
 
     def command_corridor_ertb(
@@ -405,6 +414,19 @@ class ATCRecoveryManager:
             return False
         for drone in drones:
             if drone.id == drone_id and drone.flight_state in ("LANDED", "GROUND_IDLE"):
+                pkt = RadioPacket(
+                    sender_id=-1,
+                    msg_type="C2_COMMAND",
+                    timestamp=0.0,
+                    payload={
+                        "cmd": "TAKEOFF",
+                        "flight_state": "TAKEOFF",
+                        "status": "LOST_LINK" if drone.lost_link else "ACTIVE",
+                    },
+                )
+                drone.inbox.append(pkt)
+                if hasattr(drone, "brain") and drone.brain is not None:
+                    drone.brain.handle_command(dict(pkt.payload))
                 drone.flight_state = "TAKEOFF"
                 drone.status = "LOST_LINK" if drone.lost_link else "ACTIVE"
                 drone.landing_stage = "NONE"
@@ -547,6 +569,19 @@ class ATCRecoveryManager:
         for idx, drone in enumerate(launch_sequence):
             drone.scramble_time = round(idx * self.scramble_stagger, 2)
             stagger_order.append({"drone_id": drone.id, "scramble_time": drone.scramble_time})
+            pkt = RadioPacket(
+                sender_id=-1,
+                msg_type="C2_COMMAND",
+                timestamp=0.0,
+                payload={
+                    "cmd": "SCRAMBLE",
+                    "target": [0.0, 0.0, 20.0],
+                    "scramble_time": drone.scramble_time,
+                },
+            )
+            drone.inbox.append(pkt)
+            if hasattr(drone, "brain") and drone.brain is not None:
+                drone.brain.handle_command(dict(pkt.payload))
             if drone.scramble_time <= 0.0:
                 drone.flight_state = "TAKEOFF"
                 drone.status = "ACTIVE"
@@ -652,6 +687,23 @@ class ATCRecoveryManager:
                 drone.touchdown_confirmed = False
                 drone.acknowledged_target = np.copy(spot)
                 drone.target_station = np.copy(spot)
+
+                pkt = RadioPacket(
+                    sender_id=-1,
+                    msg_type="C2_COMMAND",
+                    timestamp=0.0,
+                    payload={
+                        "cmd": "E_LAND",
+                        "target": [float(v) for v in spot],
+                        "spot": [float(v) for v in spot],
+                        "reason": reason,
+                        "flight_state": "EMERGENCY_LANDING",
+                        "status": "E_LANDING",
+                    },
+                )
+                drone.inbox.append(pkt)
+                if hasattr(drone, "brain") and drone.brain is not None:
+                    drone.brain.handle_command(dict(pkt.payload))
 
                 if drone.is_leader and succession_fn is not None:
                     drone.is_leader = False

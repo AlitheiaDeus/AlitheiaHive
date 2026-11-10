@@ -462,6 +462,13 @@ class LeaderFollowerBrain(BaseBrain):
                     if telemetry.flight_state == "PERIMETER_HOLD":
                         updates["flight_state"] = "CRUISE"
                         updates["status"] = "FLEET_LEADER" if telemetry.is_leader else "ACTIVE"
+                cmd = str(p.get("cmd", "")).upper()
+                if cmd == "TAKEOFF" and telemetry.flight_state in ("GROUND_IDLE", "LANDED"):
+                    updates["flight_state"] = "TAKEOFF"
+                    updates["status"] = "ACTIVE"
+                elif cmd == "E_LAND" and telemetry.flight_state not in ("LANDED", "GROUND_IDLE", "FIELD_LANDED", "E_LANDED"):
+                    updates["flight_state"] = "EMERGENCY_LANDING"
+                    updates["status"] = "E_LANDING"
                 self.handle_command(dict(p))
 
         # Flagship Gateway Relay Discovery: if leader lacks direct GCS contact, bind heard peer relay
@@ -1081,6 +1088,8 @@ class LeaderFollowerBrain(BaseBrain):
         elif cmd == "RESUME_ROUTE":
             self.route_paused = False
             return {"status": "OK", "paused": False}
+        elif cmd in ("E_LAND", "HOLD_POSITION", "TAKEOFF", "SCRAMBLE"):
+            return {"status": "OK", "cmd": cmd}
         return None
 
     def get_telemetry_extra(self) -> Dict[str, Any]:

@@ -316,6 +316,13 @@ class GossipConsensusBrain(BaseBrain):
                         if telemetry.flight_state == "PERIMETER_HOLD":
                             updates["flight_state"] = "CRUISE"
                             updates["status"] = "ACTIVE"
+                cmd = str(p.get("cmd", "")).upper()
+                if cmd == "TAKEOFF" and telemetry.flight_state in ("GROUND_IDLE", "LANDED") and updates is not None:
+                    updates["flight_state"] = "TAKEOFF"
+                    updates["status"] = "ACTIVE"
+                elif cmd == "E_LAND" and telemetry.flight_state not in ("LANDED", "GROUND_IDLE", "FIELD_LANDED", "E_LANDED") and updates is not None:
+                    updates["flight_state"] = "EMERGENCY_LANDING"
+                    updates["status"] = "E_LANDING"
                 self.handle_command(dict(p))
 
         # Prune stale peers
@@ -1114,6 +1121,8 @@ class GossipConsensusBrain(BaseBrain):
             self.wp_loitering = False
             self.wp_loiter_timer = 0.0
             return {"status": "OK", "action": "ROUTE_ABORTED"}
+        elif cmd in ("E_LAND", "HOLD_POSITION", "TAKEOFF", "SCRAMBLE"):
+            return {"status": "OK", "cmd": cmd}
         return None
 
     def get_telemetry_extra(self) -> Dict[str, Any]:

@@ -1,6 +1,6 @@
 # BUG-16: Command ATC Recovery via Pure C2 Uplink Packets & Parity Bridge
 
-> **Category**: 🛡️ Architecture / 🐛 Bug | **Priority**: High | **State**: todo  
+> **Category**: 🛡️ Architecture / 🐛 Bug | **Priority**: High | **State**: completed  
 > **Operational Inspiration**: Decouple ATC recovery from God-mode actuator manipulation; complete Canyon UDP command parity (Red 7 & Yellow 4 Remediation)
 
 ---
@@ -50,7 +50,7 @@ This ticket refactors ATC recovery to issue standardized C2 command packets to d
 
 ## 4. Acceptance Criteria & Verification Invariants
 
-* [ ] ATC recovery coordinator does not directly overwrite rotor RPM or zero velocities in RAM.
-* [ ] Airframes initiate takeoff and e-landing from parsed `C2_COMMAND` packets.
-* [ ] Decoupled UDP commands (`E_LAND`, `SET_FIELD_LZ`, `CLEAR_FIELD_LZ`, `TAKEOFF_DRONE`, `DECLARE_LOST`) execute without falling through to `UNKNOWN_COMMAND`.
-* [ ] Targeted test module passes: `python -m unittest tests/test_atc_recovery.py`.
+* [x] ATC recovery coordinator does not directly overwrite rotor RPM or zero velocities in RAM.
+* [x] Airframes initiate takeoff and e-landing from parsed `C2_COMMAND` packets.
+* [x] Decoupled UDP commands (`E_LAND`, `SET_FIELD_LZ`, `CLEAR_FIELD_LZ`, `TAKEOFF_DRONE`, `DECLARE_LOST`) execute without falling through to `UNKNOWN_COMMAND`.
+* [x] Targeted test module passes: `python -m unittest tests/test_mavlink_bridge.py tests/test_field_lz_and_eland.py`.

@@ -695,6 +695,38 @@ class TestMavlinkBridge(unittest.TestCase):
         finally:
             listener.close()
 
+    def test_canyon_udp_command_parity(self):
+        """[BUG-16 / Yellow 4] Verify Canyon UDP parity commands execute without UNKNOWN_COMMAND error."""
+        # 1. SET_FIELD_LZ & CLEAR_FIELD_LZ
+        res_flz = self.bridge.execute_command({
+            "cmd": "SET_FIELD_LZ",
+            "coords": [25.0, 35.0, 0.05],
+            "name": "FLZ-ALPHA",
+        })
+        self.assertEqual(res_flz["status"], "OK")
+        self.assertIsNotNone(self.sim.field_lz)
+
+        res_clear = self.bridge.execute_command({"cmd": "CLEAR_FIELD_LZ"})
+        self.assertEqual(res_clear["status"], "OK")
+        self.assertIsNone(self.sim.field_lz)
+
+        # 2. COMMAND_E_LAND
+        res_eland = self.bridge.execute_command({"cmd": "COMMAND_E_LAND", "drone_id": 1})
+        self.assertEqual(res_eland["status"], "OK")
+        self.assertEqual(self.sim.drones[1].flight_state, "EMERGENCY_LANDING")
+
+        # 3. TAKEOFF_DRONE
+        d0 = self.sim.drones[0]
+        d0.flight_state = "GROUND_IDLE"
+        res_takeoff = self.bridge.execute_command({"cmd": "TAKEOFF_DRONE", "drone_id": 0})
+        self.assertEqual(res_takeoff["status"], "OK")
+        self.assertEqual(d0.flight_state, "TAKEOFF")
+
+        # 4. DECLARE_LOST
+        res_lost = self.bridge.execute_command({"cmd": "DECLARE_LOST", "drone_id": 2})
+        self.assertEqual(res_lost["status"], "OK")
+        self.assertEqual(self.sim.drones[2].flight_state, "DECLARED_LOST")
+
 
 if __name__ == "__main__":
     unittest.main()
