@@ -1193,6 +1193,22 @@ body:has(#right-panel.collapsed) #tab-restore-right,
   animation: pulse-payload 1.5s infinite alternate;
 }
 
+.btn-payload.disabled-carrier {
+  opacity: 0.45;
+  cursor: not-allowed;
+  border-color: rgba(90, 126, 150, 0.3);
+  color: #5A7E96;
+  background: rgba(10, 25, 38, 0.4);
+  box-shadow: none !important;
+}
+
+.btn-payload.disabled-carrier:hover {
+  background: rgba(10, 25, 38, 0.4);
+  border-color: rgba(90, 126, 150, 0.3);
+  color: #5A7E96;
+  box-shadow: none !important;
+}
+
 @keyframes pulse-payload {
   0% { box-shadow: 0 0 8px rgba(0, 255, 170, 0.4); }
   100% { box-shadow: 0 0 16px rgba(0, 255, 170, 0.9); }

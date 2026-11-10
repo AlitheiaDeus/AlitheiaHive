@@ -210,13 +210,13 @@ class Drone:
         self.tether_type: str = tether_type
         self.rf_power_mode: str = rf_power_mode if not is_leader else RF_MODE_BORK
         if capabilities is not None:
-            self.capabilities: List[str] = list(capabilities)
+            self._capabilities: List[str] = list(capabilities)
         elif self.base_tier == BASE_TIER_T3:
-            self.capabilities: List[str] = list(DEFAULT_CAPABILITIES_T3)
+            self._capabilities: List[str] = list(DEFAULT_CAPABILITIES_T3)
         elif self.base_tier == BASE_TIER_T0:
-            self.capabilities: List[str] = list(DEFAULT_CAPABILITIES_T0)
+            self._capabilities: List[str] = list(DEFAULT_CAPABILITIES_T0)
         else:
-            self.capabilities: List[str] = list(DEFAULT_CAPABILITIES_T1_5)
+            self._capabilities: List[str] = list(DEFAULT_CAPABILITIES_T1_5)
 
         # Kinematics
         self.pos: np.ndarray = (
@@ -343,8 +343,8 @@ class Drone:
         self.courier_escortee_id: Optional[int] = None
         self.escort_leader_id: Optional[int] = None
 
-        # Payload Carrier & Drop Mechanism (TKT-59 / PLN-04)
-        self.payload_attached: bool = True
+        # Payload Carrier & Drop Mechanism (TKT-59 / PLN-04, BUG-19)
+        self.payload_attached: bool = ("HEAVY_PAYLOAD" in self._capabilities and "DROP_SERVO" in self._capabilities)
         self.payload_drop_active: bool = False
 
         # Per-Drone Autonomous Brain & Packet Mailboxes (TLK-01 Pure I/O Boundary)
@@ -450,7 +450,7 @@ class Drone:
         self.courier_dwell_timeout = 15.0
         self.courier_escortee_id = None
         self.escort_leader_id = None
-        self.payload_attached = True
+        self.payload_attached = ("HEAVY_PAYLOAD" in self._capabilities and "DROP_SERVO" in self._capabilities) and not getattr(self, "_payload_deployed", False)
         self.payload_drop_active = False
         self.inbox.clear()
         self.outbox.clear()
@@ -478,6 +478,17 @@ class Drone:
         if self.crashed:
             return False
         return float(np.linalg.norm(self.pos - self.acknowledged_target)) <= 2.5
+
+    @property
+    def capabilities(self) -> List[str]:
+        return self._capabilities
+
+    @capabilities.setter
+    def capabilities(self, val: List[str]) -> None:
+        self._capabilities = list(val)
+        if "DROP_SERVO" in self._capabilities and "HEAVY_PAYLOAD" in self._capabilities:
+            if not getattr(self, "_payload_deployed", False):
+                self.payload_attached = True
 
     @property
     def full_tier_designation(self) -> str:

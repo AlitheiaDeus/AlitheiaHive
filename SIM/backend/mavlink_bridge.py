@@ -437,8 +437,8 @@ class MavlinkBridge:
             return self.sim.stop_search_and_recall()
 
         elif cmd in ("DEPLOY_PAYLOAD_DROP", "PAYLOAD_DROP", "DEPLOY_CAIRN_G1", "DROP_REPEATER"):
-            target_pos = cmd_dict.get("target_pos", cmd_dict.get("pos"))
-            carrier_id = cmd_dict.get("carrier_id")
+            target_pos = cmd_dict.get("target_pos") or cmd_dict.get("target") or cmd_dict.get("pos")
+            carrier_id = int(cmd_dict["carrier_id"]) if cmd_dict.get("carrier_id") is not None else None
             return self.sim.deploy_payload_drop(target_pos=target_pos, carrier_id=carrier_id)
 
         elif cmd in ("STOP_PAYLOAD_DROP", "ABORT_PAYLOAD_DROP", "ABORT_DROP"):

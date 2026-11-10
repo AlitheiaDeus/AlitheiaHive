@@ -249,6 +249,35 @@ class TestPayloadDepositRepeater(unittest.TestCase):
         self.assertEqual(self.sim.c2.payload_drop_stage, "CARRIER_LOST")
         self.assertFalse(self.sim.c2.payload_drop_active)
 
+    def test_default_airframe_payload_attached_false(self):
+        """Verify standard T1.5 airframes initialize with payload_attached = False (BUG-19)."""
+        sim_default = SwarmSimulator(drone_count=4)
+        for d in sim_default.drones:
+            self.assertFalse(d.payload_attached, f"Drone #{d.id} unexpectedly initialized with payload_attached=True")
+
+    def test_no_eligible_carrier_rejection(self):
+        """Verify deploy_payload_drop cleanly returns NO_ELIGIBLE_CARRIER when no T3 carrier exists (BUG-19)."""
+        sim_plain = SwarmSimulator(drone_count=4)
+        res = sim_plain.deploy_payload_drop()
+        self.assertEqual(res.get("status"), "ERROR")
+        self.assertEqual(res.get("code"), "NO_ELIGIBLE_CARRIER")
+        self.assertFalse(sim_plain.c2.payload_drop_active)
+
+    def test_stage_t3_kodiak_reinforcement(self):
+        """Verify staging a T3 Kodiak equips HEAVY_PAYLOAD and DROP_SERVO and enables G1 drop (BUG-19)."""
+        from OBC.backend.drone_firmware import BASE_TIER_T3
+        kodiak = self.sim.spawn_reinforcement(auto_launch=False, base_tier=BASE_TIER_T3)
+        self.assertEqual(kodiak.base_tier, BASE_TIER_T3)
+        self.assertIn("HEAVY_PAYLOAD", kodiak.capabilities)
+        self.assertIn("DROP_SERVO", kodiak.capabilities)
+        self.assertTrue(kodiak.payload_attached)
+
+    def test_designated_target_pos_dispatch(self):
+        """Verify drop mission adopts explicit designated coordinates rather than forward projection (BUG-19)."""
+        res = self.sim.deploy_payload_drop(target_pos=[45.0, -30.0, 0.0], carrier_id=1)
+        self.assertEqual(res.get("status"), "OK")
+        self.assertTrue(np.allclose(self.sim.c2.payload_drop_target_pos, [45.0, -30.0, 0.0]))
+
 
 if __name__ == "__main__":
     unittest.main()

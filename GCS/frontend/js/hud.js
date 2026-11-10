@@ -116,15 +116,25 @@
             }
         });
 
-        // 1-Click Aux Mission: Cairn G1 Solar Repeater Payload Drop (TKT-59 / PLN-04)
+        // 1-Click Aux Mission: Cairn G1 Solar Repeater Payload Drop (TKT-59 / PLN-04, BUG-19)
         setupBtn('btn-payload-drop', () => {
             const dropBtn = document.getElementById('btn-payload-drop');
             if (dropBtn && dropBtn.classList.contains('active-payload')) {
                 logEvent('CMD', 'Aborting Aux Mission: Cairn G1 Payload Drop');
                 window.swarmClient?.send({ cmd: 'STOP_PAYLOAD_DROP' });
+            } else if (dropBtn && dropBtn.classList.contains('disabled-carrier')) {
+                logEvent('WARN', 'Cannot deploy Cairn G1: No airframe in fleet is equipped with G1 repeater payload (Stage T3 Kodiak to arm)');
             } else {
-                logEvent('CMD', 'Deploying Aux Mission: Cairn G1 Repeater Payload Drop');
-                window.swarmClient?.send({ cmd: 'DEPLOY_PAYLOAD_DROP' });
+                const targetX = parseFloat(inputX?.value || 0);
+                const targetY = parseFloat(inputY?.value || 0);
+                const carrierId = dropBtn?.dataset?.carrierId ? parseInt(dropBtn.dataset.carrierId, 10) : null;
+                logEvent('CMD', `Deploying Aux Mission: Cairn G1 Repeater Drop to (${targetX}, ${targetY}) via Drone #${carrierId ?? 'AUTO'}`);
+                window.swarmClient?.send({
+                    cmd: 'DEPLOY_PAYLOAD_DROP',
+                    target: [targetX, targetY, 0.0],
+                    target_pos: [targetX, targetY, 0.0],
+                    carrier_id: carrierId,
+                });
             }
         });
 
@@ -185,8 +195,13 @@
         });
 
         setupBtn('btn-spawn-pad', () => {
-            logEvent('CMD', 'Staging standby reinforcement drone on pad: SPAWN_REINFORCEMENT');
-            window.swarmClient?.send({ cmd: 'SPAWN_REINFORCEMENT' });
+            logEvent('CMD', 'Staging standard T1.5 Beta reinforcement drone on pad: SPAWN_REINFORCEMENT');
+            window.swarmClient?.send({ cmd: 'SPAWN_REINFORCEMENT', base_tier: 'T1.5' });
+        });
+
+        setupBtn('btn-spawn-kodiak', () => {
+            logEvent('CMD', 'Staging T3 Kodiak Heavy Specialist (Cairn G1 Carrier) on pad: SPAWN_REINFORCEMENT');
+            window.swarmClient?.send({ cmd: 'SPAWN_REINFORCEMENT', base_tier: 'T3' });
         });
 
         setupBtn('btn-reinforce-swarm', () => {
@@ -595,23 +610,44 @@
             }
         }
 
-        // 4b6. Monitor 1-Click Aux Mission: Cairn G1 Repeater Payload Drop (TKT-59)
+        // 4b6. Monitor 1-Click Aux Mission: Cairn G1 Repeater Payload Drop (TKT-59 / BUG-19)
         const payloadData = frame.payload_deposit;
         const btnPayload = document.getElementById('btn-payload-drop');
+        const carrier = (frame.drones || []).find(d => 
+            !d.crashed && d.payload_attached && 
+            (d.capabilities?.includes('DROP_SERVO') || d.capabilities?.includes('HEAVY_PAYLOAD'))
+        );
+
         if (payloadData && payloadData.active) {
             if (btnPayload) {
                 btnPayload.classList.add('active-payload');
-                btnPayload.innerHTML = `&#x1F4E6; DROP [${payloadData.stage}]`;
+                btnPayload.classList.remove('disabled-carrier');
+                btnPayload.dataset.carrierId = payloadData.carrier_id;
+                btnPayload.innerHTML = `<span class="btn-icon">&#x1F4E6;</span> DROP [${payloadData.stage}] (D#${payloadData.carrier_id})`;
+                btnPayload.title = `In progress: Drone #${payloadData.carrier_id} deploying Cairn G1 repeater`;
             }
             if (routeActiveBadge && (!bingoData || !bingoData.active) && (!recallData || !recallData.active)) {
                 routeActiveBadge.className = 'badge-route-active badge-route-payload';
                 routeActiveBadge.textContent = `CAIRN G1 [${payloadData.stage}]`;
             }
+        } else if (carrier) {
+            if (btnPayload) {
+                btnPayload.classList.remove('active-payload');
+                btnPayload.classList.remove('disabled-carrier');
+                btnPayload.dataset.carrierId = carrier.id;
+                btnPayload.innerHTML = `<span class="btn-icon">&#x2B22;</span> CAIRN G1 DROP (D#${carrier.id})`;
+                btnPayload.title = `Deploy Cairn G1 Repeater from Drone #${carrier.id} to staged target coordinates`;
+            }
         } else {
             if (btnPayload) {
                 btnPayload.classList.remove('active-payload');
+                btnPayload.classList.add('disabled-carrier');
+                delete btnPayload.dataset.carrierId;
                 const count = payloadData?.repeaters_count ?? 0;
-                btnPayload.innerHTML = count > 0 ? `&#x1F4E6; CAIRN G1 DROP (${count} ACTIVE)` : '&#x1F4E6; CAIRN G1 REPEATER DROP';
+                btnPayload.innerHTML = count > 0 
+                    ? `<span class="btn-icon">&#x2B22;</span> CAIRN G1 (${count} DEPLOYED)` 
+                    : '<span class="btn-icon">&#x2B22;</span> CAIRN G1 [NO CARRIER]';
+                btnPayload.title = 'No airframe in fleet equipped with Cairn G1 repeater (Stage T3 Kodiak to arm)';
             }
         }
 

@@ -101,6 +101,7 @@
         createTargetBeacon();
         createCommandedBeacon();
         createStagedBeacon();
+        createPayloadDropMarker();
         createCatenaryTether();
         createRecoveryPads();
         createMissionRouteGroup();
@@ -391,6 +392,96 @@
 
         stagedBeacon.position.set(0, 0, 20);
         scene.add(stagedBeacon);
+    }
+
+    let payloadDropMarker = null;
+
+    function createPayloadDropMarker() {
+        payloadDropMarker = new THREE.Group();
+        payloadDropMarker.name = 'payloadDropMarker';
+
+        // Outer hexagon footprint ring at ground (Z=0.05m)
+        const hexGeom = new THREE.RingGeometry(2.5, 2.8, 6);
+        const hexMat = new THREE.MeshBasicMaterial({
+            color: 0x00FFAA,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.8,
+        });
+        const hexMesh = new THREE.Mesh(hexGeom, hexMat);
+        hexMesh.name = 'hexRing';
+        payloadDropMarker.add(hexMesh);
+
+        // Inner pulsing target reticle
+        const reticleGeom = new THREE.RingGeometry(1.0, 1.25, 24);
+        const reticleMat = new THREE.MeshBasicMaterial({
+            color: 0x00F0FF,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.9,
+        });
+        const reticleMesh = new THREE.Mesh(reticleGeom, reticleMat);
+        reticleMesh.name = 'reticle';
+        payloadDropMarker.add(reticleMesh);
+
+        // Vertical drop corridor dashed beam from Z=0 to Z=25
+        const beamGeom = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0, 0, 0),
+            new THREE.Vector3(0, 0, 25),
+        ]);
+        const beamMat = new THREE.LineDashedMaterial({
+            color: 0x00FFAA,
+            dashSize: 1.0,
+            gapSize: 0.5,
+            transparent: true,
+            opacity: 0.6,
+        });
+        const beamLine = new THREE.Line(beamGeom, beamMat);
+        beamLine.computeLineDistances();
+        beamLine.name = 'beam';
+        payloadDropMarker.add(beamLine);
+
+        // Billboard label
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#00FFAA';
+        ctx.font = 'bold 20px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('CAIRN G1 DROP ZONE', 128, 32);
+        const texture = new THREE.CanvasTexture(canvas);
+        const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true, opacity: 0.95 });
+        const sprite = new THREE.Sprite(spriteMat);
+        sprite.scale.set(6.0, 1.5, 1.0);
+        sprite.position.set(0, 0, 3.5);
+        payloadDropMarker.add(sprite);
+
+        payloadDropMarker.visible = false;
+        scene.add(payloadDropMarker);
+    }
+
+    function updatePayloadDropMarker(payloadDeposit) {
+        if (!payloadDropMarker) return;
+        if (payloadDeposit && payloadDeposit.active && payloadDeposit.target_pos) {
+            const tx = payloadDeposit.target_pos[0];
+            const ty = payloadDeposit.target_pos[1];
+            payloadDropMarker.position.set(tx, ty, 0.05);
+            payloadDropMarker.visible = true;
+
+            const hex = payloadDropMarker.getObjectByName('hexRing');
+            if (hex) {
+                hex.rotation.z += 0.02;
+                hex.material.opacity = 0.5 + 0.3 * Math.sin(performance.now() * 0.005);
+            }
+            const ret = payloadDropMarker.getObjectByName('reticle');
+            if (ret) {
+                ret.rotation.z -= 0.03;
+            }
+        } else {
+            payloadDropMarker.visible = false;
+        }
     }
 
     function createCatenaryTether() {
@@ -1463,6 +1554,8 @@
 
         // Update Stationary Ground Repeaters (TKT-59 / PLN-04)
         updateGroundRepeaters(frame.ground_repeaters);
+        // Update Cairn G1 Payload Drop Marker (BUG-19)
+        updatePayloadDropMarker(frame.payload_deposit);
 
         // Update Urban 3D Obstacles & Altitude Shelves (PLN-08 / TKT-60)
         updateUrbanObstacles(frame.urban_obstacles);

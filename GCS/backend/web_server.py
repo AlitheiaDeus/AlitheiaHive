@@ -374,8 +374,8 @@ class SwarmWebServer:
             return res
 
         elif cmd in ("DEPLOY_PAYLOAD_DROP", "PAYLOAD_DROP", "DEPLOY_CAIRN_G1", "DROP_REPEATER"):
-            target_pos = cmd_dict.get("target_pos", cmd_dict.get("pos"))
-            carrier_id = cmd_dict.get("carrier_id")
+            target_pos = cmd_dict.get("target_pos") or cmd_dict.get("target") or cmd_dict.get("pos")
+            carrier_id = int(cmd_dict["carrier_id"]) if cmd_dict.get("carrier_id") is not None else None
             res = self.sim.deploy_payload_drop(target_pos=target_pos, carrier_id=carrier_id)
             self.session_manager.add_event("CMD", f"Deployed Aux Mission: Cairn G1 Repeater Payload Drop (Carrier: {carrier_id})", sim_time=self.sim.sim_time)
             return res
@@ -535,12 +535,15 @@ class SwarmWebServer:
             return {"status": "OK", "cmd": cmd, "rebooted_id": drone_id}
 
         elif cmd in ("SPAWN_REINFORCEMENT", "SPAWN_DRONE", "STAGE_REINFORCEMENT"):
-            new_drone = self.sim.spawn_reinforcement(auto_launch=False)
-            self.session_manager.add_event("SPAWN", f"Standby Drone #{new_drone.id} staged on pad ({new_drone.briefing})", sim_time=self.sim.sim_time)
+            tier_req = cmd_dict.get("base_tier") or cmd_dict.get("tier") or "T1.5"
+            caps_req = cmd_dict.get("capabilities", None)
+            new_drone = self.sim.spawn_reinforcement(auto_launch=False, base_tier=tier_req, capabilities=caps_req)
+            self.session_manager.add_event("SPAWN", f"Standby Drone #{new_drone.id} ({new_drone.full_tier_designation}) staged on pad ({new_drone.briefing})", sim_time=self.sim.sim_time)
             return {
                 "status": "OK",
                 "cmd": cmd,
                 "drone_id": new_drone.id,
+                "tier": new_drone.full_tier_designation,
                 "briefing": new_drone.briefing,
                 "total_drones": len(self.sim.drones),
             }

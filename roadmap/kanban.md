@@ -55,7 +55,6 @@ kanban
     pln11["3D Tactical Corridor Pathfinding & Operator Preview"]@{ ticket: '[PLN-11]', priority: 'Medium' }
   todo["Todo (Active Pipeline)"]
     tkt66["Simplified RF & GNSS Shadow Occlusion Engine"]@{ ticket: '[TKT-66]', priority: 'High' }
-    bug19["Cairn G1 Carrier Binding and Target Drop Coordinate Designation"]@{ ticket: '[BUG-19]', priority: 'High' }
   in_progress["In Progress (WIP = 1)"]
   completed["Completed (Fresh / Review)"]
     bug14["Decouple SITL Sim Proxies to Broadcast Command Packets"]@{ ticket: '[BUG-14]', priority: 'Normal' }
@@ -83,6 +82,7 @@ kanban
     bug16["Command ATC Recovery via Pure C2 Uplink Packets & Parity Bridge"]@{ ticket: '[BUG-16]', priority: 'High' }
     bug15["Decouple GCS C2 Gateway to Standalone Downlink Telemetry"]@{ ticket: '[BUG-15]', priority: 'High' }
     bug18["GCS Target Waypoint Direct Dispatch & Single-Line Typography"]@{ ticket: '[BUG-18]', priority: 'High' }
+    bug19["Cairn G1 Carrier Binding and Target Drop Coordinate Designation"]@{ ticket: '[BUG-19]', priority: 'High' }
 ```
 
 ---

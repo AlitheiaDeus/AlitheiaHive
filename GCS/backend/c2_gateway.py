@@ -1576,19 +1576,27 @@ class C2Gateway:
                     d for d in drones
                     if not d.crashed and d.flight_state not in ("LANDED", "GROUND_IDLE", "CRASHED", "DESCENDING")
                     and getattr(d, "uplink_active", True)
-                    and getattr(d, "payload_attached", True)
+                    and getattr(d, "payload_attached", False)
                 ]
                 for c in candidates:
                     caps = set(getattr(c, "capabilities", []))
                     if "HEAVY_PAYLOAD" in caps and "DROP_SERVO" in caps:
                         carrier = c
                         break
-                if carrier is None and candidates:
-                    carrier = candidates[0]
                 if carrier is None:
-                    return {"status": "ERROR", "reason": "NO_ELIGIBLE_CARRIER", "error": "No available airframes with attached payload to dispatch."}
+                    for c in candidates:
+                        if "DROP_SERVO" in getattr(c, "capabilities", []):
+                            carrier = c
+                            break
+                if carrier is None:
+                    return {
+                        "status": "ERROR",
+                        "code": "NO_ELIGIBLE_CARRIER",
+                        "reason": "NO_ELIGIBLE_CARRIER",
+                        "error": "No available airframes in fleet equipped with Cairn G1 repeater payload (Requires T3 Kodiak with DROP_SERVO).",
+                    }
 
-            if not getattr(carrier, "payload_attached", True):
+            if not getattr(carrier, "payload_attached", False):
                 return {
                     "status": "ERROR",
                     "code": "NO_PAYLOAD_ATTACHED",
@@ -1608,6 +1616,8 @@ class C2Gateway:
 
             if target_pos is not None:
                 t_pos = np.array([float(target_pos[0]), float(target_pos[1]), 0.0], dtype=float)
+            elif self._target_pos is not None and not np.allclose(self._target_pos, [0.0, 0.0, 20.0], atol=1.0):
+                t_pos = np.array([float(self._target_pos[0]), float(self._target_pos[1]), 0.0], dtype=float)
             else:
                 yaw = getattr(carrier, "yaw", 0.0)
                 dx = math.cos(yaw) * 40.0
@@ -1655,19 +1665,27 @@ class C2Gateway:
                 d for d in self.fleet_telemetry.values()
                 if not d.get("crashed") and d.get("flight_state") not in ("LANDED", "GROUND_IDLE", "CRASHED", "DESCENDING")
                 and d.get("uplink_active", True)
-                and d.get("payload_attached", True)
+                and d.get("payload_attached", False)
             ]
             for c in candidates:
                 caps = set(c.get("capabilities", []))
                 if "HEAVY_PAYLOAD" in caps and "DROP_SERVO" in caps:
                     carrier = c
                     break
-            if carrier is None and candidates:
-                carrier = candidates[0]
             if carrier is None:
-                return {"status": "ERROR", "reason": "NO_ELIGIBLE_CARRIER", "error": "No available airframes with attached payload to dispatch."}
+                for c in candidates:
+                    if "DROP_SERVO" in c.get("capabilities", []):
+                        carrier = c
+                        break
+            if carrier is None:
+                return {
+                    "status": "ERROR",
+                    "code": "NO_ELIGIBLE_CARRIER",
+                    "reason": "NO_ELIGIBLE_CARRIER",
+                    "error": "No available airframes in fleet equipped with Cairn G1 repeater payload (Requires T3 Kodiak with DROP_SERVO).",
+                }
 
-        if not carrier.get("payload_attached", True):
+        if not carrier.get("payload_attached", False):
             return {
                 "status": "ERROR",
                 "code": "NO_PAYLOAD_ATTACHED",
@@ -1687,6 +1705,8 @@ class C2Gateway:
 
         if target_pos is not None:
             t_pos = np.array([float(target_pos[0]), float(target_pos[1]), 0.0], dtype=float)
+        elif self._target_pos is not None and not np.allclose(self._target_pos, [0.0, 0.0, 20.0], atol=1.0):
+            t_pos = np.array([float(self._target_pos[0]), float(self._target_pos[1]), 0.0], dtype=float)
         else:
             c_pos = carrier.get("pos", [0.0, 0.0, 0.0])
             yaw = carrier.get("yaw", 0.0)
