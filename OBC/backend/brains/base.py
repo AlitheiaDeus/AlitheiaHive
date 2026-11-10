@@ -112,7 +112,6 @@ class LocalTelemetry:
     patrol_active: bool
     tether_heartbeat_watchdog: float = 0.5
     corridor_target: Optional[np.ndarray] = None
-    nearby_peers: Tuple[Any, ...] = ()
     urban_obstacles: Tuple[Any, ...] = ()
 
 
@@ -344,15 +343,8 @@ class BaseBrain(ABC):
         if telemetry.flight_state in ("LANDED", "GROUND_IDLE", "FIELD_LANDED", "E_LANDED"):
             return np.zeros(3, dtype=float)
 
-        # Combine heard RF peers with any proximity telemetry sensors
-        known_peers: Dict[int, Any] = dict(self.heard_peers)
-        if hasattr(telemetry, "nearby_peers") and telemetry.nearby_peers:
-            for np_peer in telemetry.nearby_peers:
-                np_id = int(getattr(np_peer, "id", getattr(np_peer, "drone_id", -1)))
-                if np_id not in known_peers and np_id != own_id:
-                    known_peers[np_id] = np_peer
-
-        peer_list = peers if peers is not None else list(known_peers.values())
+        # Operate strictly from heard RF peers (or explicitly passed peer view in diagnostic tests)
+        peer_list = peers if peers is not None else list(self.heard_peers.values())
 
         for other in peer_list:
             oid = int(getattr(other, "drone_id", getattr(other, "id", -1)))

@@ -12,6 +12,7 @@ agents.md
 GEMINI.md
 kanban_archive.md
 KANBAN_ARCHIVE.md
+.agents/
 
 # Machine-Specific Scripts & Local Environments
 run.ps1

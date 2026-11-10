@@ -198,6 +198,33 @@ class TestAirgapIntegrity(unittest.TestCase):
         intent, _ = sim.drones[0].brain.step_drone(tel, [], DT)
         self.assertFalse(np.isnan(intent.target_acc).any(), "GNSS-denied guidance must not produce NaN")
 
+    def test_local_telemetry_contains_zero_peer_drone_objects(self):
+        """Red 1 Airgap Enforcement: LocalTelemetry must never smuggle foreign Drone objects
+        or peer simulation memory handles into the OBC brain."""
+        sim = SITLWorldEngine(drone_count=4, seed=42)
+        for drone in sim.drones:
+            tel = sim._build_local_telemetry(drone)
+            self.assertFalse(
+                hasattr(tel, "nearby_peers"),
+                "LocalTelemetry must not have 'nearby_peers' attribute (prohibits object smuggling)",
+            )
+            # Inspect all fields of LocalTelemetry to ensure zero Drone instances exist
+            for f_name in tel.__dataclass_fields__:
+                val = getattr(tel, f_name)
+                if isinstance(val, (list, tuple)):
+                    for item in val:
+                        self.assertNotIsInstance(
+                            item,
+                            Drone,
+                            f"Field '{f_name}' in LocalTelemetry contains smuggled Drone object!",
+                        )
+                else:
+                    self.assertNotIsInstance(
+                        val,
+                        Drone,
+                        f"Field '{f_name}' in LocalTelemetry is a Drone instance!",
+                    )
+
     def test_no_quarantined_tests_remain_at_stage_3(self):
         """Anti-orphan gate: at Heartbeat Stage 3, zero tests may remain quarantined."""
         if ACTIVE_HEARTBEAT_STAGE >= 3:

@@ -303,10 +303,6 @@ class SITLWorldEngine:
             patrol_active=bool(self.patrol_active),
             tether_heartbeat_watchdog=float(getattr(drone, "tether_heartbeat_watchdog", 0.5)),
             corridor_target=np.copy(drone.corridor_target) if getattr(drone, "corridor_target", None) is not None else None,
-            nearby_peers=tuple(
-                d for d in self.drones
-                if d.id != drone.id and not d.crashed
-            ),
             urban_obstacles=tuple(getattr(self, "urban_obstacles", [])),
         )
 
@@ -2244,7 +2240,19 @@ class SITLWorldEngine:
                 continue
             telem = self._build_local_telemetry(d)
             if hasattr(d, "brain") and d.brain is not None and hasattr(d.brain, "compute_inter_drone_avoidance"):
-                a_peers = d.brain.compute_inter_drone_avoidance(telem)
+                synthetic_peers = [
+                    HeardPeer(
+                        drone_id=other.id,
+                        pos=np.copy(other.pos),
+                        vel=np.copy(other.vel),
+                        crashed=bool(other.crashed),
+                        enrolled=bool(getattr(other, "enrolled", True)),
+                        flight_state=str(other.flight_state),
+                    )
+                    for other in self.drones
+                    if other.id != d.id
+                ]
+                a_peers = d.brain.compute_inter_drone_avoidance(telem, peers=synthetic_peers)
                 a_obs = d.brain.compute_obstacle_avoidance(telem)
                 accs[d.id] = a_peers + a_obs
             else:
