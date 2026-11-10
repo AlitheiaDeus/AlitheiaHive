@@ -41,6 +41,7 @@
     let targetDroneId = 0;
     let fpsCounter = 0;
     let lastFpsUpdate = 0;
+    let urbanObstacleMeshes = new Map();
 
     function init() {
         container = document.getElementById('viewport-container');
@@ -505,6 +506,110 @@
         }
     }
 
+    function updateUrbanObstacles(obstacles) {
+        if (!scene) return;
+        const activeIds = new Set();
+        if (Array.isArray(obstacles)) {
+            obstacles.forEach(obs => {
+                activeIds.add(obs.id);
+                let entry = urbanObstacleMeshes.get(obs.id);
+                if (!entry) {
+                    const group = new THREE.Group();
+                    const bounds = obs.bounds; // [x_min, x_max, y_min, y_max, z_floor, z_ceiling]
+                    const width = bounds[1] - bounds[0];   // dx (X axis)
+                    const depth = bounds[3] - bounds[2];   // dy (Y axis)
+                    const height = bounds[5] - bounds[4];  // dz (Z axis)
+
+                    const cx = (bounds[0] + bounds[1]) / 2;
+                    const cy = (bounds[2] + bounds[3]) / 2;
+                    const cz = (bounds[4] + bounds[5]) / 2;
+
+                    const hexColor = parseInt((obs.color || "#00F0FF").replace("#", "0x"), 16);
+
+                    // 1. Translucent Shaded Box Body
+                    const boxGeo = new THREE.BoxGeometry(width, depth, height);
+                    const boxMat = new THREE.MeshStandardMaterial({
+                        color: hexColor,
+                        emissive: hexColor,
+                        emissiveIntensity: 0.12,
+                        roughness: 0.3,
+                        metalness: 0.7,
+                        transparent: true,
+                        opacity: obs.obstacle_type === "SKYBRIDGE" ? 0.45 : 0.22,
+                        side: THREE.DoubleSide,
+                    });
+                    const boxMesh = new THREE.Mesh(boxGeo, boxMat);
+                    group.add(boxMesh);
+
+                    // 2. High-Tech Holographic Wireframe Edges
+                    const edgesGeo = new THREE.EdgesGeometry(boxGeo);
+                    const edgesMat = new THREE.LineBasicMaterial({
+                        color: hexColor,
+                        linewidth: 2,
+                        transparent: true,
+                        opacity: 0.85,
+                    });
+                    const edgesLine = new THREE.LineSegments(edgesGeo, edgesMat);
+                    group.add(edgesLine);
+
+                    // 3. Highlighted Top Landing Deck for Landable Blocks
+                    if (obs.is_landable) {
+                        const deckGeo = new THREE.PlaneGeometry(width * 0.96, depth * 0.96);
+                        const deckMat = new THREE.MeshBasicMaterial({
+                            color: hexColor,
+                            transparent: true,
+                            opacity: 0.35,
+                            side: THREE.DoubleSide,
+                        });
+                        const deckMesh = new THREE.Mesh(deckGeo, deckMat);
+                        deckMesh.position.set(0, 0, height / 2 + 0.02);
+                        group.add(deckMesh);
+                    }
+
+                    // 4. Tactical Elevation Billboard Label
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 256;
+                    canvas.height = 64;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = obs.color || '#00F0FF';
+                    ctx.font = 'bold 22px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    const elevStr = obs.obstacle_type === 'SKYBRIDGE' ? `Z:${bounds[4]}-${bounds[5]}m` : `+${bounds[5].toFixed(1)}m`;
+                    ctx.fillText(`${obs.name || obs.id} [${elevStr}]`, 128, 32);
+                    const texture = new THREE.CanvasTexture(canvas);
+                    const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true, opacity: 0.9 });
+                    const sprite = new THREE.Sprite(spriteMat);
+                    sprite.scale.set(7.0, 1.75, 1.0);
+                    sprite.position.set(0, 0, height / 2 + 2.0);
+                    group.add(sprite);
+
+                    // Position group at center of AABB
+                    group.position.set(cx, cy, cz);
+                    scene.add(group);
+
+                    entry = { group, boxMesh, edgesLine, obs };
+                    urbanObstacleMeshes.set(obs.id, entry);
+                }
+            });
+        }
+
+        // Clean up removed obstacles
+        for (const [id, entry] of urbanObstacleMeshes.entries()) {
+            if (!activeIds.has(id)) {
+                entry.group.traverse(child => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) {
+                        if (child.material.map) child.material.map.dispose();
+                        child.material.dispose();
+                    }
+                });
+                scene.remove(entry.group);
+                urbanObstacleMeshes.delete(id);
+            }
+        }
+    }
+
     function onTelemetryFrame(frame) {
         if (!frame) return;
 
@@ -520,6 +625,11 @@
             } else if (frame.tether) {
                 updateTether(frame.tether, null);
             }
+        }
+
+        // 3D Urban Obstacles & Elevation Shelves (TKT-67)
+        if (frame.urban_obstacles) {
+            updateUrbanObstacles(frame.urban_obstacles);
         }
 
         // Target Beacons

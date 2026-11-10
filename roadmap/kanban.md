@@ -57,6 +57,7 @@ kanban
     tkt66["Simplified RF & GNSS Shadow Occlusion Engine"]@{ ticket: '[TKT-66]', priority: 'High' }
   in_progress["In Progress (WIP = 1)"]
   completed["Completed (Fresh / Review)"]
+    tkt67["Render 3D Urban Obstacles & Elevation Shelves in God-View"]@{ ticket: '[TKT-67]', priority: 'High' }
     tkt62["TKT-62: GCS-SIM Canyon Decoupling & Port Isolation"]@{ ticket: '[TKT-62]', priority: 'High' }
     tkt58["1-Click Aux Mission: Patrol to BINGO RTB"]@{ ticket: '[TKT-58]', priority: 'Medium' }
     tkt51["Physical Courier / Search-and-Recall Mule"]@{ ticket: '[TKT-51]', priority: 'Medium' }
@@ -121,6 +122,7 @@ kanban
 | **`BUG-09`** | `BUG` | God-View Sim Viewport (/sim) Missing Drone ID Badges | Sim viewport /sim renders collision spheres and rotors but lacks drone ID badges | [BUG-09.md](tasks/BUG-09.md) |
 | **`BUG-10`** | `BUG` | Command Deck Button Typography & Emoji Alignment Fix | Emoji characters in GCS command deck buttons cause vertical misalignment and line-height glitches | [BUG-10.md](tasks/BUG-10.md) |
 | **`PLN-11`** | `PLN` | 3D Tactical Corridor Pathfinding & Operator Preview | Operator single-target 3D auto-pathfinding with corridor preview and confirmation before execution | [PLN-11.md](tasks/backlog/PLN-11.md) |
+| **`TKT-67`** | `TKT` | Render 3D Urban Obstacles & Elevation Shelves in God-View | God-View /sim missing 3D obstacle meshes causing drones to clash into invisible buildings | [TKT-67.md](tasks/TKT-67.md) |
 
 ---
 
