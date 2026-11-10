@@ -55,8 +55,15 @@ kanban
     pln11["3D Tactical Corridor Pathfinding & Operator Preview"]@{ ticket: '[PLN-11]', priority: 'Medium' }
   todo["Todo (Active Pipeline)"]
     tkt66["Simplified RF & GNSS Shadow Occlusion Engine"]@{ ticket: '[TKT-66]', priority: 'High' }
+    bug11["Migrate Tandem Escort Stationing to OBC Firmware"]@{ ticket: '[BUG-11]', priority: 'High' }
+    bug12["Migrate Ingress Corridor Stack Popping to OBC Firmware"]@{ ticket: '[BUG-12]', priority: 'High' }
+    bug13["Route C2 Target Uplinks Through Transceiver Inboxes"]@{ ticket: '[BUG-13]', priority: 'High' }
+    bug14["Decouple SITL Sim Proxies to Broadcast Command Packets"]@{ ticket: '[BUG-14]', priority: 'Normal' }
+    bug15["Decouple GCS C2 Gateway to Standalone Downlink Telemetry"]@{ ticket: '[BUG-15]', priority: 'High' }
+    bug16["Command ATC Recovery via Pure C2 Uplink Packets & Parity Bridge"]@{ ticket: '[BUG-16]', priority: 'High' }
   in_progress["In Progress (WIP = 1)"]
   completed["Completed (Fresh / Review)"]
+    bug17["Autonomous Outbox Radio Packet Emission for Gossip & Beacons"]@{ ticket: '[BUG-17]', priority: 'Normal' }
     tkt67["Render 3D Urban Obstacles & Elevation Shelves in God-View"]@{ ticket: '[TKT-67]', priority: 'High' }
     tkt62["TKT-62: GCS-SIM Canyon Decoupling & Port Isolation"]@{ ticket: '[TKT-62]', priority: 'High' }
     tkt58["1-Click Aux Mission: Patrol to BINGO RTB"]@{ ticket: '[TKT-58]', priority: 'Medium' }
@@ -127,6 +134,13 @@ kanban
 | **`TKT-67`** | `TKT` | Render 3D Urban Obstacles & Elevation Shelves in God-View | God-View /sim missing 3D obstacle meshes causing drones to clash into invisible buildings | [TKT-67.md](tasks/TKT-67.md) |
 | **`TKT-68`** | `TKT` | Scramble Overhead Muster Hold & Target Stage-to-Send Confirmation | Active task specification | [TKT-68.md](tasks/TKT-68.md) |
 | **`TKT-69`** | `TKT` | Migrate Zone 2 & 3 Avoidance Reflexes to OBC Firmware (Airgap Enforcement) | Active task specification | [TKT-69.md](tasks/TKT-69.md) |
+| **`BUG-11`** | `BUG` | Migrate Tandem Escort Stationing to OBC Firmware | Strict Brain Airgap enforcement for Search-and-Recall courier tandem missions (Red 2) | [BUG-11.md](tasks/BUG-11.md) |
+| **`BUG-12`** | `BUG` | Migrate Ingress Corridor Stack Popping to OBC Firmware | Autonomic onboard reverse backtrack corridor execution (Red 3) | [BUG-12.md](tasks/BUG-12.md) |
+| **`BUG-13`** | `BUG` | Route C2 Target Uplinks Through Transceiver Inboxes | GCS and tether links deliver packets to inbox, never mutating drone RAM (Red 4) | [BUG-13.md](tasks/BUG-13.md) |
+| **`BUG-14`** | `BUG` | Decouple SITL Sim Proxies to Broadcast Command Packets | Replace in-memory brain proxy iteration with RF broadcast command packets (Red 5) | [BUG-14.md](tasks/BUG-14.md) |
+| **`BUG-15`** | `BUG` | Decouple GCS C2 Gateway to Standalone Downlink Telemetry | Complete Canyon Airgap decoupling: C2 Gateway operates standalone with sim=None (Red 6) | [BUG-15.md](tasks/BUG-15.md) |
+| **`BUG-16`** | `BUG` | Command ATC Recovery via Pure C2 Uplink Packets & Parity Bridge | Decouple ATC recovery from God-mode actuator manipulation; complete Canyon UDP parity (Red 7 & Yellow 4) | [BUG-16.md](tasks/BUG-16.md) |
+| **`BUG-17`** | `BUG` | Autonomous Outbox Radio Packet Emission for Gossip & Beacons | Forbid SITL from forging radio packets; OBC firmware autonomously emits beacons and gossip echoes (Red 8) | [BUG-17.md](tasks/BUG-17.md) |
 
 ---
 

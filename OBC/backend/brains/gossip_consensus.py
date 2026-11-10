@@ -91,6 +91,7 @@ class GossipConsensusBrain(BaseBrain):
         self.inversion_cooldown: float = 0.0
         self._last_clock_s: float = 0.0
         self.gcs_lost_timer: float = 0.0
+        self.heartbeat_timer: float = 0.0
 
     def reset(self) -> None:
         super().reset()
@@ -98,6 +99,7 @@ class GossipConsensusBrain(BaseBrain):
         self.peer_state = DronePeerState(self.drone_id, self._default_target)
         self.peer_states = {self.drone_id: self.peer_state}
         self.last_broadcast_tick = -1.0
+        self.heartbeat_timer = 0.0
         self.formation_heading = 0.0
         self.heading_initialized = False
         self.assigned_slots.clear()
@@ -350,6 +352,54 @@ class GossipConsensusBrain(BaseBrain):
             state_updates=updates,
         )
 
+    def _emit_periodic_packets(
+        self,
+        telemetry: LocalTelemetry,
+        updates: Dict[str, Any],
+        outbox: List[RadioPacket],
+        dt: float,
+    ) -> None:
+        """Autonomously emit periodic gossip packets or peer beacons into outbox (BUG-17)."""
+        if not telemetry.enrolled:
+            return
+        is_crashed = telemetry.flight_state == "CRASHED" or telemetry.status == "CRASHED"
+        if is_crashed:
+            return
+
+        self.heartbeat_timer += dt
+        gossip_tick = False
+        if self.heartbeat_timer >= HEARTBEAT_INTERVAL:
+            self.heartbeat_timer -= HEARTBEAT_INTERVAL
+            gossip_tick = True
+
+        if gossip_tick:
+            outbox.append(self.emit_gossip_packet(telemetry))
+        else:
+            pos_list = (
+                None
+                if (telemetry.gnss_denied or np.isnan(telemetry.pos).any())
+                else [float(v) for v in telemetry.pos]
+            )
+            outbox.append(
+                RadioPacket(
+                    sender_id=telemetry.drone_id,
+                    msg_type="PEER_BEACON",
+                    timestamp=float(telemetry.clock_s),
+                    payload={
+                        "id": int(telemetry.drone_id),
+                        "pos": pos_list,
+                        "vel": [float(v) for v in telemetry.vel],
+                        "yaw": float(telemetry.yaw),
+                        "enrolled": bool(telemetry.enrolled),
+                        "flight_state": str(telemetry.flight_state),
+                        "active_seq": int(self.peer_state.active_seq),
+                        "echo_seq": int(self.peer_state.pending_seq),
+                        "echo_target": [float(v) for v in self.peer_state.pending_target],
+                        "gcs_contact": bool(telemetry.uplink_active),
+                    },
+                )
+            )
+
     # ==========================================================================
     # 2. Per-Drone Decentralized Guidance Step (Pure I/O Boundary)
     # ==========================================================================
@@ -368,6 +418,8 @@ class GossipConsensusBrain(BaseBrain):
 
         if telemetry.flight_state in ("LANDED", "DESCENDING", "GROUND_IDLE", "CRASHED"):
             return FlightIntent(target_acc=np.zeros(3, dtype=float)), outbox
+
+        self._emit_periodic_packets(telemetry, updates, outbox, dt)
 
         # 1. Tactical GNSS Denial & Dead-Reckoning RTB Override (TKT-52)
         if telemetry.gnss_denied:

@@ -225,6 +225,30 @@ class TestAirgapIntegrity(unittest.TestCase):
                         f"Field '{f_name}' in LocalTelemetry is a Drone instance!",
                     )
 
+    def test_autonomous_outbox_emission_zero_sitl_forgery(self):
+        """Red 8 Airgap Enforcement (BUG-17): Packets originate exclusively in OBC step_drone.
+        SITLWorldEngine._deliver_radio_packets must never forge or append packets into outboxes."""
+        sim = SITLWorldEngine(drone_count=4, seed=42)
+        sim.set_brain("GOSSIP_CONSENSUS", force=True)
+
+        for d in sim.drones:
+            d.outbox.clear()
+
+        # SITL deliver comms step with empty outboxes must not forge any packets
+        sim._deliver_radio_packets(DT)
+        for d in sim.drones:
+            self.assertEqual(len(d.outbox), 0, f"Drone #{d.id} outbox was forged by SITL!")
+
+        # OBC guidance step must autonomously populate outbox
+        accs = sim._execute_obc_step(DT)
+        for d in sim.drones:
+            if not d.crashed and d.flight_state not in ("LANDED", "DESCENDING"):
+                self.assertGreater(
+                    len(d.outbox),
+                    0,
+                    f"Drone #{d.id} OBC brain step_drone failed to emit packet into outbox",
+                )
+
     def test_no_quarantined_tests_remain_at_stage_3(self):
         """Anti-orphan gate: at Heartbeat Stage 3, zero tests may remain quarantined."""
         if ACTIVE_HEARTBEAT_STAGE >= 3:

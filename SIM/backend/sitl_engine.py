@@ -357,52 +357,6 @@ class SITLWorldEngine:
             d for d in self.drones
             if not d.crashed and d.flight_state not in ("LANDED", "DESCENDING")
         ]
-        if self.active_brain_name == "LEADER_FOLLOWER":
-            for sender in living:
-                sender.outbox = [
-                    p for p in sender.outbox
-                    if p.msg_type not in ("LEADER_HEARTBEAT", "ESCORT_YIP")
-                ]
-                sender.outbox.append(self._build_transceiver_beacon(sender))
-        elif self.active_brain_name == "GOSSIP_CONSENSUS":
-            gossip_tick = False
-            last_g_tick = getattr(self, "_last_gossip_broadcast", -1.0)
-            if self.sim_time - last_g_tick >= HEARTBEAT_INTERVAL:
-                self._last_gossip_broadcast = self.sim_time
-                gossip_tick = True
-
-            for sender in living:
-                if not getattr(sender, "enrolled", True):
-                    continue
-                sender.outbox = [
-                    p for p in sender.outbox
-                    if p.msg_type not in ("GOSSIP_ECHO", "PEER_BEACON")
-                ]
-                if isinstance(sender.brain, GossipConsensusBrain):
-                    if gossip_tick:
-                        sender.outbox.append(sender.brain.emit_gossip_packet(self._build_local_telemetry(sender)))
-                    else:
-                        pos_list = None if getattr(sender, "gnss_denied", False) else [float(v) for v in sender.pos]
-                        sender.outbox.append(
-                            RadioPacket(
-                                sender_id=sender.id,
-                                msg_type="PEER_BEACON",
-                                timestamp=float(self.sim_time),
-                                payload={
-                                    "id": int(sender.id),
-                                    "pos": pos_list,
-                                    "vel": [float(v) for v in sender.vel],
-                                    "yaw": float(sender.yaw),
-                                    "enrolled": bool(getattr(sender, "enrolled", True)),
-                                    "flight_state": str(sender.flight_state),
-                                    "active_seq": int(sender.brain.peer_state.active_seq),
-                                    "echo_seq": int(sender.brain.peer_state.pending_seq),
-                                    "echo_target": [float(v) for v in sender.brain.peer_state.pending_target],
-                                    "gcs_contact": bool(sender.uplink_active),
-                                },
-                            )
-                        )
-
         all_senders = [d for d in self.drones if d.outbox]
         for sender in all_senders:
             out_packets = list(sender.outbox)
