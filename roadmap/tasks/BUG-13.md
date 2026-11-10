@@ -9,7 +9,7 @@
 
 In accordance with the **Canyon Airgap**, communication between the Ground Control Station and the drone fleet occurs strictly across serialized network channels (UDP 9000/9001, MAVLink, and RF transceiver packets). An external operator or world engine must never mutate drone flight buffers in Python memory directly.
 
-Previously, [`dispatch_target_uplink`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/SIM/backend/sitl_engine.py#L2863-L2875) directly overwrote `d.acknowledged_target` and mutated `d.flight_state` in memory for leader and follower drones. This completely bypassed the transceiver buffer. Although both [`LeaderFollowerBrain`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/OBC/backend/brains/leader_follower.py) and [`GossipConsensusBrain`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/OBC/backend/brains/gossip_consensus.py) possessed unit-tested logic to ingest `GCS_UPLINK` packets, SITL's uplink dispatcher cheated by writing to RAM.
+Previously, [`dispatch_target_uplink`](../../SIM/backend/sitl_engine.py#L2863-L2875) directly overwrote `d.acknowledged_target` and mutated `d.flight_state` in memory for leader and follower drones. This completely bypassed the transceiver buffer. Although both [`LeaderFollowerBrain`](../../OBC/backend/brains/leader_follower.py) and [`GossipConsensusBrain`](../../OBC/backend/brains/gossip_consensus.py) possessed unit-tested logic to ingest `GCS_UPLINK` packets, SITL's uplink dispatcher cheated by writing to RAM.
 
 This ticket refactored `dispatch_target_uplink` to queue authentic `RadioPacket(msg_type="GCS_UPLINK", ...)` instances into drone inboxes.
 
@@ -17,10 +17,10 @@ This ticket refactored `dispatch_target_uplink` to queue authentic `RadioPacket(
 
 ## 2. Target Files & Architectural Scope
 
-* [`SIM/backend/sitl_engine.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/SIM/backend/sitl_engine.py): Refactored `dispatch_target_uplink` to queue `RadioPacket(sender_id=-1, msg_type="GCS_UPLINK", payload={"cmd": "SET_TARGET", "target": target_arr.tolist()})` into target drone `inbox`es instead of mutating `d.acknowledged_target`.
-* [`OBC/backend/brains/leader_follower.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/OBC/backend/brains/leader_follower.py): Ensured `GCS_UPLINK` packet handling in `step_drone` unfreezes `holding_at_horizon`, transitions `PERIMETER_HOLD` $\rightarrow$ `CRUISE`, and updates `acknowledged_target`.
-* [`OBC/backend/brains/gossip_consensus.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/OBC/backend/brains/gossip_consensus.py): Ensured `GCS_UPLINK` packets seed consensus sequence in `peer_state`.
-* [`tests/test_airgap_integrity.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/tests/test_airgap_integrity.py): Asserted zero direct memory mutation during target dispatch; verified targets update only after `step_drone` processes incoming inbox packets.
+* [`SIM/backend/sitl_engine.py`](../../SIM/backend/sitl_engine.py): Refactored `dispatch_target_uplink` to queue `RadioPacket(sender_id=-1, msg_type="GCS_UPLINK", payload={"cmd": "SET_TARGET", "target": target_arr.tolist()})` into target drone `inbox`es instead of mutating `d.acknowledged_target`.
+* [`OBC/backend/brains/leader_follower.py`](../../OBC/backend/brains/leader_follower.py): Ensured `GCS_UPLINK` packet handling in `step_drone` unfreezes `holding_at_horizon`, transitions `PERIMETER_HOLD` $\rightarrow$ `CRUISE`, and updates `acknowledged_target`.
+* [`OBC/backend/brains/gossip_consensus.py`](../../OBC/backend/brains/gossip_consensus.py): Ensured `GCS_UPLINK` packets seed consensus sequence in `peer_state`.
+* [`tests/test_airgap_integrity.py`](../../tests/test_airgap_integrity.py): Asserted zero direct memory mutation during target dispatch; verified targets update only after `step_drone` processes incoming inbox packets.
 
 ---
 

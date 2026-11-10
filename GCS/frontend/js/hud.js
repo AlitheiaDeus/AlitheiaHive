@@ -31,6 +31,7 @@
     let cardsContainer = null;
     let eventLogList = null;
     let inputX = null, inputY = null, inputZ = null;
+    let stagedTarget = null;
 
     function init() {
         cardsContainer = document.getElementById('telemetry-cards');
@@ -69,11 +70,11 @@
         setupBtn('btn-form-patrol', () => dispatchFormation('PERIMETER_IN'));
         setupBtn('btn-form-patrol-out', () => dispatchFormation('PERIMETER_OUT'));
 
-        // Preset Waypoints: Direct 1-Click Dispatch (BUG-18)
-        setupBtn('btn-wp-alpha', () => dispatchTarget([60.0, 40.0, 30.0], 'ALPHA'));
-        setupBtn('btn-wp-bravo', () => dispatchTarget([-40.0, 70.0, 45.0], 'BRAVO'));
-        setupBtn('btn-wp-charlie', () => dispatchTarget([50.0, -50.0, 25.0], 'CHARLIE'));
-        setupBtn('btn-wp-rtb', () => dispatchTarget([0.0, 0.0, 20.0], 'RTB_BASE'));
+        // Preset Waypoints: Stage Target Coordinates (TKT-68 / BUG-18)
+        setupBtn('btn-wp-alpha', () => stageTarget([60.0, 40.0, 30.0], 'ALPHA'));
+        setupBtn('btn-wp-bravo', () => stageTarget([-40.0, 70.0, 45.0], 'BRAVO'));
+        setupBtn('btn-wp-charlie', () => stageTarget([50.0, -50.0, 25.0], 'CHARLIE'));
+        setupBtn('btn-wp-rtb', () => stageTarget([0.0, 0.0, 20.0], 'RTB_BASE'));
 
         // Discrete Mission Routes (TKT-28)
         setupBtn('btn-route-box', () => deployRoutePreset('BOX_PATROL'));
@@ -142,9 +143,9 @@
         const btnDispatchCustom = document.getElementById('btn-dispatch-custom');
         if (btnDispatchCustom) {
             btnDispatchCustom.addEventListener('click', () => {
-                const x = parseFloat(inputX?.value || 0);
-                const y = parseFloat(inputY?.value || 0);
-                const z = parseFloat(inputZ?.value || 20);
+                const x = parseFloat(inputX?.value ?? (stagedTarget ? stagedTarget[0] : 0));
+                const y = parseFloat(inputY?.value ?? (stagedTarget ? stagedTarget[1] : 0));
+                const z = parseFloat(inputZ?.value ?? (stagedTarget ? stagedTarget[2] : 20));
                 dispatchTarget([x, y, z], 'OPERATOR_COMMITTED');
             });
         }
@@ -156,6 +157,7 @@
                 const x = parseFloat(inputX?.value || 0);
                 const y = parseFloat(inputY?.value || 0);
                 const z = parseFloat(inputZ?.value || 20);
+                stagedTarget = [x, y, z];
                 window.tacticalApp?.setStagedTarget([x, y, z]);
                 if (btnDispatchCustom) btnDispatchCustom.classList.add('pulse-send');
             });
@@ -305,6 +307,7 @@
     }
 
     function dispatchTarget(pos, label) {
+        stagedTarget = null;
         patrolActive = false;
         const btnPatrol = document.getElementById('btn-toggle-patrol');
         if (btnPatrol) {
@@ -327,6 +330,7 @@
     }
 
     function stageTarget(pos, label) {
+        stagedTarget = [pos[0], pos[1], pos[2]];
         if (inputX) inputX.value = pos[0];
         if (inputY) inputY.value = pos[1];
         if (inputZ) inputZ.value = pos[2];
@@ -432,7 +436,10 @@
         const cmdTarget = frame.commanded_target || frame.target;
         const ackTarget = frame.acknowledged_target || frame.target;
 
-        if (cmdTarget && inputX && !inputX.matches(':focus')) {
+        const anyInputFocused = (inputX && inputX.matches(':focus')) || 
+                               (inputY && inputY.matches(':focus')) || 
+                               (inputZ && inputZ.matches(':focus'));
+        if (cmdTarget && inputX && !anyInputFocused && stagedTarget === null) {
             inputX.value = cmdTarget[0];
             inputY.value = cmdTarget[1];
             inputZ.value = cmdTarget[2];

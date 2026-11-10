@@ -9,7 +9,7 @@
 
 In accordance with the **Brain Airgap** and **God-View / Sim Airgap**, the SITL world engine governs physical channel delivery (path loss, obstacles, dropped packets, and collision). It must never manufacture or forge radio packets on behalf of airframes.
 
-Previously, [`_deliver_radio_packets`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/SIM/backend/sitl_engine.py#L381-L408) in the SITL world engine purged `sender.outbox` and manually appended `PEER_BEACON` and `GOSSIP_ECHO` packets into the drone's outbox before calling `step_drone`. In a physical swarm, radio packets must be emitted autonomously by the OBC brain firmware during its own control step. The physics engine should only read existing packets from `drone.outbox` and simulate their transmission over the air.
+Previously, [`_deliver_radio_packets`](../../SIM/backend/sitl_engine.py#L381-L408) in the SITL world engine purged `sender.outbox` and manually appended `PEER_BEACON` and `GOSSIP_ECHO` packets into the drone's outbox before calling `step_drone`. In a physical swarm, radio packets must be emitted autonomously by the OBC brain firmware during its own control step. The physics engine should only read existing packets from `drone.outbox` and simulate their transmission over the air.
 
 This ticket moved all periodic beacon and gossip packet generation into `GossipConsensusBrain.step_drone`, returning them cleanly in the `outbox` return value.
 
@@ -17,9 +17,9 @@ This ticket moved all periodic beacon and gossip packet generation into `GossipC
 
 ## 2. Target Files & Architectural Scope
 
-* [`OBC/backend/brains/gossip_consensus.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/OBC/backend/brains/gossip_consensus.py): Implemented autonomous periodic emission of `PEER_BEACON` and `GOSSIP_ECHO` packets within `step_drone`, returning them in `outbox`.
-* [`SIM/backend/sitl_engine.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/SIM/backend/sitl_engine.py): Purged forged packet appending from `_deliver_radio_packets`. SIM physics loop strictly delivers existing packets in `sender.outbox` across the RF propagation model.
-* [`tests/test_airgap_integrity.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/tests/test_airgap_integrity.py): Added `test_autonomous_outbox_emission_zero_sitl_forgery` verifying autonomous emission and zero SITL forgery.
+* [`OBC/backend/brains/gossip_consensus.py`](../../OBC/backend/brains/gossip_consensus.py): Implemented autonomous periodic emission of `PEER_BEACON` and `GOSSIP_ECHO` packets within `step_drone`, returning them in `outbox`.
+* [`SIM/backend/sitl_engine.py`](../../SIM/backend/sitl_engine.py): Purged forged packet appending from `_deliver_radio_packets`. SIM physics loop strictly delivers existing packets in `sender.outbox` across the RF propagation model.
+* [`tests/test_airgap_integrity.py`](../../tests/test_airgap_integrity.py): Added `test_autonomous_outbox_emission_zero_sitl_forgery` verifying autonomous emission and zero SITL forgery.
 
 ---
 

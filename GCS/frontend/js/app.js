@@ -1908,10 +1908,8 @@
 
                 spawnClickRipple(targetX, targetY);
 
-                // Direct 1-click dispatch to swarm (BUG-18)
-                if (window.tacticalHud && typeof window.tacticalHud.dispatchTarget === 'function') {
-                    window.tacticalHud.dispatchTarget([targetX, targetY, targetZ], 'GROUND_CLICK');
-                } else if (window.tacticalHud && typeof window.tacticalHud.stageTarget === 'function') {
+                // Stage target coordinate from 3D ground click (TKT-68 / BUG-18)
+                if (window.tacticalHud && typeof window.tacticalHud.stageTarget === 'function') {
                     window.tacticalHud.stageTarget([targetX, targetY, targetZ], 'GROUND_CLICK');
                 } else {
                     const ix = document.getElementById('tgt-input-x');

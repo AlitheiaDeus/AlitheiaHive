@@ -7,9 +7,9 @@
 
 ## 1. Operational Overview & Objectives
 
-In accordance with the **Brain Airgap**, each drone owns an isolated [`BaseBrain`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/OBC/backend/brains/base.py) instance. A swarm of separate physical microcontrollers cannot be updated via an in-memory Python `for` loop iterating over drone instances.
+In accordance with the **Brain Airgap**, each drone owns an isolated [`BaseBrain`](../../OBC/backend/brains/base.py) instance. A swarm of separate physical microcontrollers cannot be updated via an in-memory Python `for` loop iterating over drone instances.
 
-Currently, the compatibility proxies [`_LeaderFollowerSimProxy`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/SIM/backend/sitl_engine.py#L3167-L3225) and [`_GossipSimProxy`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/SIM/backend/sitl_engine.py#L3356-L3450) mutate private fields (`brain.formation_mode`, `brain.peer_state.pending_seq`, `seed_drone.acknowledged_target`) by looping through `self.drones` directly in Python memory. Furthermore, `inject_target` writes consensus registers directly into `seed_drone.brain.peer_state`.
+Currently, the compatibility proxies [`_LeaderFollowerSimProxy`](../../SIM/backend/sitl_engine.py#L3167-L3225) and [`_GossipSimProxy`](../../SIM/backend/sitl_engine.py#L3356-L3450) mutate private fields (`brain.formation_mode`, `brain.peer_state.pending_seq`, `seed_drone.acknowledged_target`) by looping through `self.drones` directly in Python memory. Furthermore, `inject_target` writes consensus registers directly into `seed_drone.brain.peer_state`.
 
 This ticket refactors the proxy classes to simulate authentic over-the-air C2 command broadcasts, queuing `RadioPacket`s into transceivers rather than reaching into private brain memory.
 
@@ -17,10 +17,10 @@ This ticket refactors the proxy classes to simulate authentic over-the-air C2 co
 
 ## 2. Target Files & Architectural Scope
 
-* [`SIM/backend/sitl_engine.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/SIM/backend/sitl_engine.py): Refactor `_LeaderFollowerSimProxy.formation_mode.setter` and `_GossipSimProxy.inject_target` to transmit `C2_COMMAND` or `GOSSIP_SEED` packets across the simulated RF channel.
-* [`OBC/backend/brains/leader_follower.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/OBC/backend/brains/leader_follower.py): Process `C2_COMMAND` (`{"cmd": "SET_FORMATION", "mode": ...}`) in `step_drone` to switch `self.formation_mode`.
-* [`OBC/backend/brains/gossip_consensus.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/OBC/backend/brains/gossip_consensus.py): Handle `GOSSIP_SEED` packets to initialize `peer_state` consensus from inbox rather than external direct RAM mutation.
-* [`tests/test_gossip_formations.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/tests/test_gossip_formations.py): Verify formation switching operates via over-the-air packet processing.
+* [`SIM/backend/sitl_engine.py`](../../SIM/backend/sitl_engine.py): Refactor `_LeaderFollowerSimProxy.formation_mode.setter` and `_GossipSimProxy.inject_target` to transmit `C2_COMMAND` or `GOSSIP_SEED` packets across the simulated RF channel.
+* [`OBC/backend/brains/leader_follower.py`](../../OBC/backend/brains/leader_follower.py): Process `C2_COMMAND` (`{"cmd": "SET_FORMATION", "mode": ...}`) in `step_drone` to switch `self.formation_mode`.
+* [`OBC/backend/brains/gossip_consensus.py`](../../OBC/backend/brains/gossip_consensus.py): Handle `GOSSIP_SEED` packets to initialize `peer_state` consensus from inbox rather than external direct RAM mutation.
+* [`tests/test_gossip_formations.py`](../../tests/test_gossip_formations.py): Verify formation switching operates via over-the-air packet processing.
 
 ---
 

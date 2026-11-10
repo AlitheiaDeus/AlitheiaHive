@@ -9,7 +9,7 @@
 
 In accordance with the **4 Explicit Airgaps** of the 50/50 Architecture, the SITL World Engine (Bubble 3) must never reach into drone autonomy state machines or calculate drone flight targets.
 
-During Search-and-Recall / Courier tandem missions (TKT-51), an airframe in `ESCORT_REJOIN` trails behind the rescue courier. Currently, [`_execute_obc_step`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/SIM/backend/sitl_engine.py#L432-L444) peeks across drone objects in simulation memory, looks up the courier by ID, computes the 4.0m trailing station from the courier's ground-truth `pos` and `vel`, and directly mutates `drone.acknowledged_target` and `drone.target_station`. On physical hardware where `SITLWorldEngine` does not exist, an escortee drone in `ESCORT_REJOIN` will never calculate its trailing station and will freeze or drift indefinitely.
+During Search-and-Recall / Courier tandem missions (TKT-51), an airframe in `ESCORT_REJOIN` trails behind the rescue courier. Currently, [`_execute_obc_step`](../../SIM/backend/sitl_engine.py#L432-L444) peeks across drone objects in simulation memory, looks up the courier by ID, computes the 4.0m trailing station from the courier's ground-truth `pos` and `vel`, and directly mutates `drone.acknowledged_target` and `drone.target_station`. On physical hardware where `SITLWorldEngine` does not exist, an escortee drone in `ESCORT_REJOIN` will never calculate its trailing station and will freeze or drift indefinitely.
 
 This ticket migrates all tandem trailing station calculations into the OBC brain firmware, operating strictly from received `RadioPacket`s (`ESCORT_YIP` / beacon telemetry).
 
@@ -17,10 +17,10 @@ This ticket migrates all tandem trailing station calculations into the OBC brain
 
 ## 2. Target Files & Architectural Scope
 
-* [`OBC/backend/brains/leader_follower.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/OBC/backend/brains/leader_follower.py): Implement onboard tandem trailing station calculation within `step_drone` for `telemetry.flight_state == "ESCORT_REJOIN"`, consuming courier state from `self.heard_peers[escort_leader_id]`.
-* [`OBC/backend/brains/base.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/OBC/backend/brains/base.py): Ensure `LocalTelemetry` carries `escort_leader_id: Optional[int]` (or courier peer ID) and `FlightIntent` returns `target_station` and `state_updates["acknowledged_target"]`.
-* [`SIM/backend/sitl_engine.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/SIM/backend/sitl_engine.py): Purge lines 431–444 from `_execute_obc_step`. SIM must not compute or mutate target stations for escortee drones.
-* [`tests/test_escort_courier_lkp.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/tests/test_escort_courier_lkp.py): Verify tandem escort trailing operates purely in `step_drone` from `heard_peers`.
+* [`OBC/backend/brains/leader_follower.py`](../../OBC/backend/brains/leader_follower.py): Implement onboard tandem trailing station calculation within `step_drone` for `telemetry.flight_state == "ESCORT_REJOIN"`, consuming courier state from `self.heard_peers[escort_leader_id]`.
+* [`OBC/backend/brains/base.py`](../../OBC/backend/brains/base.py): Ensure `LocalTelemetry` carries `escort_leader_id: Optional[int]` (or courier peer ID) and `FlightIntent` returns `target_station` and `state_updates["acknowledged_target"]`.
+* [`SIM/backend/sitl_engine.py`](../../SIM/backend/sitl_engine.py): Purge lines 431–444 from `_execute_obc_step`. SIM must not compute or mutate target stations for escortee drones.
+* [`tests/test_escort_courier_lkp.py`](../../tests/test_escort_courier_lkp.py): Verify tandem escort trailing operates purely in `step_drone` from `heard_peers`.
 
 ---
 
