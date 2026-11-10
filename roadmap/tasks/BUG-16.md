@@ -9,10 +9,10 @@
 
 In accordance with the **Sim/God-View Airgap** and **Canyon Airgap**, air traffic recovery coordinators and GCS command decks must interface with airframes via authentic command packets, rather than directly manipulating actuators or flight controller registers in memory.
 
-Currently, [`atc_recovery.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/SIM/backend/atc_recovery.py):
+Currently, [`atc_recovery.py`](../../SIM/backend/atc_recovery.py):
 - Directly sets `drone.rotor_rpm = 5200.0`, `drone.flight_state = "TAKEOFF"`, and zeroes `drone.vel` in RAM during `command_scramble`.
 - Overwrites flight states, targets, and internal gossip registers directly in RAM during `command_rtb_hold` and `command_e_land`.
-- Furthermore, when running fully decoupled over UDP, several tactical commands (`E_LAND`, `SET_FIELD_LZ`, `CLEAR_FIELD_LZ`, `TAKEOFF_DRONE`, `DECLARE_LOST`) are missing from [`MavlinkBridge.execute_command`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/SIM/backend/mavlink_bridge.py#L462-L467) (**Yellow 4** in `.agents/reports/AIRGAP_VIOLATIONS_REPORT.md`), causing them to drop with `UNKNOWN_COMMAND`.
+- Furthermore, when running fully decoupled over UDP, several tactical commands (`E_LAND`, `SET_FIELD_LZ`, `CLEAR_FIELD_LZ`, `TAKEOFF_DRONE`, `DECLARE_LOST`) are missing from [`MavlinkBridge.execute_command`](../../SIM/backend/mavlink_bridge.py) (**Yellow 4** in `.agents/reports/AIRGAP_VIOLATIONS_REPORT.md`), causing them to drop with `UNKNOWN_COMMAND`.
 
 This ticket refactors ATC recovery to issue standardized C2 command packets to drone inboxes, and implements the missing command handlers in `MavlinkBridge` for full Canyon UDP parity.
 
@@ -20,10 +20,10 @@ This ticket refactors ATC recovery to issue standardized C2 command packets to d
 
 ## 2. Target Files & Architectural Scope
 
-* [`SIM/backend/atc_recovery.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/SIM/backend/atc_recovery.py): Refactor `command_scramble`, `command_rtb_hold`, and `command_e_land` to deliver command packets to drone inboxes.
-* [`OBC/backend/drone_firmware.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/OBC/backend/drone_firmware.py): Have onboard flight controller firmware transition flight states and ramp rotor RPM in response to received command packets.
-* [`SIM/backend/mavlink_bridge.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/SIM/backend/mavlink_bridge.py): Add command dispatch handlers for `COMMAND_E_LAND`, `SET_FIELD_LZ`, `CLEAR_FIELD_LZ`, `TAKEOFF_DRONE`, and `DECLARE_LOST`.
-* [`tests/test_atc_recovery.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/tests/test_atc_recovery.py): Verify ATC procedures execute cleanly via packet interfaces.
+* [`SIM/backend/atc_recovery.py`](../../SIM/backend/atc_recovery.py): Refactor `command_scramble`, `command_rtb_hold`, and `command_e_land` to deliver command packets to drone inboxes.
+* [`OBC/backend/drone_firmware.py`](../../OBC/backend/drone_firmware.py): Have onboard flight controller firmware transition flight states and ramp rotor RPM in response to received command packets.
+* [`SIM/backend/mavlink_bridge.py`](../../SIM/backend/mavlink_bridge.py): Add command dispatch handlers for `COMMAND_E_LAND`, `SET_FIELD_LZ`, `CLEAR_FIELD_LZ`, `TAKEOFF_DRONE`, and `DECLARE_LOST`.
+* [`tests/test_rtb_landing.py`](../../tests/test_rtb_landing.py): Verify ATC procedures execute cleanly via packet interfaces.
 
 ---
 

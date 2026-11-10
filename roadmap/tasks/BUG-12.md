@@ -9,7 +9,7 @@
 
 In accordance with the **Brain Airgap**, each drone airframe is an autonomous compute bubble (OBC). Drones steer strictly to local `acknowledged_target` buffers and execute onboard failsafes when comms drop.
 
-Currently, during Emergency Return to Base via reversible ingress corridor (`CORRIDOR_ERTB`), [`_execute_obc_step`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/SIM/backend/sitl_engine.py#L460-L470) in the SITL world engine pops nodes from `drone.corridor_stack`, evaluates arrival distance ($d \le 4.5\text{m}$), updates `drone.acknowledged_target` and `drone.target_station`, and directly switches the drone's flight state to `OVERHEAD_HOLD`. Neither [`LeaderFollowerBrain`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/OBC/backend/brains/leader_follower.py) nor [`GossipConsensusBrain`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/OBC/backend/brains/gossip_consensus.py) drives this sequence. On real hardware without SITL, an airframe executing `CORRIDOR_ERTB` will remain permanently frozen targeting the first corridor waypoint.
+Currently, during Emergency Return to Base via reversible ingress corridor (`CORRIDOR_ERTB`), [`_execute_obc_step`](../../SIM/backend/sitl_engine.py) in the SITL world engine pops nodes from `drone.corridor_stack`, evaluates arrival distance ($d \le 4.5\text{m}$), updates `drone.acknowledged_target` and `drone.target_station`, and directly switches the drone's flight state to `OVERHEAD_HOLD`. Neither [`LeaderFollowerBrain`](../../OBC/backend/brains/leader_follower.py) nor [`GossipConsensusBrain`](../../OBC/backend/brains/gossip_consensus.py) drives this sequence. On real hardware without SITL, an airframe executing `CORRIDOR_ERTB` will remain permanently frozen targeting the first corridor waypoint.
 
 This ticket moves corridor node popping and arrival detection directly into OBC brain firmware.
 
@@ -17,11 +17,11 @@ This ticket moves corridor node popping and arrival detection directly into OBC 
 
 ## 2. Target Files & Architectural Scope
 
-* [`OBC/backend/brains/leader_follower.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/OBC/backend/brains/leader_follower.py): Implement `CORRIDOR_ERTB` waypoint progression and arrival evaluation in `step_drone`.
-* [`OBC/backend/brains/gossip_consensus.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/OBC/backend/brains/gossip_consensus.py): Implement matching `CORRIDOR_ERTB` waypoint progression.
-* [`OBC/backend/brains/base.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/OBC/backend/brains/base.py): Ensure corridor stack state and targets are communicated cleanly via `LocalTelemetry` and `FlightIntent.state_updates`.
-* [`SIM/backend/sitl_engine.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/SIM/backend/sitl_engine.py): Remove lines 459–470 from `_execute_obc_step`. SIM must not pop corridor nodes or trigger `OVERHEAD_HOLD`.
-* [`tests/test_emergency_landing.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/tests/test_emergency_landing.py): Verify that corridor backtracking progresses autonomously in standalone OBC step execution.
+* [`OBC/backend/brains/leader_follower.py`](../../OBC/backend/brains/leader_follower.py): Implement `CORRIDOR_ERTB` waypoint progression and arrival evaluation in `step_drone`.
+* [`OBC/backend/brains/gossip_consensus.py`](../../OBC/backend/brains/gossip_consensus.py): Implement matching `CORRIDOR_ERTB` waypoint progression.
+* [`OBC/backend/brains/base.py`](../../OBC/backend/brains/base.py): Ensure corridor stack state and targets are communicated cleanly via `LocalTelemetry` and `FlightIntent.state_updates`.
+* [`SIM/backend/sitl_engine.py`](../../SIM/backend/sitl_engine.py): Remove lines 459–470 from `_execute_obc_step`. SIM must not pop corridor nodes or trigger `OVERHEAD_HOLD`.
+* [`tests/test_field_lz_and_eland.py`](../../tests/test_field_lz_and_eland.py): Verify that corridor backtracking progresses autonomously in standalone OBC step execution.
 
 ---
 
