@@ -277,7 +277,8 @@ class TestMissionRoutes(unittest.TestCase):
             slot = sim.brain._get_formation_slot(f, leader)
             f.pos = np.copy(slot)
 
-        # Step 1 frame
+        # Step to emit follower telemetry yips and ingest into leader's heard peers
+        sim.step()
         sim.step()
 
         # Escorts settled: gate clears and leader advances to WP 1

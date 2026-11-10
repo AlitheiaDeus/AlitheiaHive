@@ -17,6 +17,7 @@ class TestRngRecon(unittest.TestCase):
         sim = SwarmSimulator(drone_count=4)
         target = np.array([30.0, 30.0, 20.0], dtype=float)
         sim.set_target(target)
+        sim.step(0.016)
 
         leader = sim.leader
         self.assertIsNotNone(leader)

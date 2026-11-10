@@ -369,7 +369,7 @@ class LeaderFollowerBrain(BaseBrain):
                 if telemetry.peel_off_timer > 0.0:
                     new_peel = max(0.0, telemetry.peel_off_timer - dt)
                     updates["peel_off_timer"] = new_peel
-                    peel_waypoint = slot_pos + (7.0 * telemetry.peel_off_dir)
+                    peel_waypoint = telemetry.pos + (8.0 * telemetry.peel_off_dir)
                     acc = self._steer_toward(telemetry.pos, telemetry.vel, peel_waypoint, max_speed=V_CRUISE)
                 elif telemetry.enrollment_timer > 0.0:
                     new_enroll = max(0.0, telemetry.enrollment_timer - dt)
@@ -1066,6 +1066,10 @@ class LeaderFollowerBrain(BaseBrain):
         vacated_slot = self.assigned_slots.pop(new_leader_id, None)
         if old_leader_id is not None and vacated_slot is not None:
             self.assigned_slots[old_leader_id] = vacated_slot
+        if old_leader_id is not None and old_leader_id in self.heard_peers:
+            self.heard_peers[old_leader_id].is_leader = False
+        if new_leader_id in self.heard_peers:
+            self.heard_peers[new_leader_id].is_leader = True
 
     def handle_command(self, cmd_dict: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Process brain-specific C2 directives."""

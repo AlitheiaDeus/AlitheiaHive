@@ -541,6 +541,7 @@ class TestSimCore(unittest.TestCase):
         sim.leader.pos = np.array([60.0, 0.0, 25.0], dtype=float)
         res = sim.set_target([80.0, 80.0, 30.0])
         self.assertEqual(res.get("status"), "OK")
+        sim.step(0.016)
         np.testing.assert_allclose(sim.leader.acknowledged_target, [80.0, 80.0, 30.0])
 
 

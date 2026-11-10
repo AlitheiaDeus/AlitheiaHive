@@ -110,7 +110,8 @@ class TestWaypointEngine(unittest.TestCase):
                 f.pos = np.copy(brain._get_formation_slot(f, leader))
                 f.vel = np.zeros(3)
 
-        # Step one frame: now that escorts are settled, departure gate opens and advances to WP 1!
+        # Step to emit follower telemetry yips and ingest into leader's heard peers
+        sim.step()
         sim.step()
         self.assertEqual(leader.current_wp_idx, 1)
         np.testing.assert_allclose(leader.acknowledged_target, [50.0, 0.0, 25.0])

@@ -392,6 +392,7 @@ class TestTriModeRF(unittest.TestCase):
         res = self.sim.set_target([135.0, 20.0, 30.0])
         self.assertEqual(res["status"], "OK")
         self.assertEqual(res["channel"], "WIRELESS_STAR")
+        self.sim.step(0.016)
         np.testing.assert_allclose(leader.acknowledged_target, [135.0, 20.0, 30.0])
 
         # Beyond 140m fails (e.g. 145m)

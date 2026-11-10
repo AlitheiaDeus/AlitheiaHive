@@ -7,12 +7,17 @@ Communicates strictly across the Canyon Airgap via network packets / protocol in
 """
 
 from __future__ import annotations
+import json
+import logging
 import math
 import os
+import socket
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Union
 import numpy as np
+
+logger = logging.getLogger("C2Gateway")
 
 # Radio Comms & Range Constants (Canine Taxonomy - TKT-49)
 RANGE_HOWL: float = 140.0
@@ -84,6 +89,16 @@ class C2Gateway:
         # Commanded Target (GCS intent) - defaults to Base Overhead Muster Hold [0, 0, 20]
         self._target_pos: np.ndarray = np.array([0.0, 0.0, 20.0], dtype=float)
 
+        # Standalone GCS Downlink Telemetry Cache & Canyon Network Dispatch (TKT-62 / BUG-15)
+        self.c2_time: float = 0.0
+        self.fleet_telemetry: Dict[int, Dict[str, Any]] = {}
+        self.latest_frame: Optional[Dict[str, Any]] = None
+        self.udp_sock: Optional[socket.socket] = None
+        self.canyon_host: str = "127.0.0.1"
+        self.canyon_port: int = 9001
+        self.last_telemetry_time: float = -100.0
+        self.session_manager: Optional[Any] = None
+
         # Dynamic Target Auto-Patrol Loop (TKT-12)
         self.patrol_active: bool = False
         self.patrol_speed: float = 0.08  # Radians per second (~78s per loop)
@@ -137,13 +152,39 @@ class C2Gateway:
         self.payload_drop_stage: str = "IDLE"     # "IDLE", "TRANSIT_TO_DROP", "PRECISION_DESCENT", "RELEASE_HOVER", "PAYLOAD_FALLING", "CARRIER_EGRESS", "MISSION_COMPLETE"
         self.payload_drop_timer: float = 0.0
 
+    def on_telemetry_frame(self, frame: Dict[str, Any]) -> None:
+        """Ingest downlinked telemetry snapshot from Canyon UDP port or WebSocket (Operator Airgap)."""
+        self.latest_frame = frame
+        sim_time = float(frame.get("sim_time", self.c2_time))
+        self.last_telemetry_time = sim_time
+        drones = frame.get("drones", [])
+        for d in drones:
+            did = d.get("id")
+            if did is not None:
+                self.fleet_telemetry[int(did)] = d
+
+    def send_canyon_command(self, cmd_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Transmit serialized C2 directive across Canyon UDP port 9001 (Operator Airgap)."""
+        try:
+            if self.udp_sock is None:
+                self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            payload = json.dumps(cmd_dict).encode("utf-8")
+            self.udp_sock.sendto(payload, (self.canyon_host, self.canyon_port))
+            return {"status": "OK", "channel": "UDP_CANYON", "cmd": cmd_dict.get("cmd")}
+        except OSError as e:
+            logger.warning("Failed to emit C2 command across UDP port %d: %s", self.canyon_port, e)
+            return {"status": "ERROR", "reason": f"UDP_SEND_ERROR: {e}"}
+
     @property
     def target_pos(self) -> np.ndarray:
         return self._target_pos
 
     @target_pos.setter
     def target_pos(self, value: Union[List[float], np.ndarray]) -> None:
-        self._target_pos = np.array(value, dtype=float)
+        new_val = np.array(value, dtype=float)
+        if hasattr(self, "_target_pos") and np.allclose(self._target_pos, new_val, atol=0.01):
+            return
+        self._target_pos = new_val
         if self.sim:
             if not getattr(self.sim, "tether_severed", False) and getattr(self.sim, "comms_mode", "") == "TETHERED_RELAY":
                 for d in getattr(self.sim, "drones", []):
@@ -166,10 +207,10 @@ class C2Gateway:
 
     def step(self, dt: float) -> None:
         """Advance C2 layer state machine: auto-patrol generator, RNG recon dwell & generation."""
-        if self.sim is None:
-            return
-
-        sim_time = getattr(self.sim, "sim_time", 0.0)
+        self.c2_time += dt
+        sim_time = getattr(self.sim, "sim_time", self.c2_time) if self.sim else (
+            float(self.latest_frame.get("sim_time", self.c2_time)) if self.latest_frame else self.c2_time
+        )
 
         # 1. Continuous Auto-Patrol Loop (TKT-12)
         if self.patrol_active:
@@ -183,12 +224,22 @@ class C2Gateway:
             self._target_pos = np.array([patrol_x, patrol_y, patrol_z], dtype=float)
 
             should_update_uplink = True
-            active_brain = getattr(self.sim, "active_brain_name", "")
+            active_brain = getattr(self.sim, "active_brain_name", "") if self.sim else (
+                self.latest_frame.get("active_brain", "") if self.latest_frame else ""
+            )
             if active_brain == "GOSSIP_CONSENSUS":
                 time_since_last = sim_time - self.last_gossip_inject_time
-                brain = getattr(self.sim, "brain", None)
-                if brain and hasattr(brain, "get_telemetry_extra"):
-                    gossip_extra = brain.get_telemetry_extra()
+                if self.sim:
+                    brain = getattr(self.sim, "brain", None)
+                    if brain and hasattr(brain, "get_telemetry_extra"):
+                        gossip_extra = brain.get_telemetry_extra()
+                        consensus_reached = gossip_extra.get("consensus_reached", True)
+                        if not consensus_reached and time_since_last < 2.5:
+                            should_update_uplink = False
+                        elif time_since_last < 1.2:
+                            should_update_uplink = False
+                else:
+                    gossip_extra = self.latest_frame.get("gossip", {}) if self.latest_frame else {}
                     consensus_reached = gossip_extra.get("consensus_reached", True)
                     if not consensus_reached and time_since_last < 2.5:
                         should_update_uplink = False
@@ -255,333 +306,460 @@ class C2Gateway:
             if not self.bingo_triggered:
                 # Comms gate: GCS evaluates battery strictly from downlinked telemetry (Operator Airgap)
                 if self.is_link_active():
-                    drones = getattr(self.sim, "drones", [])
-                    living_airborne = [
-                        d for d in drones
-                        if not d.crashed and d.flight_state not in ("LANDED", "GROUND_IDLE") and getattr(d, "downlink_active", True)
-                    ]
-                    if living_airborne:
-                        min_battery = min(float(d.battery) for d in living_airborne)
-                        if min_battery <= self.bingo_threshold:
-                            self.bingo_triggered = True
-                            self.bingo_stage = "RTB_TRANSIT"
-                            # Stop active route / patrol pattern
-                            self.route_active = False
-                            self.route_paused = False
-                            if self.sim:
-                                for d in getattr(self.sim, "drones", []):
-                                    d.mission_active = False
-                                    d.mission_paused = False
-                                    d.wp_loitering = False
-                            self.patrol_active = False
-                            # Initiate Stage 1: Overhead Marshal RTB Hold
+                    if self.sim:
+                        drones = getattr(self.sim, "drones", [])
+                        living_airborne = [
+                            d for d in drones
+                            if not d.crashed and d.flight_state not in ("LANDED", "GROUND_IDLE") and getattr(d, "downlink_active", True)
+                        ]
+                        min_battery = min(float(d.battery) for d in living_airborne) if living_airborne else 100.0
+                    else:
+                        living_airborne = [
+                            d for d in self.fleet_telemetry.values()
+                            if not d.get("crashed") and d.get("flight_state") not in ("LANDED", "GROUND_IDLE") and d.get("downlink_active", True)
+                        ]
+                        min_battery = min(float(d.get("battery", 100.0)) for d in living_airborne) if living_airborne else 100.0
+
+                    if living_airborne and min_battery <= self.bingo_threshold:
+                        self.bingo_triggered = True
+                        self.bingo_stage = "RTB_TRANSIT"
+                        # Stop active route / patrol pattern
+                        self.route_active = False
+                        self.route_paused = False
+                        if self.sim:
+                            for d in getattr(self.sim, "drones", []):
+                                d.mission_active = False
+                                d.mission_paused = False
+                                d.wp_loitering = False
                             if hasattr(self.sim, "command_rtb_hold"):
                                 self.sim.command_rtb_hold()
-                            self.log_event(
-                                "WARN",
-                                f"[BINGO TRIGGERED: Fleet battery ({min_battery:.1f}%) reached threshold ({self.bingo_threshold:.1f}%). Commencing 2-Stage RTB.]"
-                            )
+                        else:
+                            self.send_canyon_command({"cmd": "COMMAND_RTB_HOLD"})
+                        self.patrol_active = False
+                        self.log_event(
+                            "WARN",
+                            f"[BINGO TRIGGERED: Fleet battery ({min_battery:.1f}%) reached threshold ({self.bingo_threshold:.1f}%). Commencing 2-Stage RTB.]"
+                        )
             else:
                 # BINGO RTB already triggered: monitor progress through Stage 1 -> Stage 2
                 if self.bingo_stage == "RTB_TRANSIT":
-                    leader = getattr(self.sim, "leader", None)
-                    drones = getattr(self.sim, "drones", [])
-                    living_airborne = [
-                        d for d in drones
-                        if not d.crashed and d.flight_state not in ("LANDED", "GROUND_IDLE", "RETRIEVED")
-                    ]
-                    anchor = getattr(self.sim, "tether_anchor", TETHER_ANCHOR)
-                    leader_dist = float(np.linalg.norm(leader.pos[:2] - anchor[:2])) if leader else 0.0
-                    all_near_base = all(float(np.linalg.norm(d.pos[:2] - anchor[:2])) <= 25.0 for d in living_airborne) if living_airborne else True
-                    is_marshaling = getattr(self.sim, "overhead_marshal_active", False) or getattr(self.sim, "recovery_stage", "") == "OVERHEAD_MARSHAL"
+                    if self.sim:
+                        leader = getattr(self.sim, "leader", None)
+                        drones = getattr(self.sim, "drones", [])
+                        living_airborne = [
+                            d for d in drones
+                            if not d.crashed and d.flight_state not in ("LANDED", "GROUND_IDLE", "RETRIEVED")
+                        ]
+                        anchor = getattr(self.sim, "tether_anchor", TETHER_ANCHOR)
+                        leader_dist = float(np.linalg.norm(leader.pos[:2] - anchor[:2])) if leader else 0.0
+                        all_near_base = all(float(np.linalg.norm(d.pos[:2] - anchor[:2])) <= 25.0 for d in living_airborne) if living_airborne else True
+                        is_marshaling = getattr(self.sim, "overhead_marshal_active", False) or getattr(self.sim, "recovery_stage", "") == "OVERHEAD_MARSHAL"
+                    else:
+                        leader = next((d for d in self.fleet_telemetry.values() if d.get("is_leader")), None)
+                        if leader is None:
+                            leader = self.fleet_telemetry.get(0)
+                        living_airborne = [
+                            d for d in self.fleet_telemetry.values()
+                            if not d.get("crashed") and d.get("flight_state") not in ("LANDED", "GROUND_IDLE", "RETRIEVED")
+                        ]
+                        anchor = TETHER_ANCHOR
+                        leader_pos = np.array(leader.get("pos", [0, 0, 0]), dtype=float) if leader else np.zeros(3)
+                        leader_dist = float(np.linalg.norm(leader_pos[:2] - anchor[:2])) if leader else 0.0
+                        all_near_base = all(
+                            float(np.linalg.norm(np.array(d.get("pos", [0, 0, 0]), dtype=float)[:2] - anchor[:2])) <= 25.0
+                            for d in living_airborne
+                        ) if living_airborne else True
+                        is_marshaling = bool(self.latest_frame.get("overhead_marshal_active", False)) if self.latest_frame else False
 
                     if (leader and leader_dist <= 18.0 and all_near_base) or (is_marshaling and leader and leader_dist <= 18.0):
                         self.bingo_stage = "MARSHAL_HOLD"
                         if self.bingo_auto_land:
                             self.bingo_stage = "LANDING"
-                            if hasattr(self.sim, "command_land_swarm"):
+                            if self.sim and hasattr(self.sim, "command_land_swarm"):
                                 self.sim.command_land_swarm()
+                            else:
+                                self.send_canyon_command({"cmd": "COMMAND_LAND_SWARM"})
                             self.log_event(
                                 "CMD",
                                 "[BINGO STAGE 2: Fleet established in overhead marshal. Auto-initiating ATC pad landing.]"
                             )
                 elif self.bingo_stage == "LANDING":
-                    drones = getattr(self.sim, "drones", [])
-                    living_airborne = [
-                        d for d in drones
-                        if not d.crashed and d.flight_state not in ("LANDED", "GROUND_IDLE", "RETRIEVED")
-                    ]
+                    if self.sim:
+                        drones = getattr(self.sim, "drones", [])
+                        living_airborne = [
+                            d for d in drones
+                            if not d.crashed and d.flight_state not in ("LANDED", "GROUND_IDLE", "RETRIEVED")
+                        ]
+                    else:
+                        living_airborne = [
+                            d for d in self.fleet_telemetry.values()
+                            if not d.get("crashed") and d.get("flight_state") not in ("LANDED", "GROUND_IDLE", "RETRIEVED")
+                        ]
                     if not living_airborne:
                         self.bingo_stage = "COMPLETED"
                         self.bingo_mission_active = False
 
         # 4. Physical Courier / Search-and-Recall Rescue Mule (TKT-51 / PLN-02)
-        if self.courier_active and self.sim is not None:
-            courier = self.sim.get_drone_by_id(self.courier_drone_id) if hasattr(self.sim, "get_drone_by_id") else None
-            target_drone = self.sim.get_drone_by_id(self.courier_target_drone_id) if hasattr(self.sim, "get_drone_by_id") else None
-            anchor = getattr(self.sim, "tether_anchor", TETHER_ANCHOR)
+        if self.courier_active:
+            if self.sim is not None:
+                courier = self.sim.get_drone_by_id(self.courier_drone_id) if hasattr(self.sim, "get_drone_by_id") else None
+                target_drone = self.sim.get_drone_by_id(self.courier_target_drone_id) if hasattr(self.sim, "get_drone_by_id") else None
+                anchor = getattr(self.sim, "tether_anchor", TETHER_ANCHOR)
 
-            if courier is None or courier.crashed:
-                self.courier_stage = "COURIER_LOST"
-                self.courier_active = False
-                self.log_event("WARN", f"[COURIER FAILURE: Courier #{self.courier_drone_id} crashed or missing in action.]")
-            else:
-                if self.courier_stage == "TRANSIT_OUTBOUND":
-                    if self.courier_target_lkp is not None:
-                        dist_to_lkp = float(np.linalg.norm(courier.pos - self.courier_target_lkp))
-                        if dist_to_lkp <= 5.0:
-                            self.courier_stage = "RENDEZVOUS_DWELL"
-                            self.courier_dwell_timer = 0.0
-                            courier.flight_state = "RENDEZVOUS_DWELL"
-                            courier.status = "RENDEZVOUS_DWELL"
-                            courier.acknowledged_target = np.copy(self.courier_target_lkp)
-                            courier.target_station = np.copy(self.courier_target_lkp)
-                            self.log_event("CMD", f"[COURIER ARRIVAL: Courier #{courier.id} arrived at LKP ({dist_to_lkp:.1f}m). Stationary dwell & P2P rescue beacon engaged.]")
+                if courier is None or courier.crashed:
+                    self.courier_stage = "COURIER_LOST"
+                    self.courier_active = False
+                    self.log_event("WARN", f"[COURIER FAILURE: Courier #{self.courier_drone_id} crashed or missing in action.]")
+                else:
+                    if self.courier_stage == "TRANSIT_OUTBOUND":
+                        if self.courier_target_lkp is not None:
+                            dist_to_lkp = float(np.linalg.norm(courier.pos - self.courier_target_lkp))
+                            if dist_to_lkp <= 5.0:
+                                self.courier_stage = "RENDEZVOUS_DWELL"
+                                self.courier_dwell_timer = 0.0
+                                courier.flight_state = "RENDEZVOUS_DWELL"
+                                courier.status = "RENDEZVOUS_DWELL"
+                                courier.acknowledged_target = np.copy(self.courier_target_lkp)
+                                courier.target_station = np.copy(self.courier_target_lkp)
+                                self.log_event("CMD", f"[COURIER ARRIVAL: Courier #{courier.id} arrived at LKP ({dist_to_lkp:.1f}m). Stationary dwell & P2P rescue beacon engaged.]")
 
-                elif self.courier_stage == "RENDEZVOUS_DWELL":
-                    # Check P2P contact with target drone (within RANGE_P2P = 60m)
-                    contact_made = False
-                    if target_drone is not None and not target_drone.crashed:
-                        d_p2p = float(np.linalg.norm(courier.pos - target_drone.pos))
-                        if d_p2p <= RANGE_P2P:
-                            contact_made = True
-                            self.courier_stage = "ESCORT_INBOUND"
-                            courier.flight_state = "ESCORT_LEAD"
-                            courier.status = "ESCORT_LEAD"
-                            courier.courier_escortee_id = target_drone.id
-                            courier.acknowledged_target = np.array([0.0, 0.0, 25.0], dtype=float)
-                            courier.target_station = np.array([0.0, 0.0, 25.0], dtype=float)
+                    elif self.courier_stage == "RENDEZVOUS_DWELL":
+                        # Check P2P contact with target drone (within RANGE_P2P = 60m)
+                        contact_made = False
+                        if target_drone is not None and not target_drone.crashed:
+                            d_p2p = float(np.linalg.norm(courier.pos - target_drone.pos))
+                            if d_p2p <= RANGE_P2P:
+                                contact_made = True
+                                self.courier_stage = "ESCORT_INBOUND"
+                                courier.flight_state = "ESCORT_LEAD"
+                                courier.status = "ESCORT_LEAD"
+                                courier.courier_escortee_id = target_drone.id
+                                courier.acknowledged_target = np.array([0.0, 0.0, 25.0], dtype=float)
+                                courier.target_station = np.array([0.0, 0.0, 25.0], dtype=float)
 
-                            target_drone.flight_state = "ESCORT_REJOIN"
-                            target_drone.status = "ESCORT_REJOIN"
-                            target_drone.escort_leader_id = courier.id
-                            target_drone.backtrack_hold = False
-                            target_drone.holding_at_horizon = False
+                                target_drone.flight_state = "ESCORT_REJOIN"
+                                target_drone.status = "ESCORT_REJOIN"
+                                target_drone.escort_leader_id = courier.id
+                                target_drone.backtrack_hold = False
+                                target_drone.holding_at_horizon = False
 
-                            self.log_event("CMD", f"[RESCUE HANDSHAKE: Courier #{courier.id} established P2P contact with Drone #{target_drone.id} ({d_p2p:.1f}m). Inbound tandem escort initiated.]")
+                                self.log_event("CMD", f"[RESCUE HANDSHAKE: Courier #{courier.id} established P2P contact with Drone #{target_drone.id} ({d_p2p:.1f}m). Inbound tandem escort initiated.]")
 
-                    if not contact_made:
-                        self.courier_dwell_timer += dt
-                        if self.courier_dwell_timer >= self.courier_dwell_timeout:
-                            # MIA Timeout
-                            self.courier_stage = "MIA_RETURN"
+                        if not contact_made:
+                            self.courier_dwell_timer += dt
+                            if self.courier_dwell_timer >= self.courier_dwell_timeout:
+                                # MIA Timeout
+                                self.courier_stage = "MIA_RETURN"
+                                courier.flight_state = "CRUISE"
+                                courier.status = "COURIER_MIA_RETURN"
+                                courier.acknowledged_target = np.array([0.0, 0.0, 25.0], dtype=float)
+                                courier.target_station = np.array([0.0, 0.0, 25.0], dtype=float)
+                                self.log_event("WARN", f"[COURIER TIMEOUT: Target Drone #{self.courier_target_drone_id} MIA at LKP after 15s. Courier #{courier.id} returning to Base alone.]")
+
+                    elif self.courier_stage == "ESCORT_INBOUND":
+                        # Check if target drone has entered GCS radio horizon
+                        target_dist_gcs = float(np.linalg.norm(target_drone.pos - anchor)) if target_drone else 999.0
+                        r_howl = getattr(self.sim, "radio_range", RANGE_HOWL)
+                        target_linked = (target_dist_gcs <= r_howl and getattr(target_drone, "downlink_active", True))
+
+                        if target_linked:
+                            self.courier_stage = "HANDOVER_COMPLETE"
+                            self.courier_active = False
                             courier.flight_state = "CRUISE"
-                            courier.status = "COURIER_MIA_RETURN"
-                            courier.acknowledged_target = np.array([0.0, 0.0, 25.0], dtype=float)
-                            courier.target_station = np.array([0.0, 0.0, 25.0], dtype=float)
-                            self.log_event("WARN", f"[COURIER TIMEOUT: Target Drone #{self.courier_target_drone_id} MIA at LKP after 15s. Courier #{courier.id} returning to Base alone.]")
+                            courier.status = "ACTIVE"
+                            courier.courier_mission_active = False
+                            courier.courier_escortee_id = None
 
-                elif self.courier_stage == "ESCORT_INBOUND":
-                    # Check if target drone has entered GCS radio horizon
-                    target_dist_gcs = float(np.linalg.norm(target_drone.pos - anchor)) if target_drone else 999.0
-                    r_howl = getattr(self.sim, "radio_range", RANGE_HOWL)
-                    target_linked = (target_dist_gcs <= r_howl and getattr(target_drone, "downlink_active", True))
+                            if target_drone is not None:
+                                target_drone.flight_state = "CRUISE"
+                                target_drone.status = "ACTIVE"
+                                target_drone.lost_link = False
+                                target_drone.escort_leader_id = None
+                                target_drone.gcs_heartbeat_watchdog = 2.0
+                                target_drone.last_heartbeat_time = getattr(self.sim, "sim_time", 0.0)
+                                target_drone.acknowledged_target = np.copy(courier.acknowledged_target)
+                                target_drone.target_station = np.copy(courier.acknowledged_target)
 
-                    if target_linked:
-                        self.courier_stage = "HANDOVER_COMPLETE"
+                            self.log_event("STATUS", f"[RESCUE SUCCESS: Drone #{target_drone.id} penetrated GCS radio horizon ({target_dist_gcs:.1f}m). Downlink restored, fleet re-enrolled.]")
+
+                    elif self.courier_stage == "MIA_RETURN":
+                        dist_base = float(np.linalg.norm(courier.pos[:2] - anchor[:2]))
+                        if dist_base <= 15.0:
+                            self.courier_stage = "MIA_COMPLETE"
+                            self.courier_active = False
+                            courier.flight_state = "CRUISE"
+                            courier.courier_mission_active = False
+            else:
+                courier_data = self.fleet_telemetry.get(self.courier_drone_id) if self.courier_drone_id is not None else None
+                if courier_data is not None:
+                    c_state = courier_data.get("flight_state", "")
+                    if c_state == "CRASHED" or courier_data.get("crashed", False):
+                        self.courier_stage = "COURIER_LOST"
                         self.courier_active = False
-                        courier.flight_state = "CRUISE"
-                        courier.status = "ACTIVE"
-                        courier.courier_mission_active = False
-                        courier.courier_escortee_id = None
-
-                        if target_drone is not None:
-                            target_drone.flight_state = "CRUISE"
-                            target_drone.status = "ACTIVE"
-                            target_drone.lost_link = False
-                            target_drone.escort_leader_id = None
-                            target_drone.gcs_heartbeat_watchdog = 2.0
-                            target_drone.last_heartbeat_time = getattr(self.sim, "sim_time", 0.0)
-                            target_drone.acknowledged_target = np.copy(courier.acknowledged_target)
-                            target_drone.target_station = np.copy(courier.acknowledged_target)
-
-                        self.log_event("STATUS", f"[RESCUE SUCCESS: Drone #{target_drone.id} penetrated GCS radio horizon ({target_dist_gcs:.1f}m). Downlink restored, fleet re-enrolled.]")
-
-                elif self.courier_stage == "MIA_RETURN":
-                    dist_base = float(np.linalg.norm(courier.pos[:2] - anchor[:2]))
-                    if dist_base <= 15.0:
-                        self.courier_stage = "MIA_COMPLETE"
+                    elif c_state == "RENDEZVOUS_DWELL":
+                        self.courier_stage = "RENDEZVOUS_DWELL"
+                    elif c_state in ("ESCORT_LEAD", "ESCORT_INBOUND"):
+                        self.courier_stage = "ESCORT_INBOUND"
+                    elif c_state == "COURIER_MIA_RETURN":
+                        self.courier_stage = "MIA_RETURN"
+                    elif self.courier_stage in ("ESCORT_INBOUND", "MIA_RETURN") and c_state in ("CRUISE", "PERIMETER_HOLD", "OVERHEAD_HOLD"):
+                        self.courier_stage = "HANDOVER_COMPLETE" if self.courier_stage == "ESCORT_INBOUND" else "MIA_COMPLETE"
                         self.courier_active = False
-                        courier.flight_state = "CRUISE"
-                        courier.courier_mission_active = False
 
         # 5. Cairn G1 Solar Repeater Payload Drop (TKT-59 / PLN-04)
-        if self.payload_drop_active and self.sim is not None:
-            carrier = self.sim.get_drone_by_id(self.payload_drop_carrier_id) if hasattr(self.sim, "get_drone_by_id") else None
-            anchor = getattr(self.sim, "tether_anchor", TETHER_ANCHOR)
+        if self.payload_drop_active:
+            if self.sim is not None:
+                carrier = self.sim.get_drone_by_id(self.payload_drop_carrier_id) if hasattr(self.sim, "get_drone_by_id") else None
+                anchor = getattr(self.sim, "tether_anchor", TETHER_ANCHOR)
 
-            if carrier is None or carrier.crashed:
-                self.payload_drop_stage = "CARRIER_LOST"
-                self.payload_drop_active = False
-                self.log_event("WARN", f"[PAYLOAD DROP FAILURE: Carrier #{self.payload_drop_carrier_id} crashed or lost.]")
+                if carrier is None or carrier.crashed:
+                    self.payload_drop_stage = "CARRIER_LOST"
+                    self.payload_drop_active = False
+                    self.log_event("WARN", f"[PAYLOAD DROP FAILURE: Carrier #{self.payload_drop_carrier_id} crashed or lost.]")
+                else:
+                    if self.payload_drop_stage == "TRANSIT_TO_DROP":
+                        if self.payload_drop_target_pos is not None:
+                            dist_xy = float(np.linalg.norm(carrier.pos[:2] - self.payload_drop_target_pos[:2]))
+                            if dist_xy <= 4.0:
+                                self.payload_drop_stage = "PRECISION_DESCENT"
+                                carrier.flight_state = "PRECISION_DESCENT"
+                                carrier.status = "PRECISION_DESCENT"
+                                hover_target = np.array([self.payload_drop_target_pos[0], self.payload_drop_target_pos[1], 3.0], dtype=float)
+                                carrier.acknowledged_target = np.copy(hover_target)
+                                carrier.target_station = np.copy(hover_target)
+                                self.log_event("CMD", f"[PAYLOAD DROP: Carrier #{carrier.id} arrived overhead drop zone. Descending to 3.0m precision hover.]")
+
+                    elif self.payload_drop_stage == "PRECISION_DESCENT":
+                        z = float(carrier.pos[2])
+                        spd = float(np.linalg.norm(carrier.vel))
+                        if z <= 3.5 and spd <= 1.0:
+                            self.payload_drop_stage = "RELEASE_HOVER"
+                            self.payload_drop_timer = 0.0
+                            self.log_event("CMD", f"[PAYLOAD DROP: Carrier #{carrier.id} stabilized in precision hover at Z={z:.1f}m. Releasing magnetic latch.]")
+
+                    elif self.payload_drop_stage == "RELEASE_HOVER":
+                        self.payload_drop_timer += dt
+                        if self.payload_drop_timer >= 0.2:
+                            carrier.payload_attached = False
+                            if hasattr(self.sim, "falling_payloads"):
+                                self.sim.falling_payloads.append({
+                                    "carrier_id": carrier.id,
+                                    "pos": np.copy(carrier.pos),
+                                    "vel": np.array([0.0, 0.0, -1.0], dtype=float),
+                                })
+                            self.payload_drop_stage = "PAYLOAD_FALLING"
+                            self.payload_drop_timer = 0.0
+                            self.log_event("STATUS", f"[PAYLOAD DROP: Cairn G1 Repeater pod released! Falling to terrain.]")
+
+                    elif self.payload_drop_stage == "PAYLOAD_FALLING":
+                        egress_target = np.array([carrier.pos[0], carrier.pos[1], 25.0], dtype=float)
+                        carrier.flight_state = "CARRIER_EGRESS"
+                        carrier.status = "CARRIER_EGRESS"
+                        carrier.acknowledged_target = np.copy(egress_target)
+                        carrier.target_station = np.copy(egress_target)
+                        self.payload_drop_timer += dt
+
+                        # Check if repeater landed on ground in sim
+                        has_landed = False
+                        if hasattr(self.sim, "ground_repeaters") and self.sim.ground_repeaters:
+                            for rep in self.sim.ground_repeaters:
+                                if rep.carrier_id == carrier.id:
+                                    has_landed = True
+                                    break
+                        if has_landed or self.payload_drop_timer >= 1.5:
+                            self.payload_drop_stage = "CARRIER_EGRESS"
+
+                    elif self.payload_drop_stage == "CARRIER_EGRESS":
+                        if carrier.pos[2] >= 20.0:
+                            rtb_target = np.array([0.0, 0.0, 25.0], dtype=float)
+                            carrier.acknowledged_target = np.copy(rtb_target)
+                            carrier.target_station = np.copy(rtb_target)
+                            dist_base = float(np.linalg.norm(carrier.pos[:2] - anchor[:2]))
+                            if dist_base <= 15.0:
+                                self.payload_drop_stage = "MISSION_COMPLETE"
+                                self.payload_drop_active = False
+                                carrier.payload_drop_active = False
+                                carrier.flight_state = "CRUISE"
+                                carrier.status = "ACTIVE"
+                                self.log_event("STATUS", f"[PAYLOAD DROP: Carrier #{carrier.id} returned to Base overhead hold. Mission complete.]")
             else:
-                if self.payload_drop_stage == "TRANSIT_TO_DROP":
-                    if self.payload_drop_target_pos is not None:
-                        dist_xy = float(np.linalg.norm(carrier.pos[:2] - self.payload_drop_target_pos[:2]))
-                        if dist_xy <= 4.0:
-                            self.payload_drop_stage = "PRECISION_DESCENT"
-                            carrier.flight_state = "PRECISION_DESCENT"
-                            carrier.status = "PRECISION_DESCENT"
-                            hover_target = np.array([self.payload_drop_target_pos[0], self.payload_drop_target_pos[1], 3.0], dtype=float)
-                            carrier.acknowledged_target = np.copy(hover_target)
-                            carrier.target_station = np.copy(hover_target)
-                            self.log_event("CMD", f"[PAYLOAD DROP: Carrier #{carrier.id} arrived overhead drop zone. Descending to 3.0m precision hover.]")
-
-                elif self.payload_drop_stage == "PRECISION_DESCENT":
-                    z = float(carrier.pos[2])
-                    spd = float(np.linalg.norm(carrier.vel))
-                    if z <= 3.5 and spd <= 1.0:
+                carrier_data = self.fleet_telemetry.get(self.payload_drop_carrier_id) if self.payload_drop_carrier_id is not None else None
+                if carrier_data is not None:
+                    c_state = carrier_data.get("flight_state", "")
+                    if c_state == "CRASHED" or carrier_data.get("crashed", False):
+                        self.payload_drop_stage = "CARRIER_LOST"
+                        self.payload_drop_active = False
+                    elif c_state == "PRECISION_DESCENT":
+                        self.payload_drop_stage = "PRECISION_DESCENT"
+                    elif c_state == "RELEASE_HOVER":
                         self.payload_drop_stage = "RELEASE_HOVER"
-                        self.payload_drop_timer = 0.0
-                        self.log_event("CMD", f"[PAYLOAD DROP: Carrier #{carrier.id} stabilized in precision hover at Z={z:.1f}m. Releasing magnetic latch.]")
-
-                elif self.payload_drop_stage == "RELEASE_HOVER":
-                    self.payload_drop_timer += dt
-                    if self.payload_drop_timer >= 0.2:
-                        carrier.payload_attached = False
-                        if hasattr(self.sim, "falling_payloads"):
-                            self.sim.falling_payloads.append({
-                                "carrier_id": carrier.id,
-                                "pos": np.copy(carrier.pos),
-                                "vel": np.array([0.0, 0.0, -1.0], dtype=float),
-                            })
-                        self.payload_drop_stage = "PAYLOAD_FALLING"
-                        self.payload_drop_timer = 0.0
-                        self.log_event("STATUS", f"[PAYLOAD DROP: Cairn G1 Repeater pod released! Falling to terrain.]")
-
-                elif self.payload_drop_stage == "PAYLOAD_FALLING":
-                    egress_target = np.array([carrier.pos[0], carrier.pos[1], 25.0], dtype=float)
-                    carrier.flight_state = "CARRIER_EGRESS"
-                    carrier.status = "CARRIER_EGRESS"
-                    carrier.acknowledged_target = np.copy(egress_target)
-                    carrier.target_station = np.copy(egress_target)
-                    self.payload_drop_timer += dt
-
-                    # Check if repeater landed on ground in sim
-                    has_landed = False
-                    if hasattr(self.sim, "ground_repeaters") and self.sim.ground_repeaters:
-                        for rep in self.sim.ground_repeaters:
-                            if rep.carrier_id == carrier.id:
-                                has_landed = True
-                                break
-                    if has_landed or self.payload_drop_timer >= 1.5:
+                    elif c_state == "CARRIER_EGRESS":
                         self.payload_drop_stage = "CARRIER_EGRESS"
-
-                elif self.payload_drop_stage == "CARRIER_EGRESS":
-                    if carrier.pos[2] >= 20.0:
-                        rtb_target = np.array([0.0, 0.0, 25.0], dtype=float)
-                        carrier.acknowledged_target = np.copy(rtb_target)
-                        carrier.target_station = np.copy(rtb_target)
-                        dist_base = float(np.linalg.norm(carrier.pos[:2] - anchor[:2]))
-                        if dist_base <= 15.0:
-                            self.payload_drop_stage = "MISSION_COMPLETE"
-                            self.payload_drop_active = False
-                            carrier.payload_drop_active = False
-                            carrier.flight_state = "CRUISE"
-                            carrier.status = "ACTIVE"
-                            self.log_event("STATUS", f"[PAYLOAD DROP: Carrier #{carrier.id} returned to Base overhead hold. Mission complete.]")
+                        pos = carrier_data.get("pos", [0, 0, 0])
+                        if pos[2] >= 20.0:
+                            dist_base = float(np.hypot(pos[0], pos[1]))
+                            if dist_base <= 15.0:
+                                self.payload_drop_stage = "MISSION_COMPLETE"
+                                self.payload_drop_active = False
 
     def is_link_active(self) -> bool:
         """Check whether the bidirectional communications link between GCS and fleet is healthy.
         Enforces Operator Airgap: if physical umbilical is cut or RF horizon is exceeded,
         the GCS loses telemetry reception and cannot receive arrival pings."""
-        if self.sim is None:
+        if self.sim is not None:
+            comms_mode = getattr(self.sim, "comms_mode", "TETHERED_RELAY")
+            tether_severed = getattr(self.sim, "tether_severed", False)
+            anchor = getattr(self.sim, "tether_anchor", TETHER_ANCHOR)
+            drones = getattr(self.sim, "drones", [])
+            active_brain = getattr(self.sim, "active_brain_name", "")
+
+            # 1. Hardline Tether: Cable severed means zero comms between GCS and Drone 0
+            if comms_mode == "TETHERED_RELAY":
+                if tether_severed:
+                    return False
+                leader = getattr(self.sim, "leader", None)
+                return leader is not None and not leader.crashed
+
+            # 2. Wireless Star: Dependent on RF line-of-sight and range
+            elif comms_mode == "LEADER_FOLLOWER":
+                leader = getattr(self.sim, "leader", None)
+                if leader is None or leader.crashed or getattr(leader, "lost_link", False):
+                    return False
+                d_gcs = float(np.linalg.norm(leader.pos - anchor))
+                r_down = RANGE_BORK if getattr(leader, "rf_power_mode", None) == RF_MODE_BORK or getattr(leader, "tier", None) == 1.5 else RANGE_BARK
+                if d_gcs > r_down:
+                    return False
+                if hasattr(leader, "downlink_active") and not leader.downlink_active:
+                    return False
+                if hasattr(self.sim, "is_packet_dropped") and self.sim.is_packet_dropped(d_gcs, is_hardline=False, max_range=r_down):
+                    return False
+                return True
+
+            # 3. P2P Gossip Mesh: Needs at least one non-crashed gateway drone with active downlink
+            elif active_brain == "GOSSIP_CONSENSUS" or comms_mode in ("GOSSIP_CONSENSUS", "P2P_GOSSIP_MESH", "P2P_MESH", "MESH"):
+                living = [d for d in drones if not d.crashed]
+                if not living:
+                    return False
+                min_dist = min(float(np.linalg.norm(d.pos - anchor)) for d in living)
+                if min_dist > RANGE_HOWL:
+                    return False
+                if living and hasattr(living[0], "downlink_active"):
+                    return any(d.downlink_active for d in living)
+                if hasattr(self.sim, "is_packet_dropped") and self.sim.is_packet_dropped(min_dist, is_hardline=False):
+                    return False
+                return True
+
             return False
 
-        comms_mode = getattr(self.sim, "comms_mode", "TETHERED_RELAY")
-        tether_severed = getattr(self.sim, "tether_severed", False)
-        anchor = getattr(self.sim, "tether_anchor", TETHER_ANCHOR)
-        drones = getattr(self.sim, "drones", [])
-        active_brain = getattr(self.sim, "active_brain_name", "")
+        # Standalone GCS Mode (sim=None): assess health strictly from downlinked telemetry
+        if not self.fleet_telemetry and self.latest_frame is None:
+            return False
 
-        # 1. Hardline Tether: Cable severed means zero comms between GCS and Drone 0
+        comms_mode = self.latest_frame.get("comms_mode", "TETHERED_RELAY") if self.latest_frame else "TETHERED_RELAY"
+        tether_info = self.latest_frame.get("tether", {}) if self.latest_frame else {}
+        tether_severed = bool(tether_info.get("severed", False))
+
         if comms_mode == "TETHERED_RELAY":
             if tether_severed:
                 return False
-            leader = getattr(self.sim, "leader", None)
-            return leader is not None and not leader.crashed
+            leader = next((d for d in self.fleet_telemetry.values() if d.get("is_leader")), None)
+            if leader is None:
+                leader = self.fleet_telemetry.get(0)
+            return leader is not None and not leader.get("crashed", False) and not leader.get("lost_link", False)
 
-        # 2. Wireless Star: Dependent on RF line-of-sight and range
         elif comms_mode == "LEADER_FOLLOWER":
-            leader = getattr(self.sim, "leader", None)
-            if leader is None or leader.crashed or getattr(leader, "lost_link", False):
+            leader = next((d for d in self.fleet_telemetry.values() if d.get("is_leader")), None)
+            if leader is None:
+                leader = self.fleet_telemetry.get(0)
+            if leader is None or leader.get("crashed") or leader.get("lost_link"):
                 return False
-            d_gcs = float(np.linalg.norm(leader.pos - anchor))
-            r_down = RANGE_BORK if getattr(leader, "rf_power_mode", None) == RF_MODE_BORK or getattr(leader, "tier", None) == 1.5 else RANGE_BARK
-            if d_gcs > r_down:
-                return False
-            if hasattr(leader, "downlink_active") and not leader.downlink_active:
-                return False
-            if hasattr(self.sim, "is_packet_dropped") and self.sim.is_packet_dropped(d_gcs, is_hardline=False, max_range=r_down):
-                return False
-            return True
+            return bool(leader.get("downlink_active", True))
 
-        # 3. P2P Gossip Mesh: Needs at least one non-crashed gateway drone with active downlink
-        elif active_brain == "GOSSIP_CONSENSUS" or comms_mode in ("GOSSIP_CONSENSUS", "P2P_GOSSIP_MESH", "P2P_MESH", "MESH"):
-            living = [d for d in drones if not d.crashed]
+        else:  # GOSSIP_CONSENSUS or P2P_MESH
+            living = [d for d in self.fleet_telemetry.values() if not d.get("crashed")]
             if not living:
                 return False
-            min_dist = min(float(np.linalg.norm(d.pos - anchor)) for d in living)
-            if min_dist > RANGE_HOWL:
-                return False
-            if living and hasattr(living[0], "downlink_active"):
-                return any(d.downlink_active for d in living)
-            if hasattr(self.sim, "is_packet_dropped") and self.sim.is_packet_dropped(min_dist, is_hardline=False):
-                return False
-            return True
-
-        return False
+            return any(d.get("downlink_active", True) for d in living)
 
     def is_target_reached(self, threshold: float = 2.5) -> bool:
         """Deterministic arrival check: whether active swarm guidance has arrived within threshold.
         Enforces Operator Airgap:
         1. If comms link is lost/severed, GCS receives NO arrival packets (returns False).
         2. Reads arrival strictly from downlinked telemetry handshake."""
-        if self.sim is None:
-            return False
-
         # Telemetry link gate: severed tether or lost RF link suppresses arrival downlink
         if not self.is_link_active():
             return False
 
-        active_brain = getattr(self.sim, "active_brain_name", "")
-        drones = getattr(self.sim, "drones", [])
+        if self.sim is not None:
+            active_brain = getattr(self.sim, "active_brain_name", "")
+            drones = getattr(self.sim, "drones", [])
 
+            if active_brain == "GOSSIP_CONSENSUS":
+                active = [
+                    d for d in drones
+                    if not d.crashed and getattr(d, "flight_state", "") not in ("LANDED", "DESCENDING")
+                ]
+                if not active:
+                    return False
+                centroid = np.mean([d.pos for d in active], axis=0)
+                target = self.get_acknowledged_target()
+                return float(np.linalg.norm(centroid - target)) <= threshold
+            else:
+                leader = getattr(self.sim, "leader", None)
+                if leader is None or leader.crashed:
+                    return False
+                # Telemetry handshake from leader downlinked state
+                if hasattr(leader, "target_reached"):
+                    return bool(leader.target_reached)
+                target = leader.acknowledged_target
+                return float(np.linalg.norm(leader.pos - target)) <= threshold
+
+        # Standalone GCS Mode (sim=None):
+        active_brain = self.latest_frame.get("active_brain", "") if self.latest_frame else ""
         if active_brain == "GOSSIP_CONSENSUS":
             active = [
-                d for d in drones
-                if not d.crashed and getattr(d, "flight_state", "") not in ("LANDED", "DESCENDING")
+                d for d in self.fleet_telemetry.values()
+                if not d.get("crashed") and d.get("flight_state") not in ("LANDED", "DESCENDING")
             ]
             if not active:
                 return False
-            centroid = np.mean([d.pos for d in active], axis=0)
+            centroid = np.mean([np.array(d.get("pos", [0.0, 0.0, 0.0]), dtype=float) for d in active], axis=0)
             target = self.get_acknowledged_target()
             return float(np.linalg.norm(centroid - target)) <= threshold
         else:
-            leader = getattr(self.sim, "leader", None)
-            if leader is None or leader.crashed:
+            leader = next((d for d in self.fleet_telemetry.values() if d.get("is_leader")), None)
+            if leader is None:
+                leader = self.fleet_telemetry.get(0)
+            if leader is None or leader.get("crashed"):
                 return False
-            # Telemetry handshake from leader downlinked state
-            if hasattr(leader, "target_reached"):
-                return bool(leader.target_reached)
-            target = leader.acknowledged_target
-            return float(np.linalg.norm(leader.pos - target)) <= threshold
+            if "target_reached" in leader:
+                return bool(leader["target_reached"])
+            target = np.array(leader.get("acknowledged_target", self._target_pos), dtype=float)
+            leader_pos = np.array(leader.get("pos", [0.0, 0.0, 0.0]), dtype=float)
+            return float(np.linalg.norm(leader_pos - target)) <= threshold
 
     def get_acknowledged_target(self) -> np.ndarray:
         """Get the target currently acknowledged by the swarm."""
-        if self.sim is None:
+        if self.sim is not None:
+            if hasattr(self.sim, "get_acknowledged_target"):
+                return self.sim.get_acknowledged_target()
+            leader = getattr(self.sim, "leader", None)
+            if leader:
+                return leader.acknowledged_target
             return self._target_pos
-        if hasattr(self.sim, "get_acknowledged_target"):
-            return self.sim.get_acknowledged_target()
-        leader = getattr(self.sim, "leader", None)
-        if leader:
-            return leader.acknowledged_target
-        return self._target_pos
+        else:
+            if self.fleet_telemetry:
+                leader = next((d for d in self.fleet_telemetry.values() if d.get("is_leader")), None)
+                if leader is None:
+                    leader = self.fleet_telemetry.get(0)
+                if leader and "acknowledged_target" in leader:
+                    return np.array(leader["acknowledged_target"], dtype=float)
+            return self._target_pos
 
     def generate_safe_rng_target(self) -> np.ndarray:
         """Generate a high-variance, guaranteed-SAFE 3D target coordinate."""
         current_target = np.copy(self.get_acknowledged_target())
-        anchor = getattr(self.sim, "tether_anchor", TETHER_ANCHOR)
+        anchor = getattr(self.sim, "tether_anchor", TETHER_ANCHOR) if self.sim else TETHER_ANCHOR
 
         for _ in range(200):
             rx = float(np.random.uniform(self.rng_geofence_min[0], self.rng_geofence_max[0]))
@@ -607,12 +785,18 @@ class C2Gateway:
         return np.array([current_target[0] + dx, current_target[1] + dy, dz], dtype=float)
 
     def dispatch_target_uplink(self, target_pos: Union[List[float], np.ndarray]) -> Dict[str, Any]:
-        """Dispatch commanded target across simulated link to fleet."""
-        if self.sim is None:
-            return {"status": "ERROR", "reason": "NO_SIM_ATTACHED"}
-        if hasattr(self.sim, "dispatch_target_uplink"):
-            return self.sim.dispatch_target_uplink(target_pos)
-        return {"status": "OK", "target": list(target_pos)}
+        """Dispatch commanded target across simulated link or Canyon UDP port to fleet."""
+        t_list = [round(float(v), 2) for v in target_pos]
+        if self.sim is not None:
+            if hasattr(self.sim, "dispatch_target_uplink"):
+                return self.sim.dispatch_target_uplink(target_pos)
+            return {"status": "OK", "target": t_list}
+
+        # Standalone GCS Mode: Send UDP packet to Canyon Port 9001
+        res = self.send_canyon_command({"cmd": "SET_TARGET", "target": t_list, "pos": t_list})
+        if res.get("status") == "OK":
+            res["target"] = t_list
+        return res
 
     def set_target(self, pos: Union[List[float], np.ndarray]) -> Dict[str, Any]:
         """Command a new 3D mission target waypoint from GCS and attempt uplink dispatch."""
@@ -691,10 +875,15 @@ class C2Gateway:
         m_key = mission_type.upper().replace("-", "_").replace(" ", "_")
         reqs = list(required_capabilities) if required_capabilities else list(MISSION_CAPABILITY_REQUIREMENTS.get(m_key, ["FORMATION_FLIGHT"]))
 
-        drones = getattr(self.sim, "drones", []) if self.sim else []
+        def _get_f(d: Any, key: str, default: Any = None) -> Any:
+            if isinstance(d, dict):
+                return d.get(key, default)
+            return getattr(d, key, default)
+
+        drones = getattr(self.sim, "drones", []) if self.sim else list(self.fleet_telemetry.values())
         enrolled_living = [
             d for d in drones
-            if not d.crashed and d.flight_state not in ("LANDED", "DESCENDING", "RETRIEVED")
+            if not _get_f(d, "crashed", False) and _get_f(d, "flight_state", "") not in ("LANDED", "DESCENDING", "RETRIEVED")
         ]
 
         if not enrolled_living:
@@ -709,7 +898,7 @@ class C2Gateway:
 
         # If a specific target drone is commanded
         if target_drone_id is not None:
-            candidate = next((d for d in enrolled_living if d.id == target_drone_id), None)
+            candidate = next((d for d in enrolled_living if _get_f(d, "id") == target_drone_id), None)
             if candidate is None:
                 return {
                     "status": "REJECTED",
@@ -717,8 +906,9 @@ class C2Gateway:
                     "reason": "TARGET_DRONE_UNAVAILABLE",
                     "target_drone_id": target_drone_id,
                 }
-            drone_caps = set(getattr(candidate, "capabilities", []))
+            drone_caps = set(_get_f(candidate, "capabilities", []))
             missing = [r for r in reqs if r not in drone_caps]
+            tier_desig = _get_f(candidate, "full_tier_designation", "UNKNOWN")
             if missing:
                 return {
                     "status": "REJECTED",
@@ -726,7 +916,7 @@ class C2Gateway:
                     "reason": "TIER_AUTHORIZATION_FAILED",
                     "mission_type": mission_type,
                     "target_drone_id": target_drone_id,
-                    "tier": getattr(candidate, "full_tier_designation", "UNKNOWN"),
+                    "tier": tier_desig,
                     "required_capabilities": reqs,
                     "missing_capabilities": missing,
                 }
@@ -736,22 +926,22 @@ class C2Gateway:
                 "mission_type": mission_type,
                 "target_drone_id": target_drone_id,
                 "allocated_drone_id": target_drone_id,
-                "allocated_drone_tier": getattr(candidate, "full_tier_designation", "UNKNOWN"),
-                "tier": getattr(candidate, "full_tier_designation", "UNKNOWN"),
+                "allocated_drone_tier": tier_desig,
+                "tier": tier_desig,
                 "allocated_drone_ids": [target_drone_id],
             }
 
         # Fleet-wide search for eligible airframes
         eligible_drones = []
         for d in enrolled_living:
-            drone_caps = set(getattr(d, "capabilities", []))
+            drone_caps = set(_get_f(d, "capabilities", []))
             if all(r in drone_caps for r in reqs):
-                eligible_drones.append(d.id)
+                eligible_drones.append(_get_f(d, "id"))
 
         if not eligible_drones:
             available_caps = set()
             for d in enrolled_living:
-                available_caps.update(getattr(d, "capabilities", []))
+                available_caps.update(_get_f(d, "capabilities", []))
             missing = [r for r in reqs if r not in available_caps]
             return {
                 "status": "REJECTED",
@@ -760,17 +950,17 @@ class C2Gateway:
                 "mission_type": mission_type,
                 "required_capabilities": reqs,
                 "missing_capabilities": missing,
-                "enrolled_tiers": [getattr(d, "full_tier_designation", "UNKNOWN") for d in enrolled_living],
+                "enrolled_tiers": [_get_f(d, "full_tier_designation", "UNKNOWN") for d in enrolled_living],
             }
 
-        first_eligible = next((d for d in enrolled_living if d.id == eligible_drones[0]), None)
+        first_eligible = next((d for d in enrolled_living if _get_f(d, "id") == eligible_drones[0]), None)
         return {
             "status": "AUTHORIZED",
             "authorized": True,
             "mission_type": mission_type,
             "required_capabilities": reqs,
             "allocated_drone_id": eligible_drones[0],
-            "allocated_drone_tier": getattr(first_eligible, "full_tier_designation", "UNKNOWN") if first_eligible else "UNKNOWN",
+            "allocated_drone_tier": _get_f(first_eligible, "full_tier_designation", "UNKNOWN") if first_eligible else "UNKNOWN",
             "allocated_drone_ids": eligible_drones,
         }
 
@@ -821,6 +1011,12 @@ class C2Gateway:
             self.route_waypoints = clean_wps
             self.route_loop = loop
             self._target_pos = np.copy(clean_wps[0][:3])
+            self.send_canyon_command({
+                "cmd": "DEPLOY_ROUTE",
+                "name": name,
+                "waypoints": [[round(float(v), 2) for v in wp] for wp in clean_wps],
+                "loop": loop,
+            })
             return {"status": "OK", "name": name, "count": len(clean_wps), "loop": loop}
 
         drones = getattr(self.sim, "drones", [])
@@ -906,6 +1102,8 @@ class C2Gateway:
             brain = getattr(self.sim, "brain", None)
             if brain and hasattr(brain, "route_paused"):
                 brain.route_paused = True
+        else:
+            self.send_canyon_command({"cmd": "PAUSE_ROUTE"})
         return {"status": "OK", "action": "ROUTE_PAUSED"}
 
     def resume_mission_route(self) -> Dict[str, Any]:
@@ -919,6 +1117,8 @@ class C2Gateway:
             brain = getattr(self.sim, "brain", None)
             if brain and hasattr(brain, "route_paused"):
                 brain.route_paused = False
+        else:
+            self.send_canyon_command({"cmd": "RESUME_ROUTE"})
         return {"status": "OK", "action": "ROUTE_RESUMED"}
 
     def skip_mission_waypoint(self) -> Dict[str, Any]:
@@ -926,30 +1126,33 @@ class C2Gateway:
         if not self.route_active or not self.route_waypoints:
             return {"status": "ERROR", "reason": "No active route to skip waypoint"}
 
-        brain = getattr(self.sim, "brain", None)
-        active_brain = getattr(self.sim, "active_brain_name", "")
-        if active_brain == "GOSSIP_CONSENSUS" and brain and hasattr(brain, "skip_waypoint"):
-            new_idx = brain.skip_waypoint()
-        else:
-            leader = getattr(self.sim, "leader", None)
-            if leader is None:
-                return {"status": "ERROR", "reason": "No active leader to skip waypoint"}
-            wps = leader.mission_waypoints if leader.mission_waypoints else self.route_waypoints
-            idx = leader.current_wp_idx
-            if idx + 1 < len(wps):
-                leader.current_wp_idx += 1
-            elif leader.mission_loop:
-                leader.current_wp_idx = 0
+        if self.sim is not None:
+            brain = getattr(self.sim, "brain", None)
+            active_brain = getattr(self.sim, "active_brain_name", "")
+            if active_brain == "GOSSIP_CONSENSUS" and brain and hasattr(brain, "skip_waypoint"):
+                new_idx = brain.skip_waypoint()
             else:
-                leader.mission_active = False
-            new_idx = leader.current_wp_idx
-            leader.acknowledged_target = np.array(wps[new_idx][:3], dtype=float)
-            leader.wp_loitering = False
-            leader.wp_loiter_timer = 0.0
-            leader.wp_total_loiter = float(wps[new_idx][3]) if len(wps[new_idx]) > 3 else 0.0
-            self._target_pos = np.copy(leader.acknowledged_target)
-
-        return {"status": "OK", "action": "WAYPOINT_SKIPPED", "current_wp_idx": new_idx}
+                leader = getattr(self.sim, "leader", None)
+                if leader is None:
+                    return {"status": "ERROR", "reason": "No active leader to skip waypoint"}
+                wps = leader.mission_waypoints if leader.mission_waypoints else self.route_waypoints
+                idx = leader.current_wp_idx
+                if idx + 1 < len(wps):
+                    leader.current_wp_idx += 1
+                elif leader.mission_loop:
+                    leader.current_wp_idx = 0
+                else:
+                    leader.mission_active = False
+                new_idx = leader.current_wp_idx
+                leader.acknowledged_target = np.array(wps[new_idx][:3], dtype=float)
+                leader.wp_loitering = False
+                leader.wp_loiter_timer = 0.0
+                leader.wp_total_loiter = float(wps[new_idx][3]) if len(wps[new_idx]) > 3 else 0.0
+                self._target_pos = np.copy(leader.acknowledged_target)
+            return {"status": "OK", "action": "WAYPOINT_SKIPPED", "current_wp_idx": new_idx}
+        else:
+            self.send_canyon_command({"cmd": "SKIP_WAYPOINT"})
+            return {"status": "OK", "action": "WAYPOINT_SKIPPED"}
 
     def stop_mission_route(self) -> Dict[str, Any]:
         """Stop active mission route and hold current position (TKT-28 & TKT-56)."""
@@ -972,6 +1175,8 @@ class C2Gateway:
                     brain.route_paused = False
                 if hasattr(brain, "wp_loitering"):
                     brain.wp_loitering = False
+        else:
+            self.send_canyon_command({"cmd": "STOP_ROUTE"})
         return {"status": "OK", "action": "ROUTE_STOPPED"}
 
     def toggle_rng_recon(self, active: Optional[bool] = None) -> bool:
@@ -1030,12 +1235,18 @@ class C2Gateway:
         """Operator action: reset/clear recovery pads and release the next wave of holding drones (TKT-42)."""
         if self.sim and hasattr(self.sim, "clear_pads"):
             return self.sim.clear_pads(turnaround_rearm=turnaround_rearm)
+        elif self.sim is None:
+            return self.send_canyon_command({"cmd": "CLEAR_PADS", "turnaround_rearm": turnaround_rearm})
         return {"status": "ERROR", "reason": "No simulation engine attached"}
 
     def log_event(self, level: str, message: str) -> None:
         """Log event to attached session manager or console."""
         if self.sim and hasattr(self.sim, "session_manager") and self.sim.session_manager:
             self.sim.session_manager.add_event(level, message, sim_time=getattr(self.sim, "sim_time", 0.0))
+        elif hasattr(self, "session_manager") and self.session_manager:
+            self.session_manager.add_event(level, message, sim_time=self.c2_time)
+        else:
+            logger.info("[%s] %s", level, message)
 
     def deploy_patrol_to_bingo(
         self,
@@ -1061,21 +1272,28 @@ class C2Gateway:
             }
 
         # Pre-Flight Battery Level Check: Reject if battery is already at or below threshold
-        drones = getattr(self.sim, "drones", []) if self.sim else []
-        living = [
-            d for d in drones
-            if not d.crashed and d.flight_state not in ("LANDED", "GROUND_IDLE")
-        ]
-        if living:
-            min_battery = min(float(d.battery) for d in living)
-            if min_battery <= float(bingo_threshold):
-                return {
-                    "status": "ERROR",
-                    "code": "INSUFFICIENT_BATTERY",
-                    "reason": f"Fleet battery ({min_battery:.1f}%) is already at or below BINGO threshold ({float(bingo_threshold):.1f}%)",
-                    "min_battery": min_battery,
-                    "bingo_threshold": float(bingo_threshold),
-                }
+        if self.sim:
+            drones = getattr(self.sim, "drones", [])
+            living = [
+                d for d in drones
+                if not d.crashed and d.flight_state not in ("LANDED", "GROUND_IDLE")
+            ]
+            min_battery = min(float(d.battery) for d in living) if living else 100.0
+        else:
+            living = [
+                d for d in self.fleet_telemetry.values()
+                if not d.get("crashed") and d.get("flight_state") not in ("LANDED", "GROUND_IDLE")
+            ]
+            min_battery = min(float(d.get("battery", 100.0)) for d in living) if living else 100.0
+
+        if living and min_battery <= float(bingo_threshold):
+            return {
+                "status": "ERROR",
+                "code": "INSUFFICIENT_BATTERY",
+                "reason": f"Fleet battery ({min_battery:.1f}%) is already at or below BINGO threshold ({float(bingo_threshold):.1f}%)",
+                "min_battery": min_battery,
+                "bingo_threshold": float(bingo_threshold),
+            }
 
         # Deploy waypoint route preset with loop=True
         wps = ROUTE_PRESETS[pat]
@@ -1125,42 +1343,119 @@ class C2Gateway:
         """Deploy 1-Click Aux Mission: Physical Courier / Search-and-Recall Rescue Mule to LKP (TKT-51 / PLN-02).
         Verifies RECON and S&R_OPTICAL pre-flight capabilities for the courier.
         Navigates autonomously to target LKP, dwells with 60m P2P rescue ping, and escorts lost wingman back."""
-        if self.sim is None:
-            return {"status": "ERROR", "reason": "No simulation engine attached"}
+        if self.sim is not None:
+            drones = getattr(self.sim, "drones", [])
+            if not drones:
+                return {"status": "ERROR", "reason": "NO_DRONES"}
 
-        drones = getattr(self.sim, "drones", [])
-        if not drones:
-            return {"status": "ERROR", "reason": "NO_DRONES"}
+            # 1. Identify target lost drone
+            target = None
+            if target_drone_id is not None:
+                target = self.sim.get_drone_by_id(target_drone_id) if hasattr(self.sim, "get_drone_by_id") else next((d for d in drones if d.id == target_drone_id), None)
+                if target is None:
+                    return {"status": "ERROR", "reason": f"Target drone #{target_drone_id} not found"}
+            else:
+                for d in drones:
+                    if not d.crashed and (getattr(d, "lost_link", False) or not getattr(d, "downlink_active", True) or d.flight_state in ("LOST_LINK", "BACKTRACK_HOLD")):
+                        target = d
+                        break
+                if target is None:
+                    return {"status": "ERROR", "reason": "NO_LOST_DRONES_DETECTED", "error": "No dark or lost-link airframes currently detected."}
 
-        # 1. Identify target lost drone
+            # 2. Identify and allocate courier drone
+            courier = None
+            if courier_id is not None:
+                courier = self.sim.get_drone_by_id(courier_id) if hasattr(self.sim, "get_drone_by_id") else next((d for d in drones if d.id == courier_id), None)
+                if courier is None or courier.crashed:
+                    return {"status": "ERROR", "reason": f"Courier drone #{courier_id} unavailable"}
+            else:
+                candidates = [
+                    d for d in drones
+                    if d.id != target.id and not d.crashed and d.flight_state not in ("CRASHED",) and getattr(d, "uplink_active", True)
+                ]
+                for c in candidates:
+                    caps = set(getattr(c, "capabilities", []))
+                    if "RECON" in caps or "S&R_OPTICAL" in caps:
+                        courier = c
+                        break
+                if courier is None and candidates:
+                    courier = candidates[0]
+                if courier is None:
+                    return {"status": "ERROR", "reason": "NO_ELIGIBLE_COURIER", "error": "No available airframes to dispatch as courier."}
+
+            auth_check = self.check_mission_authorization("SEARCH_AND_RECALL", target_drone_id=courier.id)
+            if not auth_check.get("authorized", True):
+                return {
+                    "status": "ERROR",
+                    "code": "TIER_AUTHORIZATION_FAILED",
+                    "reason": auth_check.get("reason", "TIER_AUTHORIZATION_FAILED"),
+                    "missing_capabilities": auth_check.get("missing_capabilities", []),
+                    "courier_id": courier.id,
+                }
+
+            lkp = np.copy(target.lkp)
+            courier.courier_mission_active = True
+            courier.courier_target_drone_id = target.id
+            courier.courier_target_lkp = np.copy(lkp)
+            courier.courier_dwell_timer = 0.0
+            courier.courier_dwell_timeout = 15.0
+            courier.courier_escortee_id = None
+            courier.flight_state = "COURIER_TRANSIT"
+            courier.status = "COURIER_TRANSIT"
+            courier.radio_silence_permitted = True
+            courier.acknowledged_target = np.copy(lkp)
+            courier.target_station = np.copy(lkp)
+
+            self.courier_active = True
+            self.courier_drone_id = courier.id
+            self.courier_target_drone_id = target.id
+            self.courier_target_lkp = np.copy(lkp)
+            self.courier_stage = "TRANSIT_OUTBOUND"
+            self.courier_dwell_timer = 0.0
+
+            self.log_event(
+                "CMD",
+                f"[AUX MISSION: S&R Courier #{courier.id} dispatched to LKP ({lkp[0]:.1f}, {lkp[1]:.1f}, {lkp[2]:.1f}) for dark Drone #{target.id}. Radio silence once past horizon.]"
+            )
+
+            return {
+                "status": "OK",
+                "action": "SEARCH_AND_RECALL_DEPLOYED",
+                "courier_id": courier.id,
+                "target_drone_id": target.id,
+                "target_lkp": [round(float(v), 2) for v in lkp],
+                "stage": self.courier_stage,
+            }
+
+        # Standalone GCS Mode (sim=None):
+        if not self.fleet_telemetry:
+            return {"status": "ERROR", "reason": "NO_TELEMETRY"}
+
         target = None
         if target_drone_id is not None:
-            target = self.sim.get_drone_by_id(target_drone_id) if hasattr(self.sim, "get_drone_by_id") else next((d for d in drones if d.id == target_drone_id), None)
+            target = self.fleet_telemetry.get(target_drone_id)
             if target is None:
                 return {"status": "ERROR", "reason": f"Target drone #{target_drone_id} not found"}
         else:
-            # Find first living drone that is in LOST_LINK or lost downlink
-            for d in drones:
-                if not d.crashed and (getattr(d, "lost_link", False) or not getattr(d, "downlink_active", True) or d.flight_state in ("LOST_LINK", "BACKTRACK_HOLD")):
+            for d in self.fleet_telemetry.values():
+                if not d.get("crashed") and (d.get("lost_link") or not d.get("downlink_active", True) or d.get("flight_state") in ("LOST_LINK", "BACKTRACK_HOLD")):
                     target = d
                     break
             if target is None:
                 return {"status": "ERROR", "reason": "NO_LOST_DRONES_DETECTED", "error": "No dark or lost-link airframes currently detected."}
 
-        # 2. Identify and allocate courier drone
         courier = None
         if courier_id is not None:
-            courier = self.sim.get_drone_by_id(courier_id) if hasattr(self.sim, "get_drone_by_id") else next((d for d in drones if d.id == courier_id), None)
-            if courier is None or courier.crashed:
+            courier = self.fleet_telemetry.get(courier_id)
+            if courier is None or courier.get("crashed"):
                 return {"status": "ERROR", "reason": f"Courier drone #{courier_id} unavailable"}
         else:
-            # Find eligible airborne or available drone (not target, not crashed) with S&R capabilities
             candidates = [
-                d for d in drones
-                if d.id != target.id and not d.crashed and d.flight_state not in ("CRASHED",) and getattr(d, "uplink_active", True)
+                d for d in self.fleet_telemetry.values()
+                if d.get("id") != target.get("id") and not d.get("crashed") and d.get("flight_state") not in ("CRASHED",) and d.get("uplink_active", True)
             ]
             for c in candidates:
-                caps = set(getattr(c, "capabilities", []))
+                caps = set(c.get("capabilities", []))
                 if "RECON" in caps or "S&R_OPTICAL" in caps:
                     courier = c
                     break
@@ -1169,48 +1464,40 @@ class C2Gateway:
             if courier is None:
                 return {"status": "ERROR", "reason": "NO_ELIGIBLE_COURIER", "error": "No available airframes to dispatch as courier."}
 
-        # Pre-Flight Capability Check on courier
-        auth_check = self.check_mission_authorization("SEARCH_AND_RECALL", target_drone_id=courier.id)
+        auth_check = self.check_mission_authorization("SEARCH_AND_RECALL", target_drone_id=courier.get("id"))
         if not auth_check.get("authorized", True):
             return {
                 "status": "ERROR",
                 "code": "TIER_AUTHORIZATION_FAILED",
                 "reason": auth_check.get("reason", "TIER_AUTHORIZATION_FAILED"),
                 "missing_capabilities": auth_check.get("missing_capabilities", []),
-                "courier_id": courier.id,
+                "courier_id": courier.get("id"),
             }
 
-        # Setup Courier flight intent
-        lkp = np.copy(target.lkp)
-        courier.courier_mission_active = True
-        courier.courier_target_drone_id = target.id
-        courier.courier_target_lkp = np.copy(lkp)
-        courier.courier_dwell_timer = 0.0
-        courier.courier_dwell_timeout = 15.0
-        courier.courier_escortee_id = None
-        courier.flight_state = "COURIER_TRANSIT"
-        courier.status = "COURIER_TRANSIT"
-        courier.radio_silence_permitted = True
-        courier.acknowledged_target = np.copy(lkp)
-        courier.target_station = np.copy(lkp)
-
+        lkp = np.array(target.get("lkp", target.get("pos", [0, 0, 20])), dtype=float)
         self.courier_active = True
-        self.courier_drone_id = courier.id
-        self.courier_target_drone_id = target.id
+        self.courier_drone_id = courier.get("id")
+        self.courier_target_drone_id = target.get("id")
         self.courier_target_lkp = np.copy(lkp)
         self.courier_stage = "TRANSIT_OUTBOUND"
         self.courier_dwell_timer = 0.0
 
+        self.send_canyon_command({
+            "cmd": "DEPLOY_SEARCH_AND_RECALL",
+            "target_drone_id": target.get("id"),
+            "courier_id": courier.get("id"),
+        })
+
         self.log_event(
             "CMD",
-            f"[AUX MISSION: S&R Courier #{courier.id} dispatched to LKP ({lkp[0]:.1f}, {lkp[1]:.1f}, {lkp[2]:.1f}) for dark Drone #{target.id}. Radio silence once past horizon.]"
+            f"[AUX MISSION: S&R Courier #{courier.get('id')} dispatched to LKP ({lkp[0]:.1f}, {lkp[1]:.1f}, {lkp[2]:.1f}) for dark Drone #{target.get('id')}. Radio silence once past horizon.]"
         )
 
         return {
             "status": "OK",
             "action": "SEARCH_AND_RECALL_DEPLOYED",
-            "courier_id": courier.id,
-            "target_drone_id": target.id,
+            "courier_id": courier.get("id"),
+            "target_drone_id": target.get("id"),
             "target_lkp": [round(float(v), 2) for v in lkp],
             "stage": self.courier_stage,
         }
@@ -1231,6 +1518,8 @@ class C2Gateway:
             target_drone = self.sim.get_drone_by_id(self.courier_target_drone_id) if hasattr(self.sim, "get_drone_by_id") else None
             if target_drone and target_drone.flight_state == "ESCORT_REJOIN":
                 target_drone.escort_leader_id = None
+        else:
+            self.send_canyon_command({"cmd": "STOP_SEARCH_AND_RECALL"})
 
         self.courier_active = False
         self.courier_stage = "IDLE"
@@ -1242,13 +1531,25 @@ class C2Gateway:
         carrier = None
         if self.sim and self.payload_drop_carrier_id is not None:
             carrier = self.sim.get_drone_by_id(self.payload_drop_carrier_id) if hasattr(self.sim, "get_drone_by_id") else None
+        elif self.payload_drop_carrier_id is not None:
+            carrier = self.fleet_telemetry.get(self.payload_drop_carrier_id)
+
+        def _get_f(d: Any, key: str, default: Any = None) -> Any:
+            if isinstance(d, dict):
+                return d.get(key, default)
+            return getattr(d, key, default)
+
+        repeaters = len(getattr(self.sim, "ground_repeaters", [])) if self.sim else (
+            len(self.latest_frame.get("repeaters", [])) if self.latest_frame else 0
+        )
+
         return {
             "active": self.payload_drop_active,
             "stage": self.payload_drop_stage,
             "carrier_id": self.payload_drop_carrier_id,
             "target_pos": [round(float(v), 2) for v in self.payload_drop_target_pos] if self.payload_drop_target_pos is not None else None,
-            "payload_attached": bool(getattr(carrier, "payload_attached", True)) if carrier else False,
-            "repeaters_count": len(getattr(self.sim, "ground_repeaters", [])) if self.sim else 0,
+            "payload_attached": bool(_get_f(carrier, "payload_attached", True)) if carrier else False,
+            "repeaters_count": repeaters,
         }
 
     def deploy_payload_drop(
@@ -1259,29 +1560,105 @@ class C2Gateway:
         """Deploy 1-Click Aux Mission: Cairn G1 Solar Repeater Payload Drop (TKT-59 / PLN-04).
         Verifies HEAVY_PAYLOAD and DROP_SERVO pre-flight capabilities.
         Carrier navigates overhead drop coordinates, hovers at Z=3.0m, and drops solar repeater."""
-        if self.sim is None:
-            return {"status": "ERROR", "reason": "No simulation engine attached"}
+        if self.sim is not None:
+            drones = getattr(self.sim, "drones", [])
+            if not drones:
+                return {"status": "ERROR", "reason": "NO_DRONES"}
 
-        drones = getattr(self.sim, "drones", [])
-        if not drones:
-            return {"status": "ERROR", "reason": "NO_DRONES"}
+            # 1. Identify carrier drone
+            carrier = None
+            if carrier_id is not None:
+                carrier = self.sim.get_drone_by_id(carrier_id) if hasattr(self.sim, "get_drone_by_id") else next((d for d in drones if d.id == carrier_id), None)
+                if carrier is None or carrier.crashed:
+                    return {"status": "ERROR", "reason": f"Carrier drone #{carrier_id} unavailable"}
+            else:
+                candidates = [
+                    d for d in drones
+                    if not d.crashed and d.flight_state not in ("LANDED", "GROUND_IDLE", "CRASHED", "DESCENDING")
+                    and getattr(d, "uplink_active", True)
+                    and getattr(d, "payload_attached", True)
+                ]
+                for c in candidates:
+                    caps = set(getattr(c, "capabilities", []))
+                    if "HEAVY_PAYLOAD" in caps and "DROP_SERVO" in caps:
+                        carrier = c
+                        break
+                if carrier is None and candidates:
+                    carrier = candidates[0]
+                if carrier is None:
+                    return {"status": "ERROR", "reason": "NO_ELIGIBLE_CARRIER", "error": "No available airframes with attached payload to dispatch."}
 
-        # 1. Identify carrier drone
+            if not getattr(carrier, "payload_attached", True):
+                return {
+                    "status": "ERROR",
+                    "code": "NO_PAYLOAD_ATTACHED",
+                    "reason": f"Drone #{carrier.id} has already deployed its payload.",
+                    "carrier_id": carrier.id,
+                }
+
+            auth_check = self.check_mission_authorization("PAYLOAD_DROP", target_drone_id=carrier.id)
+            if not auth_check.get("authorized", True):
+                return {
+                    "status": "ERROR",
+                    "code": "TIER_AUTHORIZATION_FAILED",
+                    "reason": auth_check.get("reason", "TIER_AUTHORIZATION_FAILED"),
+                    "missing_capabilities": auth_check.get("missing_capabilities", []),
+                    "carrier_id": carrier.id,
+                }
+
+            if target_pos is not None:
+                t_pos = np.array([float(target_pos[0]), float(target_pos[1]), 0.0], dtype=float)
+            else:
+                yaw = getattr(carrier, "yaw", 0.0)
+                dx = math.cos(yaw) * 40.0
+                dy = math.sin(yaw) * 40.0
+                t_pos = np.array([carrier.pos[0] + dx, carrier.pos[1] + dy, 0.0], dtype=float)
+
+            transit_target = np.array([t_pos[0], t_pos[1], 25.0], dtype=float)
+
+            carrier.payload_drop_active = True
+            carrier.flight_state = "PAYLOAD_TRANSIT"
+            carrier.status = "PAYLOAD_TRANSIT"
+            carrier.acknowledged_target = np.copy(transit_target)
+            carrier.target_station = np.copy(transit_target)
+
+            self.payload_drop_active = True
+            self.payload_drop_carrier_id = carrier.id
+            self.payload_drop_target_pos = np.copy(t_pos)
+            self.payload_drop_stage = "TRANSIT_TO_DROP"
+            self.payload_drop_timer = 0.0
+
+            self.log_event(
+                "CMD",
+                f"[AUX MISSION: Carrier #{carrier.id} dispatched to drop Cairn G1 Repeater at ({t_pos[0]:.1f}, {t_pos[1]:.1f})]"
+            )
+
+            return {
+                "status": "OK",
+                "action": "PAYLOAD_DROP_DEPLOYED",
+                "carrier_id": carrier.id,
+                "target_pos": [round(float(v), 2) for v in t_pos],
+                "stage": self.payload_drop_stage,
+            }
+
+        # Standalone GCS Mode (sim=None):
+        if not self.fleet_telemetry:
+            return {"status": "ERROR", "reason": "NO_TELEMETRY"}
+
         carrier = None
         if carrier_id is not None:
-            carrier = self.sim.get_drone_by_id(carrier_id) if hasattr(self.sim, "get_drone_by_id") else next((d for d in drones if d.id == carrier_id), None)
-            if carrier is None or carrier.crashed:
+            carrier = self.fleet_telemetry.get(carrier_id)
+            if carrier is None or carrier.get("crashed"):
                 return {"status": "ERROR", "reason": f"Carrier drone #{carrier_id} unavailable"}
         else:
-            # Pick eligible living, airborne follower with payload attached
             candidates = [
-                d for d in drones
-                if not d.crashed and d.flight_state not in ("LANDED", "GROUND_IDLE", "CRASHED", "DESCENDING")
-                and getattr(d, "uplink_active", True)
-                and getattr(d, "payload_attached", True)
+                d for d in self.fleet_telemetry.values()
+                if not d.get("crashed") and d.get("flight_state") not in ("LANDED", "GROUND_IDLE", "CRASHED", "DESCENDING")
+                and d.get("uplink_active", True)
+                and d.get("payload_attached", True)
             ]
             for c in candidates:
-                caps = set(getattr(c, "capabilities", []))
+                caps = set(c.get("capabilities", []))
                 if "HEAVY_PAYLOAD" in caps and "DROP_SERVO" in caps:
                     carrier = c
                     break
@@ -1290,59 +1667,54 @@ class C2Gateway:
             if carrier is None:
                 return {"status": "ERROR", "reason": "NO_ELIGIBLE_CARRIER", "error": "No available airframes with attached payload to dispatch."}
 
-        # 2. Check if payload already released
-        if not getattr(carrier, "payload_attached", True):
+        if not carrier.get("payload_attached", True):
             return {
                 "status": "ERROR",
                 "code": "NO_PAYLOAD_ATTACHED",
-                "reason": f"Drone #{carrier.id} has already deployed its payload.",
-                "carrier_id": carrier.id,
+                "reason": f"Drone #{carrier.get('id')} has already deployed its payload.",
+                "carrier_id": carrier.get("id"),
             }
 
-        # 3. Pre-Flight Capability Check on carrier
-        auth_check = self.check_mission_authorization("PAYLOAD_DROP", target_drone_id=carrier.id)
+        auth_check = self.check_mission_authorization("PAYLOAD_DROP", target_drone_id=carrier.get("id"))
         if not auth_check.get("authorized", True):
             return {
                 "status": "ERROR",
                 "code": "TIER_AUTHORIZATION_FAILED",
                 "reason": auth_check.get("reason", "TIER_AUTHORIZATION_FAILED"),
                 "missing_capabilities": auth_check.get("missing_capabilities", []),
-                "carrier_id": carrier.id,
+                "carrier_id": carrier.get("id"),
             }
 
-        # Determine target drop coordinate
         if target_pos is not None:
             t_pos = np.array([float(target_pos[0]), float(target_pos[1]), 0.0], dtype=float)
         else:
-            # Default forward 40m along formation/carrier heading
-            yaw = getattr(carrier, "yaw", 0.0)
+            c_pos = carrier.get("pos", [0.0, 0.0, 0.0])
+            yaw = carrier.get("yaw", 0.0)
             dx = math.cos(yaw) * 40.0
             dy = math.sin(yaw) * 40.0
-            t_pos = np.array([carrier.pos[0] + dx, carrier.pos[1] + dy, 0.0], dtype=float)
-
-        transit_target = np.array([t_pos[0], t_pos[1], 25.0], dtype=float)
-
-        carrier.payload_drop_active = True
-        carrier.flight_state = "PAYLOAD_TRANSIT"
-        carrier.status = "PAYLOAD_TRANSIT"
-        carrier.acknowledged_target = np.copy(transit_target)
-        carrier.target_station = np.copy(transit_target)
+            t_pos = np.array([c_pos[0] + dx, c_pos[1] + dy, 0.0], dtype=float)
 
         self.payload_drop_active = True
-        self.payload_drop_carrier_id = carrier.id
+        self.payload_drop_carrier_id = carrier.get("id")
         self.payload_drop_target_pos = np.copy(t_pos)
         self.payload_drop_stage = "TRANSIT_TO_DROP"
         self.payload_drop_timer = 0.0
 
+        self.send_canyon_command({
+            "cmd": "DEPLOY_PAYLOAD_DROP",
+            "carrier_id": carrier.get("id"),
+            "target_pos": [round(float(v), 2) for v in t_pos],
+        })
+
         self.log_event(
             "CMD",
-            f"[AUX MISSION: Carrier #{carrier.id} dispatched to drop Cairn G1 Repeater at ({t_pos[0]:.1f}, {t_pos[1]:.1f})]"
+            f"[AUX MISSION: Carrier #{carrier.get('id')} dispatched to drop Cairn G1 Repeater at ({t_pos[0]:.1f}, {t_pos[1]:.1f})]"
         )
 
         return {
             "status": "OK",
             "action": "PAYLOAD_DROP_DEPLOYED",
-            "carrier_id": carrier.id,
+            "carrier_id": carrier.get("id"),
             "target_pos": [round(float(v), 2) for v in t_pos],
             "stage": self.payload_drop_stage,
         }
@@ -1360,12 +1732,28 @@ class C2Gateway:
             res = self.sim.set_field_lz(coords, name, radius, capacity, slot_spacing)
             self.log_event("ATC", f"[FLZ DESIGNATED: Field Landing Zone '{name}' set at {[round(float(v), 1) for v in coords]}]")
             return res
+        elif self.sim is None:
+            c_list = [round(float(v), 2) for v in coords]
+            res = self.send_canyon_command({
+                "cmd": "SET_FIELD_LZ",
+                "coords": c_list,
+                "name": name,
+                "radius": float(radius),
+                "capacity": int(capacity),
+                "slot_spacing": float(slot_spacing),
+            })
+            self.log_event("ATC", f"[FLZ DESIGNATED: Field Landing Zone '{name}' set at {c_list}]")
+            return res
         return {"status": "NOOP", "reason": "NO_SIM"}
 
     def clear_field_lz(self) -> Dict[str, Any]:
         """Clear active Field Landing Zone."""
         if self.sim and hasattr(self.sim, "clear_field_lz"):
             res = self.sim.clear_field_lz()
+            self.log_event("ATC", "[FLZ CLEARED: Field Landing Zone deactivated.]")
+            return res
+        elif self.sim is None:
+            res = self.send_canyon_command({"cmd": "CLEAR_FIELD_LZ"})
             self.log_event("ATC", "[FLZ CLEARED: Field Landing Zone deactivated.]")
             return res
         return {"status": "NOOP", "reason": "NO_SIM"}
@@ -1378,6 +1766,10 @@ class C2Gateway:
                 self.log_event("FAILSAFE", f"[EMERGENCY LANDING: Drone #{drone_id} descending to nearest clear flat ground.]")
                 return {"status": "OK", "drone_id": drone_id, "reason": reason}
             return {"status": "DROPPED", "reason": "DRONE_NOT_ELIGIBLE"}
+        elif self.sim is None:
+            res = self.send_canyon_command({"cmd": "COMMAND_E_LAND", "drone_id": drone_id, "reason": reason})
+            self.log_event("FAILSAFE", f"[EMERGENCY LANDING: Drone #{drone_id} descending to nearest clear flat ground.]")
+            return res
         return {"status": "NOOP", "reason": "NO_SIM"}
 
     def command_e_land_swarm(self, reason: str = "SWARM_EMERGENCY") -> Dict[str, Any]:
@@ -1386,6 +1778,10 @@ class C2Gateway:
             initiated = self.sim.command_e_land_swarm(reason=reason)
             self.log_event("FAILSAFE", f"[SWARM EMERGENCY LANDING: {len(initiated)} drones descending to nearest flat ground.]")
             return {"status": "OK", "initiated_count": len(initiated), "drone_ids": initiated}
+        elif self.sim is None:
+            res = self.send_canyon_command({"cmd": "COMMAND_E_LAND_SWARM", "reason": reason})
+            self.log_event("FAILSAFE", f"[SWARM EMERGENCY LANDING: Swarm emergency command emitted.]")
+            return res
         return {"status": "NOOP", "reason": "NO_SIM"}
 
     def stop_payload_drop(self) -> Dict[str, Any]:
@@ -1401,6 +1797,8 @@ class C2Gateway:
                 carrier.status = "ACTIVE"
                 carrier.acknowledged_target = np.array([0.0, 0.0, 25.0], dtype=float)
                 carrier.target_station = np.array([0.0, 0.0, 25.0], dtype=float)
+        else:
+            self.send_canyon_command({"cmd": "STOP_PAYLOAD_DROP"})
 
         self.payload_drop_active = False
         self.payload_drop_stage = "IDLE"

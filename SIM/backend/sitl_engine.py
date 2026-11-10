@@ -401,8 +401,8 @@ class SITLWorldEngine:
             if intent.state_updates.get("corridor_pop"):
                 if hasattr(drone, "corridor_stack") and len(drone.corridor_stack) > 1:
                     drone.corridor_stack._stack.pop()
-            if drone.is_leader and intent.state_updates.get("acknowledged_target") is not None:
-                self.target_pos = np.copy(intent.state_updates["acknowledged_target"])
+                if drone.flight_state == "CORRIDOR_ERTB" and drone.is_leader and intent.state_updates.get("acknowledged_target") is not None:
+                    self.target_pos = np.copy(intent.state_updates["acknowledged_target"])
             if intent.state_updates.get("flight_state") == "OVERHEAD_HOLD" and drone.is_leader:
                 self.overhead_marshal_active = True
                 self.recovery_stage = "OVERHEAD_MARSHAL"

@@ -39,12 +39,14 @@ if sys.platform == "win32":
                 pass
 
 import socket
+import numpy as np
 from aiohttp import web, WSMsgType
 
 from SIM.backend.sitl_engine import SwarmSimulator, DT
 from SIM.backend.mavlink_bridge import MavlinkBridge
 from SIM.backend.urban_geometry import get_default_urban_obstacles
 from GCS.backend.session_manager import SessionManager
+from GCS.backend.c2_gateway import C2Gateway
 
 logger = logging.getLogger("SwarmWebServer")
 
@@ -133,6 +135,17 @@ class SwarmWebServer:
         self.runner: Optional[web.AppRunner] = None
         self.site: Optional[web.TCPSite] = None
         self.sim_task: Optional[asyncio.Task] = None
+        self.c2_task: Optional[asyncio.Task] = None
+
+        # GCS Tactical C2 Mission Gateway (Bubble 1 / Operator Airgap - BUG-15)
+        if self.sim is not None:
+            self.c2: C2Gateway = getattr(self.sim, "c2", None) or C2Gateway(sim=self.sim)
+        else:
+            self.c2 = C2Gateway(sim=None)
+            self.c2.session_manager = self.session_manager
+            self.c2.canyon_host = self.host
+            self.c2.canyon_port = self.rx_port
+
         self.is_running: bool = False
         self.frames_broadcast: int = 0
         self.last_telemetry_rx_time: float = -100.0
@@ -256,7 +269,37 @@ class SwarmWebServer:
         cmd = cmd_dict.get("cmd", "").upper()
 
         if self.sim is None:
-            # Standalone GCS Mode: Forward operator command across Canyon Airgap via UDP
+            # Standalone GCS Mode (Operator Airgap):
+            # 1. Update local C2 Gateway state for mission directives
+            if cmd in ("SET_TARGET", "DISPATCH_TARGET"):
+                pos = cmd_dict.get("pos", [60.0, 40.0, 30.0])
+                if hasattr(self, "c2") and self.c2 is not None:
+                    self.c2._target_pos = np.array(pos, dtype=float)
+                    self.c2.patrol_active = False
+                    self.c2.route_active = False
+                    self.c2.rng_recon_active = False
+            elif cmd in ("TOGGLE_PATROL", "TOGGLE_TARGET_PATROL", "SET_PATROL"):
+                if hasattr(self, "c2") and self.c2 is not None:
+                    self.c2.toggle_target_patrol(cmd_dict.get("active", None))
+            elif cmd in ("TOGGLE_RNG_RECON", "TOGGLE_RNG", "RNG_RECON"):
+                if hasattr(self, "c2") and self.c2 is not None:
+                    self.c2.toggle_rng_recon(cmd_dict.get("active", None))
+            elif cmd in ("START_RNG_RECON", "START_RNG"):
+                if hasattr(self, "c2") and self.c2 is not None:
+                    self.c2.start_rng_recon()
+            elif cmd in ("STOP_RNG_RECON", "STOP_RNG"):
+                if hasattr(self, "c2") and self.c2 is not None:
+                    self.c2.stop_rng_recon()
+            elif cmd in ("DEPLOY_PATROL_TO_BINGO", "PATROL_TO_BINGO", "START_PATROL_BINGO", "PATROL_BINGO"):
+                if hasattr(self, "c2") and self.c2 is not None:
+                    threshold = float(cmd_dict.get("threshold", cmd_dict.get("bingo_threshold", 25.0)))
+                    pattern = str(cmd_dict.get("pattern", "BOX_PATROL"))
+                    self.c2.deploy_patrol_to_bingo(bingo_threshold=threshold, pattern=pattern)
+            elif cmd in ("STOP_PATROL_TO_BINGO", "ABORT_PATROL_BINGO", "STOP_PATROL_BINGO"):
+                if hasattr(self, "c2") and self.c2 is not None:
+                    self.c2.stop_patrol_to_bingo()
+
+            # 2. Forward command across Canyon Airgap via UDP
             if self.cmd_sock is not None:
                 try:
                     payload = json.dumps(cmd_dict).encode("utf-8")
@@ -805,6 +848,8 @@ class SwarmWebServer:
         sim_time = snapshot.get("sim_time", 0.0)
         self.last_telemetry_rx_time = sim_time
         self._last_wall_rx_time = time.monotonic()
+        if hasattr(self, "c2") and self.c2 is not None:
+            self.c2.on_telemetry_frame(snapshot)
         self._track_telemetry_events(snapshot)
 
         # Broadcast state snapshot over WebSocket
@@ -875,6 +920,8 @@ class SwarmWebServer:
             snapshot = self.sim.get_state_snapshot()
             snapshot["type"] = "TELEMETRY_FRAME"
             self.latest_snapshot = snapshot
+            if hasattr(self, "c2") and self.c2 is not None:
+                self.c2.on_telemetry_frame(snapshot)
 
             # Telemetry Freshness Assessment (TKT-54: No range peeking)
             drones_list = snapshot.get("drones", [])
@@ -919,6 +966,14 @@ class SwarmWebServer:
                     next_tick = now  # Reset deadline if running significantly behind
                 await asyncio.sleep(0)  # Yield control to event loop
 
+    async def _c2_loop(self) -> None:
+        """Standalone GCS C2 state machine ticker when running without local sim (Operator Airgap)."""
+        interval = self.dt
+        while self.is_running and self.sim is None:
+            if hasattr(self, "c2") and self.c2 is not None:
+                self.c2.step(interval)
+            await asyncio.sleep(interval)
+
     async def start(self) -> None:
         """Start web server, UDP command dispatcher, and telemetry ingestion."""
         # Initialize UDP command dispatch socket (for Canyon port 9001)
@@ -940,7 +995,8 @@ class SwarmWebServer:
 
         loop = asyncio.get_running_loop()
         if self.sim is None:
-            # Standalone GCS Mode: Receive 60 FPS telemetry across Canyon UDP port (9000)
+            # Standalone GCS Mode: Launch C2 mission ticker & receive 60 FPS telemetry across Canyon UDP (9000)
+            self.c2_task = asyncio.create_task(self._c2_loop())
             try:
                 listen_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 listen_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -962,6 +1018,14 @@ class SwarmWebServer:
     async def stop(self) -> None:
         """Gracefully stop server, close client sockets, and cancel sim/telemetry loops."""
         self.is_running = False
+
+        if self.c2_task is not None:
+            self.c2_task.cancel()
+            try:
+                await self.c2_task
+            except asyncio.CancelledError:
+                pass
+            self.c2_task = None
 
         if self.telemetry_transport is not None:
             self.telemetry_transport.close()
