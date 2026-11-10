@@ -1,6 +1,6 @@
 # BUG-11: Migrate Tandem Escort Stationing (ESCORT_REJOIN) to OBC Brain Firmware
 
-> **Category**: 🛡️ Architecture / 🐛 Bug | **Priority**: High | **State**: todo  
+> **Category**: 🛡️ Architecture / 🐛 Bug | **Priority**: High | **State**: completed  
 > **Operational Inspiration**: Strict Brain Airgap enforcement for Search-and-Recall / Courier tandem missions (Red 2 Remediation)
 
 ---
@@ -20,7 +20,7 @@ This ticket migrates all tandem trailing station calculations into the OBC brain
 * [`OBC/backend/brains/leader_follower.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/OBC/backend/brains/leader_follower.py): Implement onboard tandem trailing station calculation within `step_drone` for `telemetry.flight_state == "ESCORT_REJOIN"`, consuming courier state from `self.heard_peers[escort_leader_id]`.
 * [`OBC/backend/brains/base.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/OBC/backend/brains/base.py): Ensure `LocalTelemetry` carries `escort_leader_id: Optional[int]` (or courier peer ID) and `FlightIntent` returns `target_station` and `state_updates["acknowledged_target"]`.
 * [`SIM/backend/sitl_engine.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/SIM/backend/sitl_engine.py): Purge lines 431–444 from `_execute_obc_step`. SIM must not compute or mutate target stations for escortee drones.
-* [`tests/test_courier_aux_mission.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/tests/test_courier_aux_mission.py): Verify tandem escort trailing operates purely in `step_drone` from `heard_peers`.
+* [`tests/test_escort_courier_lkp.py`](file:///c:/Users/AlitheiaDeus/DeusLocker/L2C/SwarmTech/v3-Uprising/tests/test_escort_courier_lkp.py): Verify tandem escort trailing operates purely in `step_drone` from `heard_peers`.
 
 ---
 
@@ -48,7 +48,7 @@ This ticket migrates all tandem trailing station calculations into the OBC brain
 
 ## 4. Acceptance Criteria & Verification Invariants
 
-* [ ] SITL engine contains zero target mutations or trailing station math for `ESCORT_REJOIN`.
-* [ ] `LeaderFollowerBrain` calculates trailing station purely from `self.heard_peers`.
-* [ ] When courier packets are lost, the escortee falls back to holding its last known trailing station.
-* [ ] Targeted test module passes: `python -m unittest tests/test_courier_aux_mission.py`.
+* [x] SITL engine contains zero target mutations or trailing station math for `ESCORT_REJOIN`.
+* [x] `LeaderFollowerBrain` calculates trailing station purely from `self.heard_peers`.
+* [x] When courier packets are lost, the escortee falls back to holding its last known trailing station.
+* [x] Targeted test module passes: `python -m unittest tests/test_escort_courier_lkp.py`.

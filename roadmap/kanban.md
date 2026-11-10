@@ -55,7 +55,6 @@ kanban
     pln11["3D Tactical Corridor Pathfinding & Operator Preview"]@{ ticket: '[PLN-11]', priority: 'Medium' }
   todo["Todo (Active Pipeline)"]
     tkt66["Simplified RF & GNSS Shadow Occlusion Engine"]@{ ticket: '[TKT-66]', priority: 'High' }
-    bug11["Migrate Tandem Escort Stationing to OBC Firmware"]@{ ticket: '[BUG-11]', priority: 'High' }
     bug12["Migrate Ingress Corridor Stack Popping to OBC Firmware"]@{ ticket: '[BUG-12]', priority: 'High' }
     bug15["Decouple GCS C2 Gateway to Standalone Downlink Telemetry"]@{ ticket: '[BUG-15]', priority: 'High' }
     bug16["Command ATC Recovery via Pure C2 Uplink Packets & Parity Bridge"]@{ ticket: '[BUG-16]', priority: 'High' }
@@ -81,6 +80,7 @@ kanban
     bug09["God-View Sim Viewport (/sim) Missing Drone ID Badges"]@{ ticket: '[BUG-09]', priority: 'Normal' }
     tkt68["Scramble Overhead Muster Hold & Target Stage-to-Send Confirmation"]@{ ticket: '[TKT-68]', priority: 'Normal' }
     tkt69["Migrate Zone 2 & 3 Avoidance Reflexes to OBC Firmware (Airgap Enforcement)"]@{ ticket: '[TKT-69]', priority: 'Normal' }
+    bug11["Migrate Tandem Escort Stationing to OBC Firmware"]@{ ticket: '[BUG-11]', priority: 'High' }
 ```
 
 ---

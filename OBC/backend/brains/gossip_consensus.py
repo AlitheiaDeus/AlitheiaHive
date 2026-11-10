@@ -500,8 +500,29 @@ class GossipConsensusBrain(BaseBrain):
             yaw = math.atan2(telemetry.vel[1], telemetry.vel[0]) if speed_xy > 0.5 else None
             return self._finalize_flight_intent(telemetry, acc, yaw, np.copy(telemetry.acknowledged_target), updates), outbox
 
+        # Tandem Escort Rejoin (TKT-51 / BUG-11: Calculated in OBC from heard courier packets)
+        if telemetry.flight_state == "ESCORT_REJOIN":
+            escort_id = telemetry.escort_leader_id
+            courier = self.heard_peers.get(escort_id) if escort_id is not None else None
+            if courier is not None and not courier.crashed:
+                lead_speed = float(np.linalg.norm(courier.vel[:2]))
+                if lead_speed > 0.5:
+                    tangent = courier.vel / lead_speed
+                    trail_pos = courier.pos - tangent * 4.0
+                    trail_pos[2] = courier.pos[2]
+                else:
+                    trail_pos = courier.pos + np.array([-4.0, 0.0, 0.0], dtype=float)
+                target_dest = trail_pos
+            else:
+                target_dest = np.copy(telemetry.lkp)
+            updates["acknowledged_target"] = np.copy(target_dest)
+            acc = self._steer_toward(telemetry.pos, telemetry.vel, target_dest, max_speed=10.0)
+            speed_xy = math.hypot(telemetry.vel[0], telemetry.vel[1])
+            yaw = math.atan2(telemetry.vel[1], telemetry.vel[0]) if speed_xy > 0.5 else None
+            return self._finalize_flight_intent(telemetry, acc, yaw, target_dest, updates), outbox
+
         # Courier S&R Escort & Payload Drop States (TKT-51 / TKT-59)
-        if telemetry.flight_state in ("COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "ESCORT_REJOIN", "PAYLOAD_TRANSIT", "PRECISION_DESCENT", "CARRIER_EGRESS"):
+        if telemetry.flight_state in ("COURIER_TRANSIT", "RENDEZVOUS_DWELL", "ESCORT_LEAD", "PAYLOAD_TRANSIT", "PRECISION_DESCENT", "CARRIER_EGRESS"):
             ack_t = np.copy(updates.get("acknowledged_target", telemetry.acknowledged_target))
             spd = 0.0 if telemetry.flight_state == "RENDEZVOUS_DWELL" else (2.0 if telemetry.flight_state == "PRECISION_DESCENT" else 10.0)
             acc = self._steer_toward(telemetry.pos, telemetry.vel, ack_t, max_speed=spd)

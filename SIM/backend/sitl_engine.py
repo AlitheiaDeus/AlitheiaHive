@@ -304,6 +304,7 @@ class SITLWorldEngine:
             tether_heartbeat_watchdog=float(getattr(drone, "tether_heartbeat_watchdog", 0.5)),
             corridor_target=np.copy(drone.corridor_target) if getattr(drone, "corridor_target", None) is not None else None,
             urban_obstacles=tuple(getattr(self, "urban_obstacles", [])),
+            escort_leader_id=getattr(drone, "escort_leader_id", None),
         )
 
     def _build_transceiver_beacon(self, sender: Drone) -> RadioPacket:
@@ -382,20 +383,6 @@ class SITLWorldEngine:
         ]
         ordered = sorted(living, key=lambda d: (0 if d.is_leader else 1, d.id))
         for drone in ordered:
-            # Advance tandem escort trailing station before telemetry build (TKT-51)
-            if drone.flight_state == "ESCORT_REJOIN" and getattr(drone, "escort_leader_id", None) is not None:
-                courier = self.get_drone_by_id(drone.escort_leader_id)
-                if courier and not courier.crashed:
-                    lead_speed = float(np.linalg.norm(courier.vel[:2]))
-                    if lead_speed > 0.5:
-                        tangent = courier.vel / lead_speed
-                        trail_pos = courier.pos - tangent * 4.0
-                        trail_pos[2] = courier.pos[2]
-                    else:
-                        trail_pos = courier.pos + np.array([-4.0, 0.0, 0.0], dtype=float)
-                    drone.acknowledged_target = np.copy(trail_pos)
-                    drone.target_station = np.copy(trail_pos)
-
             telemetry = self._build_local_telemetry(drone)
             inbox = list(drone.inbox)
             drone.inbox.clear()
@@ -426,9 +413,9 @@ class SITLWorldEngine:
                     self.overhead_marshal_active = True
                     self.recovery_stage = "OVERHEAD_MARSHAL"
 
-            # If leader just stepped in LEADER_FOLLOWER mode, propagate its fresh heartbeat
-            # across the physical RF medium to followers before followers execute their step.
-            if drone.is_leader and self.active_brain_name == "LEADER_FOLLOWER" and drone.outbox:
+            # If leader or escort leader just stepped in LEADER_FOLLOWER mode, propagate fresh heartbeat
+            # across the physical RF medium to followers/escortee before they execute their step.
+            if (drone.is_leader or drone.flight_state == "ESCORT_LEAD") and self.active_brain_name == "LEADER_FOLLOWER" and drone.outbox:
                 lead_pkts = list(drone.outbox)
                 drone.outbox.clear()
                 for pkt in lead_pkts:

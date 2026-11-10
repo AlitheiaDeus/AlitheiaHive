@@ -113,6 +113,7 @@ class LocalTelemetry:
     tether_heartbeat_watchdog: float = 0.5
     corridor_target: Optional[np.ndarray] = None
     urban_obstacles: Tuple[Any, ...] = ()
+    escort_leader_id: Optional[int] = None
 
 
 @dataclass
