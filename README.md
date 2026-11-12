@@ -148,117 +148,15 @@ OK
 
 ---
 
-## 5. Repository Topology
+## 5. Architectural Topology
 
-<!-- TREE_START -->
-```text
-v3-Uprising/
-├── docs/
-│   ├── images/
-│   │   ├── alitheia_hive_operator_gcs.jpg
-│   │   ├── alitheia_sitl_lab.jpg
-│   │   └── tactical_gcs_hero.png
-│   └── HARDWARE_DEPLOYMENT_BLUEPRINT.md
-├── GCS/
-│   ├── backend/
-│   │   ├── __init__.py
-│   │   ├── c2_gateway.py
-│   │   ├── session_manager.py
-│   │   └── web_server.py
-│   ├── frontend/
-│   │   ├── css/
-│   │   ├── js/
-│   │   └── index.html
-│   └── __init__.py
-├── OBC/
-│   ├── backend/
-│   │   ├── brains/
-│   │   ├── __init__.py
-│   │   └── drone_firmware.py
-│   ├── frontend/
-│   └── __init__.py
-├── roadmap/
-│   ├── tasks/
-│   │   ├── archived/
-│   │   ├── backlog/
-│   │   ├── BUG-01.md
-│   │   ├── BUG-02.md
-│   │   ├── BUG-03.md
-│   │   ├── BUG-04.md
-│   │   ├── BUG-05.md
-│   │   ├── BUG-06.md
-│   │   ├── FIX-05.md
-│   │   ├── FIX-06.md
-│   │   ├── FIX-07.md
-│   │   ├── FIX-08.md
-│   │   ├── FIX-09.md
-│   │   ├── FIX-10.md
-│   │   ├── PLN-02.md
-│   │   ├── TKT-23.md
-│   │   ├── TKT-41.md
-│   │   ├── TKT-42.md
-│   │   ├── TKT-43.md
-│   │   ├── TKT-48.md
-│   │   ├── TKT-49.md
-│   │   ├── TKT-50.md
-│   │   ├── TKT-52.md
-│   │   ├── TKT-53.md
-│   │   ├── TKT-54.md
-│   │   ├── TKT-55.md
-│   │   ├── TKT-56.md
-│   │   ├── TKT-57.md
-│   │   ├── TKT-58.md
-│   │   └── TLK-01.md
-│   └── kanban.md
-├── SIM/
-│   ├── backend/
-│   │   ├── __init__.py
-│   │   ├── fleet_registry.py
-│   │   ├── mavlink_bridge.py
-│   │   ├── sitl_engine.py
-│   │   └── telemetry_recorder.py
-│   ├── frontend/
-│   │   ├── css/
-│   │   ├── js/
-│   │   └── index.html
-│   └── __init__.py
-├── tests/
-│   ├── recordings/
-│   │   └── formation_flight_suite.json
-│   ├── __init__.py
-│   ├── quarantine.py
-│   ├── test_airgap_integrity.py
-│   ├── test_brains.py
-│   ├── test_breadcrumb_backtrack.py
-│   ├── test_bubble_decoupling.py
-│   ├── test_c2_downlink_gate.py
-│   ├── test_fleet_registry.py
-│   ├── test_formation_flight_suite.py
-│   ├── test_formation_headings.py
-│   ├── test_gnss_denial.py
-│   ├── test_gossip_formations.py
-│   ├── test_in_flight_enrollment.py
-│   ├── test_mavlink_bridge.py
-│   ├── test_mission_routes.py
-│   ├── test_orchestrator.py
-│   ├── test_pad_scramble.py
-│   ├── test_rng_recon.py
-│   ├── test_rtb_landing.py
-│   ├── test_session_hydration.py
-│   ├── test_sim_core.py
-│   ├── test_succession_deconfliction.py
-│   ├── test_tether_failsafes.py
-│   ├── test_tier_registry_auth.py
-│   ├── test_tri_mode_rf.py
-│   ├── test_waypoint_engine.py
-│   └── test_web_server.py
-├── .gitignore
-├── LICENSE
-├── README.md
-├── run.py
-└── run_with_sim.py
-```
-<!-- TREE_END -->
+The system is organized into decoupled domains isolated by network boundaries:
+
+* **`GCS/` (Operator Domain)**: Ground Control Station backend (C2 mission gateway, routes, standalone web server) and GPU-native Three.js WebGL tactical viewport / Cyberpunk HUD.
+* **`OBC/` (Brain Domain)**: Drone Onboard Computer fleet firmware and autonomous brains (`LeaderFollowerBrain`, `GossipConsensusBrain`). Evaluates local state with zero direct access to simulation ground truth.
+* **`SIM/` (Reality Engine)**: High-performance 60 FPS kinematic digital twin, SITL world physics, sensor degradation, RF propagation, and MAVLink/UDP bridge.
+* **`docs/` & `roadmap/`**: Hardware deployment blueprints, architectural specifications, and modular Kanban task lifecycle.
+* **`tests/`**: Automated test suite validating physical invariants, RF drop-off, airgap decoupling, and failover state machines.
 
 ---
 
